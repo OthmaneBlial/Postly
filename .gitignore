@@ -10,6 +10,9 @@ tmp/
 *.log
 bench-generated/
 dist/
+fuzz/target/
+fuzz/artifacts/
+fuzz/corpus/
 .postly/
 
 # Secrets and machine-local configuration

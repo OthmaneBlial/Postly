@@ -46,9 +46,10 @@ fn main() -> ExitCode {
                 && run("cargo", &["test", "--workspace", "--all-targets"])
         }
         "bench" => run_benchmarks(json_output),
+        "fuzz" => run_fuzz_smoke(),
         "package" => package_release(),
         "help" | "--help" => {
-            println!("cargo xtask check|fmt|lint|test|bench|package [--json]");
+            println!("cargo xtask check|fmt|lint|test|bench|fuzz|package [--json]");
             true
         }
         other => {
@@ -105,6 +106,35 @@ fn run_benchmarks(json_output: bool) -> bool {
             false
         }
     }
+}
+
+fn run_fuzz_smoke() -> bool {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if !run_in(
+        &root,
+        "cargo",
+        &["+nightly", "fuzz", "check", "--fuzz-dir", "fuzz"],
+    ) {
+        return false;
+    }
+    ["curl_command", "variables", "postman_import"]
+        .into_iter()
+        .all(|target| {
+            run_in(
+                &root,
+                "cargo",
+                &[
+                    "+nightly",
+                    "fuzz",
+                    "run",
+                    "--fuzz-dir",
+                    "fuzz",
+                    target,
+                    "--",
+                    "-runs=256",
+                ],
+            )
+        })
 }
 
 fn package_release() -> bool {

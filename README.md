@@ -327,6 +327,7 @@ marketing-only roadmap.
 - <a href="docs/architecture.md">Architecture</a>
 - <a href="docs/development.md">Development and local validation</a>
 - <a href="docs/benchmarks.md">Benchmarks</a>
+- <a href="docs/fuzzing.md">Local fuzzing</a>
 - <a href="docs/cli.md">CLI reference</a>
 - <a href="docs/collections.md">Collections and environments</a>
 - <a href="docs/authentication.md">Authentication</a>

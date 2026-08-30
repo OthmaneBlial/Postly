@@ -1,0 +1,36 @@
+[package]
+name = "postly-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+postly-core = { path = "../crates/postly-core" }
+tempfile = "3.20"
+
+[[bin]]
+name = "curl_command"
+path = "fuzz_targets/curl_command.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "variables"
+path = "fuzz_targets/variables.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "postman_import"
+path = "fuzz_targets/postman_import.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

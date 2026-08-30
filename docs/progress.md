@@ -72,6 +72,9 @@ Implemented:
 - A local `cargo xtask bench` harness measures real Postman import and generated
   1,000-request workspace open/search operations without publishing invented
   competitor comparisons.
+- Local `cargo xtask fuzz` targets cURL parsing, variable interpolation and
+  malformed Postman imports with a bounded smoke run; fuzz artifacts remain
+  ignored and no GitHub Actions workflow is required.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:
@@ -84,8 +87,8 @@ Not yet implemented:
   and crash recovery.
 - Authorization Code/PKCE, Device Code and refresh-token OAuth flows; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in the CLI.
 - OpenAPI cyclic/remote references and gRPC reflection.
-- Local deterministic protocol test server tooling, fuzzing, cross-client/memory
-  benchmarks and packaging.
+- Local deterministic protocol test server tooling, cross-client/memory
+  benchmarks and deeper packaging/release validation.
 
 ## Verification
 

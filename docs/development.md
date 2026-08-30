@@ -8,6 +8,7 @@ cargo xtask lint
 cargo xtask test
 cargo xtask check
 cargo xtask bench
+cargo xtask fuzz
 cargo xtask package
 ~~~
 
