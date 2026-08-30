@@ -230,6 +230,9 @@ The GUI exposes the same HTTP/SSE controls in its <strong>Transport</strong> tab
 only connection flags and file paths in ignored local settings. It never needs
 the private-key contents in the project. See <a href="docs/certificates.md">certificates</a>
 and <a href="docs/proxy.md">proxy behavior</a> for security boundaries and current limits.
+The command palette is available with <code>⌘K</code> (or <code>Ctrl+K</code>), with quick
+actions for creating, saving, sending and managing the current request. See
+<a href="docs/shortcuts.md">keyboard shortcuts</a> for the complete list.
 
 ## Protocol coverage
 
@@ -309,7 +312,7 @@ Highest-value roadmap areas include:
 - OS keychain integration and complete secret-handling workflows;
 - richer Postman fixtures and executable compatibility scoring;
 - gRPC reflection and a first-class gRPC GUI;
-- tabs, command palette, accessibility and crash recovery;
+- tabs, accessibility and crash recovery;
 - deterministic protocol test servers, fuzzing, benchmarks and packaging.
 
 See <a href="docs/progress.md">docs/progress.md</a> for current evidence instead of a
@@ -325,6 +328,7 @@ marketing-only roadmap.
 - <a href="docs/authentication.md">Authentication</a>
 - <a href="docs/scripting.md">Scripting and pm.*</a>
 - <a href="docs/history.md">History</a>
+- <a href="docs/shortcuts.md">Keyboard shortcuts</a>
 - <a href="docs/cookies.md">Cookies</a>
 - <a href="docs/certificates.md">Certificates</a>
 - <a href="docs/proxy.md">Proxy</a>

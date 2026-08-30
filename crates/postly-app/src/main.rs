@@ -55,6 +55,39 @@ enum ResponseTab {
     WebSocket,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandPaletteAction {
+    NewRequest,
+    SaveRequest,
+    SendRequest,
+    CancelOperation,
+    ClearResponse,
+    ToggleResponseWrap,
+}
+
+impl CommandPaletteAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::NewRequest => "New request",
+            Self::SaveRequest => "Save current request",
+            Self::SendRequest => "Send current request",
+            Self::CancelOperation => "Cancel active operation",
+            Self::ClearResponse => "Clear response",
+            Self::ToggleResponseWrap => "Toggle response wrapping",
+        }
+    }
+
+    fn shortcut(self) -> &'static str {
+        match self {
+            Self::NewRequest => "⌘N",
+            Self::SaveRequest => "⌘S",
+            Self::SendRequest => "⌘↵",
+            Self::CancelOperation => "Esc",
+            Self::ClearResponse | Self::ToggleResponseWrap => "",
+        }
+    }
+}
+
 const MAX_CONSOLE_ITEMS: usize = 500;
 
 #[derive(Debug, Clone)]
@@ -312,6 +345,9 @@ pub struct PostlyApp {
     selected_environment: Option<String>,
     transport: TransportSettings,
     transport_settings_dirty: bool,
+    command_palette_open: bool,
+    command_palette_query: String,
+    command_palette_selected: usize,
     dirty: bool,
     status_message: String,
 }
@@ -397,6 +433,9 @@ impl PostlyApp {
             selected_environment: None,
             transport,
             transport_settings_dirty: false,
+            command_palette_open: false,
+            command_palette_query: String::new(),
+            command_palette_selected: 0,
             dirty: false,
             status_message,
         };
@@ -646,6 +685,144 @@ impl PostlyApp {
         self.websocket_url = None;
         self.websocket_started = false;
         self.websocket_connected = false;
+    }
+
+    fn palette_actions(&self) -> Vec<CommandPaletteAction> {
+        vec![
+            CommandPaletteAction::NewRequest,
+            CommandPaletteAction::SaveRequest,
+            CommandPaletteAction::SendRequest,
+            CommandPaletteAction::CancelOperation,
+            CommandPaletteAction::ClearResponse,
+            CommandPaletteAction::ToggleResponseWrap,
+        ]
+    }
+
+    fn run_palette_action(&mut self, action: CommandPaletteAction) {
+        self.command_palette_open = false;
+        self.command_palette_query.clear();
+        self.command_palette_selected = 0;
+        match action {
+            CommandPaletteAction::NewRequest => self.new_request(),
+            CommandPaletteAction::SaveRequest => {
+                if let Err(error) = self.save_current() {
+                    self.status_message = format!("Save failed: {error}");
+                }
+            }
+            CommandPaletteAction::SendRequest => {
+                if let Err(error) = self.send_current() {
+                    self.status_message = format!("Send failed: {error}");
+                }
+            }
+            CommandPaletteAction::CancelOperation => self.cancel_active(),
+            CommandPaletteAction::ClearResponse => self.clear_response(),
+            CommandPaletteAction::ToggleResponseWrap => self.response_wrap = !self.response_wrap,
+        }
+    }
+
+    fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
+        let command_key = ctx.input(|input| input.modifiers.command || input.modifiers.ctrl);
+        if command_key && ctx.input(|input| input.key_pressed(egui::Key::K)) {
+            self.command_palette_open = !self.command_palette_open;
+            self.command_palette_query.clear();
+            self.command_palette_selected = 0;
+        }
+        if !self.command_palette_open && command_key {
+            if ctx.input(|input| input.key_pressed(egui::Key::N)) {
+                self.run_palette_action(CommandPaletteAction::NewRequest);
+            } else if ctx.input(|input| input.key_pressed(egui::Key::S)) {
+                self.run_palette_action(CommandPaletteAction::SaveRequest);
+            }
+        }
+        if self.command_palette_open && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.command_palette_open = false;
+            self.command_palette_query.clear();
+            self.command_palette_selected = 0;
+        }
+    }
+
+    fn draw_command_palette(&mut self, ctx: &egui::Context) {
+        if !self.command_palette_open {
+            return;
+        }
+        let actions = self.palette_actions();
+        let query = self.command_palette_query.trim().to_ascii_lowercase();
+        let filtered = actions
+            .iter()
+            .copied()
+            .filter(|action| action.label().to_ascii_lowercase().contains(&query))
+            .collect::<Vec<_>>();
+        if filtered.is_empty() {
+            self.command_palette_selected = 0;
+        } else {
+            self.command_palette_selected = self
+                .command_palette_selected
+                .min(filtered.len().saturating_sub(1));
+        }
+        let mut chosen = None;
+        egui::Window::new("Command palette")
+            .collapsible(false)
+            .resizable(false)
+            .default_width(430.0)
+            .anchor(egui::Align2::CENTER_TOP, [0.0, 72.0])
+            .show(ctx, |ui| {
+                let response = ui.add(
+                    TextEdit::singleline(&mut self.command_palette_query)
+                        .hint_text("Type a command…")
+                        .desired_width(ui.available_width()),
+                );
+                if response.gained_focus() {
+                    self.command_palette_selected = 0;
+                }
+                ui.add_space(6.0);
+                if filtered.is_empty() {
+                    ui.label(RichText::new("No matching command").color(MUTED));
+                } else {
+                    for (index, action) in filtered.iter().enumerate() {
+                        let selected = index == self.command_palette_selected;
+                        let label = if action.shortcut().is_empty() {
+                            action.label().to_owned()
+                        } else {
+                            format!("{}    {}", action.label(), action.shortcut())
+                        };
+                        if ui
+                            .selectable_label(
+                                selected,
+                                RichText::new(label).color(if selected {
+                                    Color32::WHITE
+                                } else {
+                                    MUTED
+                                }),
+                            )
+                            .clicked()
+                        {
+                            chosen = Some(*action);
+                        }
+                    }
+                    if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
+                        self.command_palette_selected =
+                            (self.command_palette_selected + 1) % filtered.len();
+                    }
+                    if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
+                        self.command_palette_selected = self
+                            .command_palette_selected
+                            .checked_sub(1)
+                            .unwrap_or(filtered.len() - 1);
+                    }
+                    if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                        chosen = filtered.get(self.command_palette_selected).copied();
+                    }
+                }
+                ui.add_space(5.0);
+                ui.label(
+                    RichText::new("↑↓ navigate  ·  Enter run  ·  Esc close")
+                        .small()
+                        .color(MUTED),
+                );
+            });
+        if let Some(action) = chosen {
+            self.run_palette_action(action);
+        }
     }
 
     fn cancel_active(&mut self) {
@@ -3060,11 +3237,13 @@ impl eframe::App for PostlyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         ctx.set_visuals(egui::Visuals::dark());
+        self.handle_global_shortcuts(&ctx);
         let pending = self.poll_pending();
         self.draw_navigator(ui);
         self.draw_request_header(ui);
         self.draw_response(ui);
         self.draw_editor(ui);
+        self.draw_command_palette(&ctx);
         if pending {
             ctx.request_repaint_after(Duration::from_millis(80));
         }
@@ -3399,6 +3578,22 @@ mod tests {
         assert_eq!(reopened.auth_kind, AuthKind::OAuth2ClientCredentials);
         assert_eq!(reopened.auth_primary, "{{tokenUrl}}");
         assert_eq!(reopened.auth_tertiary, "{{clientSecret}}");
+    }
+
+    #[test]
+    fn command_palette_actions_update_workspace_state() {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        assert!(app
+            .palette_actions()
+            .contains(&CommandPaletteAction::NewRequest));
+        app.response_wrap = false;
+        app.run_palette_action(CommandPaletteAction::ToggleResponseWrap);
+        assert!(app.response_wrap);
+        app.run_palette_action(CommandPaletteAction::NewRequest);
+        assert!(app.request_path.is_none());
+        assert!(app.dirty);
+        assert!(!app.command_palette_open);
     }
 
     #[test]

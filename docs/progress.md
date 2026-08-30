@@ -45,6 +45,7 @@ Implemented:
 - Native GUI `Scripts` tab edits and persists imported pre-request/test source;
   execution remains explicit through the CLI runner.
 - native GUI Transport tab with persisted local timeout, HTTP(S) proxy, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE workflows.
+- Native GUI command palette with searchable request actions and keyboard shortcuts for new, save, send, cancel, response clearing and wrapping.
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs and combined PEM client identities; explicit insecure TLS remains pending.
 - Persistable response assertions for status, headers, body text and JSON Pointer values, evaluated by the runner without Node.js.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
