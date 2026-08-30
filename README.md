@@ -20,7 +20,7 @@ Postly is an open-source, Rust-first API development workspace designed around l
 - OpenAPI 3 JSON/YAML import with generated requests and explicit warnings.
 - Structured GraphQL query execution from the Rust core, CLI and native GUI, with variables and GraphQL error handling.
 - Progressive Server-Sent Events subscriptions from the CLI and native GUI with chunk-safe event parsing, bounded event history and JSON-lines output.
-- Bidirectional WebSocket CLI connections for `ws://` and `wss://`, with text/binary messages and ping/pong handling.
+- Bidirectional WebSocket CLI and native GUI connections for `ws://` and `wss://`, with text/binary messages, ping/pong handling and bounded message history.
 - Local `.proto` gRPC service discovery and dynamic unary/server/client/bidirectional streaming calls with protobuf JSON messages, metadata and verified HTTPS roots.
 - Opt-in Postman script execution through a local Node.js bridge with basic `pm.*` tests.
 - Explicit local response assertions for status, headers, body text and JSON Pointer paths, usable without Node.js.

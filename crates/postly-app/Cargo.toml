@@ -12,11 +12,15 @@ name = "postly-gui"
 path = "src/main.rs"
 
 [dependencies]
+base64.workspace = true
 chrono.workspace = true
 eframe.workspace = true
+futures-util.workspace = true
 postly-core = { path = "../postly-core" }
 serde_json.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

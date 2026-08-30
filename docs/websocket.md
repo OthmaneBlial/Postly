@@ -17,5 +17,10 @@ payloads are base64-encoded. Ping frames are answered with pong frames, and the
 CLI exits cleanly on a server close. `--reconnect N` gives bounded retries for
 failed handshakes or server-initiated closes, resending the configured messages
 on each new connection. The timeout is an inactivity timeout for the receive
-loop. A dedicated GUI WebSocket workspace and interactive stdin console remain
-planned.
+loop.
+
+The native GUI exposes `Connect WS` for the current request. It supports
+`ws://` and `wss://`, request headers/auth/cookies/query parameters, text sends,
+binary/ping/pong/close frame visibility, connection status and a bounded
+500-message console history. Reconnect policy and saved message presets remain
+future slices.

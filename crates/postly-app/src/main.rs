@@ -6,12 +6,22 @@ use std::{
     time::Duration,
 };
 
+use base64::Engine;
 use chrono::Local;
 use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
+use futures_util::{SinkExt, StreamExt};
 use postly_core::{
     ApiKeyLocation, Assertion, Auth, CollectionFiles, EngineOptions, Environment, HeaderEntry,
     HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, Request, RequestBody,
     ResponseView, SseEvent, SseParser, VariableContext, Workspace,
+};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{
+        client::IntoClientRequest,
+        http::{header::HeaderName, HeaderValue},
+        Message,
+    },
 };
 
 const ACCENT: Color32 = Color32::from_rgb(91, 141, 239);
@@ -37,9 +47,10 @@ enum ResponseTab {
     Cookies,
     Timing,
     SseEvents,
+    WebSocket,
 }
 
-const MAX_SSE_EVENTS: usize = 500;
+const MAX_CONSOLE_ITEMS: usize = 500;
 
 #[derive(Debug, Clone)]
 struct ReceivedSseEvent {
@@ -58,6 +69,39 @@ enum SseStreamUpdate {
     },
     Event(SseEvent),
     Closed,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WebSocketDirection {
+    Sent,
+    Received,
+}
+
+#[derive(Debug, Clone)]
+struct ReceivedWebSocketMessage {
+    direction: WebSocketDirection,
+    kind: String,
+    data: String,
+    received_at: String,
+}
+
+#[derive(Debug)]
+enum WebSocketStreamUpdate {
+    Connected {
+        url: String,
+    },
+    Message {
+        direction: WebSocketDirection,
+        kind: String,
+        data: String,
+    },
+    Closed,
+}
+
+#[derive(Debug)]
+enum WebSocketCommand {
+    SendText(String),
+    Close,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +224,13 @@ pub struct PostlyApp {
     sse_url: Option<String>,
     sse_started: bool,
     sse_connected: bool,
+    websocket_pending: Option<Receiver<Result<WebSocketStreamUpdate, String>>>,
+    websocket_commands: Option<tokio::sync::mpsc::UnboundedSender<WebSocketCommand>>,
+    websocket_messages: VecDeque<ReceivedWebSocketMessage>,
+    websocket_input: String,
+    websocket_url: Option<String>,
+    websocket_started: bool,
+    websocket_connected: bool,
     selected_environment: Option<String>,
     dirty: bool,
     status_message: String,
@@ -245,6 +296,13 @@ impl PostlyApp {
             sse_url: None,
             sse_started: false,
             sse_connected: false,
+            websocket_pending: None,
+            websocket_commands: None,
+            websocket_messages: VecDeque::new(),
+            websocket_input: String::new(),
+            websocket_url: None,
+            websocket_started: false,
+            websocket_connected: false,
             selected_environment: None,
             dirty: false,
             status_message,
@@ -430,6 +488,13 @@ impl PostlyApp {
         self.sse_url = None;
         self.sse_started = false;
         self.sse_connected = false;
+        self.websocket_pending = None;
+        self.websocket_commands = None;
+        self.websocket_messages.clear();
+        self.websocket_input.clear();
+        self.websocket_url = None;
+        self.websocket_started = false;
+        self.websocket_connected = false;
     }
 
     fn save_current_response(&mut self) -> Result<(), String> {
@@ -709,10 +774,157 @@ impl PostlyApp {
         Ok(())
     }
 
+    fn start_websocket_current(&mut self) -> Result<(), String> {
+        if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
+        {
+            return Ok(());
+        }
+        let request = self.edited_request()?;
+        let context = self.context();
+        let (command_sender, mut command_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<WebSocketCommand>();
+        let (sender, receiver) = mpsc::channel();
+        let error_sender = sender.clone();
+        thread::spawn(move || {
+            let result = (|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                runtime.block_on(async move {
+                    let websocket_request = build_websocket_request(&request, &context)?;
+                    let websocket_url = websocket_request.uri().to_string();
+                    let (mut socket, _) = tokio::time::timeout(
+                        Duration::from_secs(30),
+                        connect_async(websocket_request),
+                    )
+                    .await
+                    .map_err(|_| "WebSocket handshake timed out".to_owned())?
+                    .map_err(|error| format!("WebSocket connection failed: {error}"))?;
+                    sender
+                        .send(Ok(WebSocketStreamUpdate::Connected {
+                            url: websocket_url,
+                        }))
+                        .map_err(|_| "WebSocket console was closed".to_owned())?;
+                    loop {
+                        tokio::select! {
+                            inbound = socket.next() => {
+                                match inbound {
+                                    Some(Ok(Message::Text(text))) => {
+                                        sender.send(Ok(WebSocketStreamUpdate::Message {
+                                            direction: WebSocketDirection::Received,
+                                            kind: "text".to_owned(),
+                                            data: text.to_string(),
+                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                    }
+                                    Some(Ok(Message::Binary(bytes))) => {
+                                        sender.send(Ok(WebSocketStreamUpdate::Message {
+                                            direction: WebSocketDirection::Received,
+                                            kind: "binary".to_owned(),
+                                            data: format!(
+                                                "{} bytes · base64 {}",
+                                                bytes.len(),
+                                                base64::engine::general_purpose::STANDARD.encode(&bytes)
+                                            ),
+                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                    }
+                                    Some(Ok(Message::Ping(bytes))) => {
+                                        socket.send(Message::Pong(bytes.clone())).await
+                                            .map_err(|error| format!("could not reply to WebSocket ping: {error}"))?;
+                                        sender.send(Ok(WebSocketStreamUpdate::Message {
+                                            direction: WebSocketDirection::Received,
+                                            kind: "ping".to_owned(),
+                                            data: format!("{} bytes", bytes.len()),
+                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                    }
+                                    Some(Ok(Message::Pong(bytes))) => {
+                                        sender.send(Ok(WebSocketStreamUpdate::Message {
+                                            direction: WebSocketDirection::Received,
+                                            kind: "pong".to_owned(),
+                                            data: format!("{} bytes", bytes.len()),
+                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                    }
+                                    Some(Ok(Message::Close(frame))) => {
+                                        let data = frame.map(|frame| format!("{} ({})", frame.reason, frame.code))
+                                            .unwrap_or_else(|| "peer closed the connection".to_owned());
+                                        sender.send(Ok(WebSocketStreamUpdate::Message {
+                                            direction: WebSocketDirection::Received,
+                                            kind: "close".to_owned(),
+                                            data,
+                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                        break;
+                                    }
+                                    Some(Ok(Message::Frame(_))) => {}
+                                    Some(Err(error)) => {
+                                        return Err(format!("WebSocket receive failed: {error}"));
+                                    }
+                                    None => break,
+                                }
+                            }
+                            command = command_receiver.recv() => {
+                                match command {
+                                    Some(WebSocketCommand::SendText(text)) => {
+                                        socket.send(Message::Text(text.clone().into())).await
+                                            .map_err(|error| format!("WebSocket send failed: {error}"))?;
+                                        sender.send(Ok(WebSocketStreamUpdate::Message {
+                                            direction: WebSocketDirection::Sent,
+                                            kind: "text".to_owned(),
+                                            data: text,
+                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                    }
+                                    Some(WebSocketCommand::Close) | None => {
+                                        let _ = socket.close(None).await;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let _ = sender.send(Ok(WebSocketStreamUpdate::Closed));
+                    Ok::<(), String>(())
+                })
+            })();
+            if let Err(error) = result {
+                let _ = error_sender.send(Err(error));
+            }
+        });
+        self.clear_response();
+        self.websocket_pending = Some(receiver);
+        self.websocket_commands = Some(command_sender);
+        self.websocket_started = true;
+        self.status_message = "Connecting to WebSocket…".to_owned();
+        Ok(())
+    }
+
+    fn send_websocket_text(&mut self) -> Result<(), String> {
+        if !self.websocket_connected {
+            return Err("WebSocket is not connected".to_owned());
+        }
+        let text = std::mem::take(&mut self.websocket_input);
+        if text.is_empty() {
+            return Ok(());
+        }
+        let sender = self
+            .websocket_commands
+            .as_ref()
+            .ok_or_else(|| "WebSocket command channel is unavailable".to_owned())?;
+        sender
+            .send(WebSocketCommand::SendText(text))
+            .map_err(|_| "WebSocket connection is no longer available".to_owned())?;
+        Ok(())
+    }
+
+    fn close_websocket(&mut self) {
+        if let Some(sender) = &self.websocket_commands {
+            let _ = sender.send(WebSocketCommand::Close);
+        }
+    }
+
     fn poll_pending(&mut self) -> bool {
         let http_pending = self.poll_http_pending();
         let sse_pending = self.poll_sse_pending();
-        http_pending || sse_pending
+        let websocket_pending = self.poll_websocket_pending();
+        http_pending || sse_pending || websocket_pending
     }
 
     fn poll_http_pending(&mut self) -> bool {
@@ -788,7 +1000,7 @@ impl PostlyApp {
                         event,
                         received_at: Local::now().format("%H:%M:%S").to_string(),
                     });
-                    while self.sse_events.len() > MAX_SSE_EVENTS {
+                    while self.sse_events.len() > MAX_CONSOLE_ITEMS {
                         self.sse_events.pop_front();
                     }
                     self.status_message =
@@ -826,6 +1038,81 @@ impl PostlyApp {
             self.sse_pending = None;
         }
         self.sse_pending.is_some()
+    }
+
+    fn poll_websocket_pending(&mut self) -> bool {
+        let mut finished = false;
+        loop {
+            let result = {
+                let Some(receiver) = self.websocket_pending.as_ref() else {
+                    break;
+                };
+                receiver.try_recv()
+            };
+            match result {
+                Ok(Ok(WebSocketStreamUpdate::Connected { url })) => {
+                    self.websocket_url = Some(url);
+                    self.websocket_started = true;
+                    self.websocket_connected = true;
+                    self.status_message = "WebSocket connected".to_owned();
+                }
+                Ok(Ok(WebSocketStreamUpdate::Message {
+                    direction,
+                    kind,
+                    data,
+                })) => {
+                    self.websocket_started = true;
+                    self.websocket_messages.push_back(ReceivedWebSocketMessage {
+                        direction,
+                        kind,
+                        data,
+                        received_at: Local::now().format("%H:%M:%S").to_string(),
+                    });
+                    while self.websocket_messages.len() > MAX_CONSOLE_ITEMS {
+                        self.websocket_messages.pop_front();
+                    }
+                    self.status_message = format!(
+                        "WebSocket message · {} retained",
+                        self.websocket_messages.len()
+                    );
+                }
+                Ok(Ok(WebSocketStreamUpdate::Closed)) => {
+                    self.websocket_connected = false;
+                    self.status_message = format!(
+                        "WebSocket closed · {} message{}",
+                        self.websocket_messages.len(),
+                        if self.websocket_messages.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    );
+                    finished = true;
+                    break;
+                }
+                Ok(Err(error)) => {
+                    self.websocket_connected = false;
+                    self.websocket_started = true;
+                    self.status_message = "WebSocket failed".to_owned();
+                    self.response_error = Some(error);
+                    finished = true;
+                    break;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.websocket_connected = false;
+                    self.status_message = "WebSocket worker stopped unexpectedly".to_owned();
+                    self.response_error = Some("WebSocket worker stopped unexpectedly".to_owned());
+                    finished = true;
+                    break;
+                }
+            }
+        }
+        if finished {
+            self.websocket_pending = None;
+            self.websocket_commands = None;
+        }
+        self.websocket_pending.is_some()
     }
 
     fn draw_navigator(&mut self, ui: &mut egui::Ui) {
@@ -1036,10 +1323,13 @@ impl PostlyApp {
                 ui.add_space(7.0);
                 let mut send_clicked = false;
                 let mut stream_clicked = false;
+                let mut websocket_clicked = false;
                 let mut save_clicked = false;
                 let mut duplicate_clicked = false;
                 let mut delete_clicked = false;
-                let busy = self.pending.is_some() || self.sse_pending.is_some();
+                let busy = self.pending.is_some()
+                    || self.sse_pending.is_some()
+                    || self.websocket_pending.is_some();
                 ui.horizontal(|ui| {
                     if ui
                         .add(
@@ -1133,6 +1423,13 @@ impl PostlyApp {
                         {
                             stream_clicked = true;
                         }
+                        if ui
+                            .add_enabled(!busy, egui::Button::new("Connect WS"))
+                            .on_hover_text("Open a ws:// or wss:// interactive console")
+                            .clicked()
+                        {
+                            websocket_clicked = true;
+                        }
                     });
                 });
                 ui.add_space(3.0);
@@ -1159,6 +1456,11 @@ impl PostlyApp {
                 if stream_clicked {
                     if let Err(error) = self.start_sse_current() {
                         self.status_message = format!("SSE start failed: {error}");
+                    }
+                }
+                if websocket_clicked {
+                    if let Err(error) = self.start_websocket_current() {
+                        self.status_message = format!("WebSocket start failed: {error}");
                     }
                 }
             });
@@ -1579,6 +1881,29 @@ impl PostlyApp {
                             }),
                         );
                     }
+                    if self.websocket_started {
+                        let state = if self.websocket_connected {
+                            "connected"
+                        } else {
+                            "closed"
+                        };
+                        ui.label(
+                            RichText::new(format!(
+                                "WS {state} · {} message{}",
+                                self.websocket_messages.len(),
+                                if self.websocket_messages.len() == 1 {
+                                    ""
+                                } else {
+                                    "s"
+                                }
+                            ))
+                            .color(if self.websocket_connected {
+                                Color32::from_rgb(100, 205, 145)
+                            } else {
+                                MUTED
+                            }),
+                        );
+                    }
                 });
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
@@ -1598,6 +1923,12 @@ impl PostlyApp {
                             .clicked()
                     {
                         self.response_tab = ResponseTab::SseEvents;
+                    }
+                    if self.websocket_started
+                        && tab_button(ui, self.response_tab == ResponseTab::WebSocket, "WebSocket")
+                            .clicked()
+                    {
+                        self.response_tab = ResponseTab::WebSocket;
                     }
                 });
                 if self.response.is_some()
@@ -1634,19 +1965,92 @@ impl PostlyApp {
                     ui.colored_label(Color32::from_rgb(240, 125, 105), error);
                     if self.sse_started {
                         self.render_sse_content(ui);
+                    } else if self.websocket_started {
+                        self.render_websocket_content(ui);
                     }
                 } else if let Some(response) = &self.response {
                     self.render_response_content(ui, response);
                 } else if self.sse_started {
                     self.render_sse_content(ui);
-                } else if self.pending.is_some() {
-                    ui.label(RichText::new("Waiting for the local HTTP engine…").color(MUTED));
+                } else if self.websocket_started {
+                    self.render_websocket_content(ui);
+                } else if self.pending.is_some()
+                    || self.sse_pending.is_some()
+                    || self.websocket_pending.is_some()
+                {
+                    ui.label(RichText::new("Waiting for the local protocol worker…").color(MUTED));
                 } else {
                     ui.label(
                         RichText::new("Send a request to inspect its response here.").color(MUTED),
                     );
                 }
             });
+    }
+
+    fn render_websocket_content(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(
+                    self.websocket_url
+                        .as_deref()
+                        .unwrap_or("WebSocket endpoint"),
+                )
+                .small()
+                .color(MUTED),
+            );
+        });
+        ui.add_space(5.0);
+        if self.websocket_messages.is_empty() {
+            ui.label(RichText::new("Connected — send a text message below.").color(MUTED));
+        } else {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for (index, message) in self.websocket_messages.iter().enumerate() {
+                        ui.group(|ui| {
+                            ui.horizontal(|ui| {
+                                let (label, color) = match message.direction {
+                                    WebSocketDirection::Sent => ("OUT", ACCENT),
+                                    WebSocketDirection::Received => {
+                                        ("IN", Color32::from_rgb(100, 205, 145))
+                                    }
+                                };
+                                ui.label(
+                                    RichText::new(format!("#{} {label}", index + 1))
+                                        .strong()
+                                        .color(color),
+                                );
+                                ui.label(RichText::new(&message.kind).small().color(MUTED));
+                                ui.label(RichText::new(&message.received_at).small().color(MUTED));
+                            });
+                            ui.add_space(3.0);
+                            ui.add(
+                                egui::Label::new(RichText::new(&message.data).monospace()).wrap(),
+                            );
+                        });
+                        ui.add_space(4.0);
+                    }
+                });
+        }
+        ui.separator();
+        ui.horizontal(|ui| {
+            let send = ui
+                .add(
+                    TextEdit::singleline(&mut self.websocket_input)
+                        .hint_text("Text message")
+                        .desired_width(ui.available_width() - 110.0),
+                )
+                .lost_focus()
+                && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            if (ui.button("Send text").clicked() || send) && self.websocket_connected {
+                if let Err(error) = self.send_websocket_text() {
+                    self.response_error = Some(error);
+                }
+            }
+            if ui.button("Close").clicked() {
+                self.close_websocket();
+            }
+        });
     }
 
     fn render_sse_content(&self, ui: &mut egui::Ui) {
@@ -1832,8 +2236,127 @@ impl PostlyApp {
                 ui.label(format!("Final URL: {}", response.url));
             }
             ResponseTab::SseEvents => self.render_sse_content(ui),
+            ResponseTab::WebSocket => {
+                ui.label(RichText::new("WebSocket console is not active.").color(MUTED));
+            }
         }
     }
+}
+
+fn resolve_websocket_value(input: &str, context: &VariableContext) -> Result<String, String> {
+    let resolved = context.resolve(input);
+    if resolved.diagnostics.is_empty() {
+        Ok(resolved.value)
+    } else {
+        Err(resolved
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; "))
+    }
+}
+
+fn build_websocket_request(
+    request: &Request,
+    context: &VariableContext,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, String> {
+    let resolved_url = resolve_websocket_value(&request.url, context)?;
+    let mut url = url::Url::parse(&resolved_url).map_err(|error| error.to_string())?;
+    if !matches!(url.scheme(), "ws" | "wss") {
+        return Err("WebSocket endpoint must use ws:// or wss://".to_owned());
+    }
+    for pair in request.query.iter().filter(|pair| pair.enabled) {
+        let key = resolve_websocket_value(&pair.key, context)?;
+        let value = resolve_websocket_value(&pair.value, context)?;
+        url.query_pairs_mut().append_pair(&key, &value);
+    }
+
+    let mut websocket_request = url
+        .as_str()
+        .into_client_request()
+        .map_err(|error| format!("invalid WebSocket request: {error}"))?;
+    for header in request.headers.iter().filter(|header| header.enabled) {
+        let key = resolve_websocket_value(&header.key, context)?;
+        let value = resolve_websocket_value(&header.value, context)?;
+        let name = HeaderName::from_bytes(key.as_bytes())
+            .map_err(|error| format!("invalid WebSocket header name {key}: {error}"))?;
+        let value = HeaderValue::from_str(&value)
+            .map_err(|error| format!("invalid WebSocket header value for {key}: {error}"))?;
+        websocket_request.headers_mut().insert(name, value);
+    }
+    if !request.cookies.is_empty()
+        && !request
+            .headers
+            .iter()
+            .any(|header| header.enabled && header.key.eq_ignore_ascii_case("cookie"))
+    {
+        let cookie = request
+            .cookies
+            .iter()
+            .filter(|pair| pair.enabled)
+            .map(|pair| {
+                Ok::<_, String>(format!(
+                    "{}={}",
+                    resolve_websocket_value(&pair.key, context)?,
+                    resolve_websocket_value(&pair.value, context)?
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .join("; ");
+        if !cookie.is_empty() {
+            websocket_request.headers_mut().insert(
+                HeaderName::from_static("cookie"),
+                HeaderValue::from_str(&cookie).map_err(|error| error.to_string())?,
+            );
+        }
+    }
+
+    match &request.auth {
+        Auth::None => {}
+        Auth::Bearer { token } => {
+            let token = resolve_websocket_value(token, context)?;
+            websocket_request.headers_mut().insert(
+                HeaderName::from_static("authorization"),
+                HeaderValue::from_str(&format!("Bearer {token}"))
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        Auth::Basic { username, password } => {
+            let username = resolve_websocket_value(username, context)?;
+            let password = resolve_websocket_value(password, context)?;
+            let credentials =
+                base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+            websocket_request.headers_mut().insert(
+                HeaderName::from_static("authorization"),
+                HeaderValue::from_str(&format!("Basic {credentials}"))
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        Auth::ApiKey {
+            key,
+            value,
+            location,
+        } => {
+            let key = resolve_websocket_value(key, context)?;
+            let value = resolve_websocket_value(value, context)?;
+            match location {
+                ApiKeyLocation::Header => {
+                    let name = HeaderName::from_bytes(key.as_bytes()).map_err(|error| {
+                        format!("invalid WebSocket API key name {key}: {error}")
+                    })?;
+                    websocket_request.headers_mut().insert(
+                        name,
+                        HeaderValue::from_str(&value).map_err(|error| error.to_string())?,
+                    );
+                }
+                ApiKeyLocation::Query => {
+                    return Err("WebSocket API keys in query are not supported yet".to_owned());
+                }
+            }
+        }
+    }
+    Ok(websocket_request)
 }
 
 impl eframe::App for PostlyApp {
@@ -2258,7 +2781,7 @@ mod tests {
         );
         assert!(!app.sse_connected);
 
-        for index in 0..(MAX_SSE_EVENTS + 25) {
+        for index in 0..(MAX_CONSOLE_ITEMS + 25) {
             app.sse_events.push_back(ReceivedSseEvent {
                 event: SseEvent {
                     id: Some(index.to_string()),
@@ -2268,16 +2791,84 @@ mod tests {
                 },
                 received_at: "00:00:00".to_owned(),
             });
-            while app.sse_events.len() > MAX_SSE_EVENTS {
+            while app.sse_events.len() > MAX_CONSOLE_ITEMS {
                 app.sse_events.pop_front();
             }
         }
-        assert_eq!(app.sse_events.len(), MAX_SSE_EVENTS);
+        assert_eq!(app.sse_events.len(), MAX_CONSOLE_ITEMS);
         assert_eq!(
             app.sse_events
                 .front()
                 .map(|event| event.event.id.as_deref()),
             Some(Some("25"))
         );
+    }
+
+    #[test]
+    fn websocket_worker_connects_sends_and_receives_text() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener).expect("listener");
+                let (stream, _) = listener.accept().await.expect("connection");
+                let mut websocket = tokio_tungstenite::accept_async(stream)
+                    .await
+                    .expect("handshake");
+                if let Some(Ok(Message::Text(text))) = websocket.next().await {
+                    websocket
+                        .send(Message::Text(format!("echo:{text}").into()))
+                        .await
+                        .expect("echo");
+                    websocket.close(None).await.expect("close");
+                }
+            });
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.url = format!("ws://{address}/socket");
+        app.start_websocket_current().expect("start WebSocket");
+
+        let mut sent = false;
+        let mut finished = false;
+        for _ in 0..200 {
+            let active = app.poll_pending();
+            if app.websocket_connected && !sent {
+                app.websocket_input = "hello".to_owned();
+                app.send_websocket_text().expect("send text");
+                sent = true;
+            }
+            if sent
+                && !active
+                && app.websocket_messages.iter().any(|message| {
+                    matches!(message.direction, WebSocketDirection::Received)
+                        && message.data == "echo:hello"
+                })
+            {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.join().expect("server");
+        assert!(finished, "WebSocket worker did not finish");
+        assert!(!app.websocket_connected);
+        assert!(app.websocket_messages.iter().any(|message| {
+            matches!(message.direction, WebSocketDirection::Sent)
+                && message.kind == "text"
+                && message.data == "hello"
+        }));
+        assert!(app.websocket_messages.iter().any(|message| {
+            matches!(message.direction, WebSocketDirection::Received)
+                && message.kind == "text"
+                && message.data == "echo:hello"
+        }));
     }
 }

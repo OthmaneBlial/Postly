@@ -2944,12 +2944,16 @@ dependencies = [
 name = "postly-app"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "eframe",
+ "futures-util",
  "postly-core",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
+ "url",
 ]
 
 [[package]]
