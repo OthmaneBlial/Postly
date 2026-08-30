@@ -34,9 +34,6 @@ use tokio_tungstenite::{
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
 
 const ACCENT: Color32 = Color32::from_rgb(91, 141, 239);
-const MUTED: Color32 = Color32::from_rgb(145, 157, 177);
-const PANEL: Color32 = Color32::from_rgb(24, 29, 39);
-const SURFACE: Color32 = Color32::from_rgb(31, 37, 49);
 
 #[derive(Clone)]
 struct DynamicGrpcCodec {
@@ -346,6 +343,33 @@ impl AuthKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum ThemeMode {
+    Dark,
+    Light,
+    #[default]
+    System,
+}
+
+impl ThemeMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+            Self::System => "System",
+        }
+    }
+
+    fn preference(self) -> egui::ThemePreference {
+        match self {
+            Self::Dark => egui::ThemePreference::Dark,
+            Self::Light => egui::ThemePreference::Light,
+            Self::System => egui::ThemePreference::System,
+        }
+    }
+}
+
 const GUI_SETTINGS_FILE: &str = ".postly/gui-settings.json";
 const GUI_TABS_FILE: &str = ".postly/gui-tabs.json";
 const RECOVERY_FILE: &str = ".postly/recovery.json";
@@ -360,6 +384,7 @@ struct TransportSettings {
     ca_cert_path: String,
     client_identity_path: String,
     insecure_tls: bool,
+    theme: ThemeMode,
 }
 
 impl Default for TransportSettings {
@@ -370,6 +395,7 @@ impl Default for TransportSettings {
             ca_cert_path: String::new(),
             client_identity_path: String::new(),
             insecure_tls: false,
+            theme: ThemeMode::default(),
         }
     }
 }
@@ -1534,7 +1560,7 @@ impl PostlyApp {
                         "Paste a POSIX-shell cURL command. It becomes a new unsaved local draft.",
                     )
                     .small()
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
                 );
                 ui.add_space(8.0);
                 ui.add(
@@ -1658,7 +1684,9 @@ impl PostlyApp {
                 }
                 ui.add_space(6.0);
                 if filtered.is_empty() {
-                    ui.label(RichText::new("No matching command").color(MUTED));
+                    ui.label(
+                        RichText::new("No matching command").color(ui.visuals().weak_text_color()),
+                    );
                 } else {
                     for (index, action) in filtered.iter().enumerate() {
                         let selected = index == self.command_palette_selected;
@@ -1671,9 +1699,9 @@ impl PostlyApp {
                             .selectable_label(
                                 selected,
                                 RichText::new(label).color(if selected {
-                                    Color32::WHITE
+                                    ui.visuals().text_color()
                                 } else {
-                                    MUTED
+                                    ui.visuals().weak_text_color()
                                 }),
                             )
                             .clicked()
@@ -1699,7 +1727,7 @@ impl PostlyApp {
                 ui.label(
                     RichText::new("↑↓ navigate  ·  Enter run  ·  Esc close")
                         .small()
-                        .color(MUTED),
+                        .color(ui.visuals().weak_text_color()),
                 );
             });
         if let Some(action) = chosen {
@@ -3065,28 +3093,31 @@ impl PostlyApp {
         let mut history_clicked = None;
         let mut search_result_clicked = None;
         let mut clear_history_clicked = false;
+        let mut theme_changed = false;
         egui::Panel::left("navigator")
             .resizable(true)
             .default_size(280.0)
             .min_size(220.0)
-            .frame(egui::Frame::default().fill(PANEL))
+            .frame(egui::Frame::default().fill(ui.visuals().faint_bg_color))
             .show(ui, |ui| {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    ui.heading(RichText::new("POSTLY").color(Color32::WHITE));
+                    ui.heading(RichText::new("POSTLY").color(ui.visuals().text_color()));
                     ui.label(RichText::new("LOCAL").small().color(ACCENT));
                 });
                 ui.label(
                     RichText::new("Rust-native API workspace")
                         .small()
-                        .color(MUTED),
+                        .color(ui.visuals().weak_text_color()),
                 );
                 ui.add_space(14.0);
                 if ui
                     .add_sized(
                         [ui.available_width(), 34.0],
-                        egui::Button::new(RichText::new("＋  New request").color(Color32::WHITE))
-                            .fill(ACCENT),
+                        egui::Button::new(
+                            RichText::new("＋  New request").color(ui.visuals().text_color()),
+                        )
+                        .fill(ACCENT),
                     )
                     .clicked()
                 {
@@ -3097,7 +3128,7 @@ impl PostlyApp {
                     RichText::new("WORKSPACE SEARCH")
                         .small()
                         .strong()
-                        .color(MUTED),
+                        .color(ui.visuals().weak_text_color()),
                 );
                 if ui
                     .add(
@@ -3111,15 +3142,25 @@ impl PostlyApp {
                 }
                 if self.workspace_search.trim().is_empty() {
                     ui.add_space(12.0);
-                    ui.label(RichText::new("COLLECTIONS").small().strong().color(MUTED));
+                    ui.label(
+                        RichText::new("COLLECTIONS")
+                            .small()
+                            .strong()
+                            .color(ui.visuals().weak_text_color()),
+                    );
                     ui.add_space(5.0);
                     for (index, collection) in self.collections.iter().enumerate() {
                         let selected = index == self.selected_collection;
                         if ui
                             .selectable_label(
                                 selected,
-                                RichText::new(format!("▸  {}", collection.collection.name))
-                                    .color(if selected { Color32::WHITE } else { MUTED }),
+                                RichText::new(format!("▸  {}", collection.collection.name)).color(
+                                    if selected {
+                                        ui.visuals().text_color()
+                                    } else {
+                                        ui.visuals().weak_text_color()
+                                    },
+                                ),
                             )
                             .clicked()
                         {
@@ -3127,7 +3168,12 @@ impl PostlyApp {
                         }
                     }
                     ui.add_space(14.0);
-                    ui.label(RichText::new("REQUESTS").small().strong().color(MUTED));
+                    ui.label(
+                        RichText::new("REQUESTS")
+                            .small()
+                            .strong()
+                            .color(ui.visuals().weak_text_color()),
+                    );
                     ui.add_space(4.0);
                     egui::ScrollArea::vertical()
                         .id_salt("request-list")
@@ -3140,9 +3186,9 @@ impl PostlyApp {
                                     .selectable_label(
                                         selected,
                                         RichText::new(label).color(if selected {
-                                            Color32::WHITE
+                                            ui.visuals().text_color()
                                         } else {
-                                            MUTED
+                                            ui.visuals().weak_text_color()
                                         }),
                                     )
                                     .clicked()
@@ -3156,7 +3202,7 @@ impl PostlyApp {
                     ui.label(
                         RichText::new(format!("{result_count} matching request(s)"))
                             .small()
-                            .color(MUTED),
+                            .color(ui.visuals().weak_text_color()),
                     );
                     egui::ScrollArea::vertical()
                         .id_salt("workspace-search-results")
@@ -3170,7 +3216,10 @@ impl PostlyApp {
                                     .unwrap_or_else(|| result.collection.clone());
                                 let label = format!("{}  {}", result.method, result.name);
                                 if ui
-                                    .selectable_label(false, RichText::new(label).color(MUTED))
+                                    .selectable_label(
+                                        false,
+                                        RichText::new(label).color(ui.visuals().weak_text_color()),
+                                    )
                                     .on_hover_text(format!("{location} · {}", result.url))
                                     .clicked()
                                 {
@@ -3179,7 +3228,7 @@ impl PostlyApp {
                                 ui.label(
                                     RichText::new(format!("{location} · {}", result.url))
                                         .small()
-                                        .color(MUTED),
+                                        .color(ui.visuals().weak_text_color()),
                                 );
                             }
                         });
@@ -3187,7 +3236,12 @@ impl PostlyApp {
                 ui.add_space(10.0);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("HISTORY").small().strong().color(MUTED));
+                    ui.label(
+                        RichText::new("HISTORY")
+                            .small()
+                            .strong()
+                            .color(ui.visuals().weak_text_color()),
+                    );
                     if ui.small_button("Clear").clicked() {
                         clear_history_clicked = true;
                     }
@@ -3217,7 +3271,10 @@ impl PostlyApp {
                             let label =
                                 format!("{} {} · {}", entry.method, entry.request_name, status);
                             if ui
-                                .selectable_label(false, RichText::new(label).color(MUTED))
+                                .selectable_label(
+                                    false,
+                                    RichText::new(label).color(ui.visuals().weak_text_color()),
+                                )
                                 .on_hover_text(&entry.url)
                                 .clicked()
                             {
@@ -3227,7 +3284,12 @@ impl PostlyApp {
                     });
                 ui.add_space(8.0);
                 ui.separator();
-                ui.label(RichText::new("ENVIRONMENT").small().strong().color(MUTED));
+                ui.label(
+                    RichText::new("ENVIRONMENT")
+                        .small()
+                        .strong()
+                        .color(ui.visuals().weak_text_color()),
+                );
                 let selected_name = self
                     .selected_environment
                     .as_deref()
@@ -3271,12 +3333,40 @@ impl PostlyApp {
                     }
                 });
                 ui.add_space(8.0);
+                ui.separator();
+                ui.label(
+                    RichText::new("APPEARANCE")
+                        .small()
+                        .strong()
+                        .color(ui.visuals().weak_text_color()),
+                );
+                let previous_theme = self.transport.theme;
+                egui::ComboBox::from_id_salt("theme")
+                    .selected_text(self.transport.theme.label())
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        for mode in [ThemeMode::System, ThemeMode::Dark, ThemeMode::Light] {
+                            ui.selectable_value(&mut self.transport.theme, mode, mode.label());
+                        }
+                    });
+                theme_changed = self.transport.theme != previous_theme;
+                ui.add_space(8.0);
                 ui.label(
                     RichText::new(self.workspace.root().display().to_string())
                         .small()
-                        .color(MUTED),
+                        .color(ui.visuals().weak_text_color()),
                 );
             });
+        if theme_changed {
+            self.transport_settings_dirty = true;
+            if let Err(error) = self.transport.save(self.workspace.root()) {
+                self.status_message = format!("Appearance could not be saved: {error}");
+            } else {
+                self.transport_settings_dirty = false;
+                self.status_message =
+                    format!("{} theme saved locally", self.transport.theme.label());
+            }
+        }
         if new_clicked {
             self.new_request();
         }
@@ -3332,7 +3422,7 @@ impl PostlyApp {
                         "Plain values stay in the local environment file. Secret values are stored in the OS credential store; only opaque references are written.",
                     )
                     .small()
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
                 );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -3343,7 +3433,7 @@ impl PostlyApp {
                     );
                 });
                 ui.add_space(10.0);
-                ui.label(RichText::new("Variables").strong().color(Color32::WHITE));
+                ui.label(RichText::new("Variables").strong().color(ui.visuals().text_color()));
                 ui.add_space(4.0);
                 let mut remove = None;
                 egui::ScrollArea::vertical()
@@ -3354,10 +3444,10 @@ impl PostlyApp {
                             .striped(true)
                             .min_col_width(70.0)
                             .show(ui, |ui| {
-                                ui.label(RichText::new("Enabled").small().color(MUTED));
-                                ui.label(RichText::new("Key").small().color(MUTED));
-                                ui.label(RichText::new("Secret").small().color(MUTED));
-                                ui.label(RichText::new("Value").small().color(MUTED));
+                                ui.label(RichText::new("Enabled").small().color(ui.visuals().weak_text_color()));
+                                ui.label(RichText::new("Key").small().color(ui.visuals().weak_text_color()));
+                                ui.label(RichText::new("Secret").small().color(ui.visuals().weak_text_color()));
+                                ui.label(RichText::new("Value").small().color(ui.visuals().weak_text_color()));
                                 ui.end_row();
                                 for (index, row) in self
                                     .environment_editor_variables
@@ -3495,12 +3585,16 @@ impl PostlyApp {
 
     fn draw_request_header(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("request-header")
-            .frame(egui::Frame::default().fill(SURFACE))
+            .frame(egui::Frame::default().fill(ui.visuals().panel_fill))
             .show(ui, |ui| {
                 ui.add_space(8.0);
                 self.draw_request_tabs(ui);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("REQUEST").strong().color(MUTED));
+                    ui.label(
+                        RichText::new("REQUEST")
+                            .strong()
+                            .color(ui.visuals().weak_text_color()),
+                    );
                     ui.label(
                         RichText::new(if self.dirty { "• unsaved" } else { "saved" })
                             .small()
@@ -3511,7 +3605,11 @@ impl PostlyApp {
                             }),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(&self.status_message).small().color(MUTED));
+                        ui.label(
+                            RichText::new(&self.status_message)
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
                     });
                 });
                 if self.recovery_restored {
@@ -3645,7 +3743,11 @@ impl PostlyApp {
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new("SSE retries").small().color(MUTED));
+                        ui.label(
+                            RichText::new("SSE retries")
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
                         ui.add_enabled(
                             !busy,
                             egui::DragValue::new(&mut self.sse_reconnect_limit)
@@ -3716,11 +3818,11 @@ impl PostlyApp {
                 ui.add_space(12.0);
                 match self.editor_tab {
                     EditorTab::Params => {
-                        ui.heading(RichText::new("Query parameters").color(Color32::WHITE));
+                        ui.heading(RichText::new("Query parameters").color(ui.visuals().text_color()));
                         ui.label(
                             RichText::new("Values are resolved only when the request is sent.")
                                 .small()
-                                .color(MUTED),
+                                .color(ui.visuals().weak_text_color()),
                         );
                         ui.add_space(10.0);
                         self.dirty |= render_key_values(
@@ -3731,25 +3833,25 @@ impl PostlyApp {
                         );
                     }
                     EditorTab::Headers => {
-                        ui.heading(RichText::new("Headers").color(Color32::WHITE));
+                        ui.heading(RichText::new("Headers").color(ui.visuals().text_color()));
                         ui.label(
                             RichText::new(
                                 "Duplicate header names are preserved in the request model.",
                             )
                             .small()
-                            .color(MUTED),
+                            .color(ui.visuals().weak_text_color()),
                         );
                         ui.add_space(10.0);
                         self.dirty |= render_headers(ui, &mut self.request.headers);
                     }
                     EditorTab::Cookies => {
-                        ui.heading(RichText::new("Request cookies").color(Color32::WHITE));
+                        ui.heading(RichText::new("Request cookies").color(ui.visuals().text_color()));
                         ui.label(
                             RichText::new(
                                 "Explicit cookies are sent for this request and override the automatic jar header.",
                             )
                             .small()
-                            .color(MUTED),
+                            .color(ui.visuals().weak_text_color()),
                         );
                         ui.add_space(10.0);
                         self.dirty |= render_key_values(
@@ -3770,13 +3872,13 @@ impl PostlyApp {
     }
 
     fn render_grpc(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("gRPC method").color(Color32::WHITE));
+        ui.heading(RichText::new("gRPC method").color(ui.visuals().text_color()));
         ui.label(
             RichText::new(
                 "Use a local .proto file or discover the schema from the server. The JSON body is converted through the method descriptor.",
             )
             .small()
-            .color(MUTED),
+            .color(ui.visuals().weak_text_color()),
         );
         ui.add_space(10.0);
         let mut changed = false;
@@ -3792,7 +3894,7 @@ impl PostlyApp {
                     "Descriptors stay in memory. Leave the host empty unless the server routes reflection by virtual host.",
                 )
                 .small()
-                .color(MUTED),
+                .color(ui.visuals().weak_text_color()),
             );
             changed |= labeled_singleline(
                 ui,
@@ -3806,13 +3908,13 @@ impl PostlyApp {
                     "Relative paths use the workspace root; one include directory per line.",
                 )
                 .small()
-                .color(MUTED),
+                .color(ui.visuals().weak_text_color()),
             );
             ui.add_space(5.0);
             ui.label(
                 RichText::new("Include directories")
                     .strong()
-                    .color(Color32::WHITE),
+                    .color(ui.visuals().text_color()),
             );
             changed |= ui
                 .add(
@@ -3829,14 +3931,18 @@ impl PostlyApp {
         ui.label(
             RichText::new("Examples: /demo.Echo/Echo, demo.Echo/Echo or Echo/Echo")
                 .small()
-                .color(MUTED),
+                .color(ui.visuals().weak_text_color()),
         );
         ui.add_space(9.0);
-        ui.label(RichText::new("Metadata").strong().color(Color32::WHITE));
+        ui.label(
+            RichText::new("Metadata")
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
         ui.label(
             RichText::new("Enabled metadata values are resolved from the selected environment.")
                 .small()
-                .color(MUTED),
+                .color(ui.visuals().weak_text_color()),
         );
         changed |= render_key_values(
             ui,
@@ -3850,7 +3956,7 @@ impl PostlyApp {
                 "Unary and all streaming method shapes are supported. gRPC GUI calls use verified HTTP/2 TLS when the endpoint is HTTPS; proxy and insecure TLS options are rejected explicitly.",
             )
             .small()
-            .color(MUTED),
+            .color(ui.visuals().weak_text_color()),
         );
         if changed {
             self.dirty = true;
@@ -3858,7 +3964,7 @@ impl PostlyApp {
     }
 
     fn render_body(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("Request body").color(Color32::WHITE));
+        ui.heading(RichText::new("Request body").color(ui.visuals().text_color()));
         ui.add_space(8.0);
         let previous = self.body_kind;
         egui::ComboBox::from_id_salt("body-kind")
@@ -3924,7 +4030,10 @@ impl PostlyApp {
             || self.script_pending.is_some();
         match self.body_kind {
             BodyKind::None => {
-                ui.label(RichText::new("This request has no body.").color(MUTED));
+                ui.label(
+                    RichText::new("This request has no body.")
+                        .color(ui.visuals().weak_text_color()),
+                );
             }
             BodyKind::Raw | BodyKind::Json => {
                 if ui
@@ -3950,10 +4059,14 @@ impl PostlyApp {
                         "The query is sent as a standard JSON GraphQL envelope. Variables must be an object.",
                     )
                     .small()
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
                 );
                 ui.add_space(8.0);
-                ui.label(RichText::new("Query").strong().color(Color32::WHITE));
+                ui.label(
+                    RichText::new("Query")
+                        .strong()
+                        .color(ui.visuals().text_color()),
+                );
                 if ui
                     .add(
                         TextEdit::multiline(&mut self.graphql_query)
@@ -3970,7 +4083,7 @@ impl PostlyApp {
                 ui.label(
                     RichText::new("Operation name (optional)")
                         .strong()
-                        .color(Color32::WHITE),
+                        .color(ui.visuals().text_color()),
                 );
                 if ui
                     .add(
@@ -3984,7 +4097,7 @@ impl PostlyApp {
                 ui.label(
                     RichText::new("Variables (JSON object)")
                         .strong()
-                        .color(Color32::WHITE),
+                        .color(ui.visuals().text_color()),
                 );
                 if ui
                     .add(
@@ -4012,7 +4125,7 @@ impl PostlyApp {
                     ui.label(
                         RichText::new("Uses the current endpoint, headers and auth.")
                             .small()
-                            .color(MUTED),
+                            .color(ui.visuals().weak_text_color()),
                     );
                 });
             }
@@ -4022,7 +4135,7 @@ impl PostlyApp {
                         "Each enabled field is sent as application/x-www-form-urlencoded.",
                     )
                     .small()
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
                 );
                 ui.add_space(8.0);
                 if let RequestBody::FormUrlEncoded { fields } = &mut self.request.body {
@@ -4036,7 +4149,7 @@ impl PostlyApp {
                         "Use a value for text parts or a file path for upload parts. Disabled parts are not sent.",
                     )
                     .small()
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
                 );
                 ui.add_space(8.0);
                 if let RequestBody::Multipart { parts } = &mut self.request.body {
@@ -4049,7 +4162,7 @@ impl PostlyApp {
                         "The file is read only when the request is sent; its contents stay outside the project model.",
                     )
                     .small()
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
                 );
                 ui.add_space(8.0);
                 if let RequestBody::BinaryFile { path, content_type } = &mut self.request.body {
@@ -4068,7 +4181,7 @@ impl PostlyApp {
                     RichText::new(
                         "This body uses an older unsupported editor state; choose a specific body format above.",
                     )
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
                 );
             }
         }
@@ -4080,7 +4193,7 @@ impl PostlyApp {
     }
 
     fn render_auth(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("Authentication").color(Color32::WHITE));
+        ui.heading(RichText::new("Authentication").color(ui.visuals().text_color()));
         ui.add_space(8.0);
         let previous = self.auth_kind;
         egui::ComboBox::from_id_salt("auth-kind")
@@ -4103,7 +4216,10 @@ impl PostlyApp {
         ui.add_space(10.0);
         match self.auth_kind {
             AuthKind::None => {
-                ui.label(RichText::new("No authentication will be added.").color(MUTED));
+                ui.label(
+                    RichText::new("No authentication will be added.")
+                        .color(ui.visuals().weak_text_color()),
+                );
             }
             AuthKind::Bearer => {
                 ui.label("Token");
@@ -4165,7 +4281,7 @@ impl PostlyApp {
                         "Client Credentials fetches a token locally and sends it as Authorization.",
                     )
                     .small()
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
                 );
                 ui.label("Token URL");
                 if ui
@@ -4200,13 +4316,13 @@ impl PostlyApp {
     }
 
     fn render_transport(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("Connection settings").color(Color32::WHITE));
+        ui.heading(RichText::new("Connection settings").color(ui.visuals().text_color()));
         ui.label(
             RichText::new(
                 "These local settings apply to HTTP requests and SSE streams. Only file paths are stored.",
             )
             .small()
-            .color(MUTED),
+            .color(ui.visuals().weak_text_color()),
         );
         ui.add_space(10.0);
 
@@ -4226,7 +4342,7 @@ impl PostlyApp {
         ui.label(
             RichText::new("HTTP(S) proxy")
                 .strong()
-                .color(Color32::WHITE),
+                .color(ui.visuals().text_color()),
         );
         changed |= ui
             .add(
@@ -4238,13 +4354,13 @@ impl PostlyApp {
         ui.label(
             RichText::new("SOCKS and WebSocket proxying are not included in this slice.")
                 .small()
-                .color(MUTED),
+                .color(ui.visuals().weak_text_color()),
         );
         ui.add_space(6.0);
         ui.label(
             RichText::new("Additional CA certificate (PEM)")
                 .strong()
-                .color(Color32::WHITE),
+                .color(ui.visuals().text_color()),
         );
         changed |= ui
             .add(
@@ -4257,7 +4373,7 @@ impl PostlyApp {
         ui.label(
             RichText::new("Client identity (combined PEM)")
                 .strong()
-                .color(Color32::WHITE),
+                .color(ui.visuals().text_color()),
         );
         changed |= ui
             .add(
@@ -4269,7 +4385,7 @@ impl PostlyApp {
         ui.label(
             RichText::new("The PEM contains the client certificate chain followed by an unencrypted private key.")
                 .small()
-                .color(MUTED),
+                .color(ui.visuals().weak_text_color()),
         );
         ui.add_space(8.0);
         if ui
@@ -4307,7 +4423,11 @@ impl PostlyApp {
                 validate_clicked = true;
             }
             if self.transport_settings_dirty {
-                ui.label(RichText::new("unsaved").small().color(MUTED));
+                ui.label(
+                    RichText::new("unsaved")
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
             }
         });
         if save_clicked {
@@ -4328,18 +4448,18 @@ impl PostlyApp {
         ui.label(
             RichText::new("Stored locally at .postly/gui-settings.json, which is ignored by Git.")
                 .small()
-                .color(MUTED),
+                .color(ui.visuals().weak_text_color()),
         );
     }
 
     fn render_scripts(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("Scripts").color(Color32::WHITE));
+        ui.heading(RichText::new("Scripts").color(ui.visuals().text_color()));
         ui.label(
             RichText::new(
                 "Preserved Postman scripts are editable here. Execution is always explicit; GUI runs are local previews and never persist script changes automatically.",
             )
             .small()
-            .color(MUTED),
+            .color(ui.visuals().weak_text_color()),
         );
         let script_busy = self.script_pending.is_some()
             || self.pending.is_some()
@@ -4352,7 +4472,7 @@ impl PostlyApp {
         ui.label(
             RichText::new("Pre-request script")
                 .strong()
-                .color(Color32::WHITE),
+                .color(ui.visuals().text_color()),
         );
         if ui
             .add(
@@ -4379,14 +4499,14 @@ impl PostlyApp {
             ui.label(
                 RichText::new("Runs with the current request and variable snapshot.")
                     .small()
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
             );
         });
         ui.add_space(10.0);
         ui.label(
             RichText::new("Post-response / test script")
                 .strong()
-                .color(Color32::WHITE),
+                .color(ui.visuals().text_color()),
         );
         if ui
             .add(
@@ -4414,7 +4534,7 @@ impl PostlyApp {
                 ui.label(
                     RichText::new("Send the request first to provide a response.")
                         .small()
-                        .color(MUTED),
+                        .color(ui.visuals().weak_text_color()),
                 );
             }
         });
@@ -4424,7 +4544,7 @@ impl PostlyApp {
                 "The current script bridge is opt-in and requires Node.js. GUI runs are previews only; this is not a sandbox for hostile code. See docs/scripting.md.",
             )
             .small()
-            .color(MUTED),
+            .color(ui.visuals().weak_text_color()),
         );
         if let Some(error) = &self.script_error {
             ui.add_space(8.0);
@@ -4458,7 +4578,11 @@ impl PostlyApp {
                         ui.label(if test.passed { "✓" } else { "✗" });
                         ui.label(&test.name);
                         if let Some(error) = &test.error {
-                            ui.label(RichText::new(error).small().color(MUTED));
+                            ui.label(
+                                RichText::new(error)
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
                         }
                     });
                 }
@@ -4476,7 +4600,7 @@ impl PostlyApp {
                         "Preview output is not applied to the saved request or environment.",
                     )
                     .small()
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
                 );
             });
         }
@@ -4493,13 +4617,13 @@ impl PostlyApp {
     }
 
     fn render_assertions(&mut self, ui: &mut egui::Ui) {
-        ui.heading(RichText::new("Response assertions").color(Color32::WHITE));
+        ui.heading(RichText::new("Response assertions").color(ui.visuals().text_color()));
         ui.label(
             RichText::new(
                 "These local checks run in the collection runner and do not require Node.js.",
             )
             .small()
-            .color(MUTED),
+            .color(ui.visuals().weak_text_color()),
         );
         ui.add_space(8.0);
         let mut changed = false;
@@ -4510,7 +4634,7 @@ impl PostlyApp {
                     ui.label(
                         RichText::new(format!("Assertion {}", index + 1))
                             .strong()
-                            .color(Color32::WHITE),
+                            .color(ui.visuals().text_color()),
                     );
                     if ui.small_button("Remove").clicked() {
                         remove = Some(index);
@@ -4597,11 +4721,15 @@ impl PostlyApp {
             .resizable(true)
             .default_size(330.0)
             .min_size(180.0)
-            .frame(egui::Frame::default().fill(SURFACE))
+            .frame(egui::Frame::default().fill(ui.visuals().panel_fill))
             .show(ui, |ui| {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("RESPONSE").strong().color(MUTED));
+                    ui.label(
+                        RichText::new("RESPONSE")
+                            .strong()
+                            .color(ui.visuals().weak_text_color()),
+                    );
                     if let Some(response) = &self.response {
                         ui.label(
                             RichText::new(format!(
@@ -4638,7 +4766,7 @@ impl PostlyApp {
                             .color(if self.sse_connected {
                                 Color32::from_rgb(100, 205, 145)
                             } else {
-                                MUTED
+                                ui.visuals().weak_text_color()
                             }),
                         );
                     }
@@ -4661,7 +4789,7 @@ impl PostlyApp {
                             .color(if self.websocket_connected {
                                 Color32::from_rgb(100, 205, 145)
                             } else {
-                                MUTED
+                                ui.visuals().weak_text_color()
                             }),
                         );
                     }
@@ -4711,7 +4839,7 @@ impl PostlyApp {
                                 self.console_entries.len()
                             ))
                             .small()
-                            .color(MUTED),
+                            .color(ui.visuals().weak_text_color()),
                         );
                         if ui.button("Clear console").clicked() {
                             self.console_entries.clear();
@@ -4721,7 +4849,11 @@ impl PostlyApp {
                     && matches!(self.response_tab, ResponseTab::Pretty | ResponseTab::Raw)
                 {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Search").small().color(MUTED));
+                        ui.label(
+                            RichText::new("Search")
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
                         ui.add(
                             TextEdit::singleline(&mut self.response_search)
                                 .hint_text("find in response")
@@ -4769,10 +4901,14 @@ impl PostlyApp {
                     || self.websocket_pending.is_some()
                     || self.script_pending.is_some()
                 {
-                    ui.label(RichText::new("Waiting for the local protocol worker…").color(MUTED));
+                    ui.label(
+                        RichText::new("Waiting for the local protocol worker…")
+                            .color(ui.visuals().weak_text_color()),
+                    );
                 } else {
                     ui.label(
-                        RichText::new("Send a request to inspect its response here.").color(MUTED),
+                        RichText::new("Send a request to inspect its response here.")
+                            .color(ui.visuals().weak_text_color()),
                     );
                 }
             });
@@ -4787,12 +4923,15 @@ impl PostlyApp {
                         .unwrap_or("WebSocket endpoint"),
                 )
                 .small()
-                .color(MUTED),
+                .color(ui.visuals().weak_text_color()),
             );
         });
         ui.add_space(5.0);
         if self.websocket_messages.is_empty() {
-            ui.label(RichText::new("Connected — send a text message below.").color(MUTED));
+            ui.label(
+                RichText::new("Connected — send a text message below.")
+                    .color(ui.visuals().weak_text_color()),
+            );
         } else {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -4811,8 +4950,16 @@ impl PostlyApp {
                                         .strong()
                                         .color(color),
                                 );
-                                ui.label(RichText::new(&message.kind).small().color(MUTED));
-                                ui.label(RichText::new(&message.received_at).small().color(MUTED));
+                                ui.label(
+                                    RichText::new(&message.kind)
+                                        .small()
+                                        .color(ui.visuals().weak_text_color()),
+                                );
+                                ui.label(
+                                    RichText::new(&message.received_at)
+                                        .small()
+                                        .color(ui.visuals().weak_text_color()),
+                                );
                             });
                             ui.add_space(3.0);
                             ui.add(
@@ -4848,7 +4995,7 @@ impl PostlyApp {
         if self.console_entries.is_empty() {
             ui.label(
                 RichText::new("Execution, script and protocol diagnostics will appear here.")
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
             );
             return;
         }
@@ -4857,17 +5004,21 @@ impl PostlyApp {
             .show(ui, |ui| {
                 for entry in &self.console_entries {
                     let (label, color) = match entry.level {
-                        ConsoleLevel::Info => ("INFO", MUTED),
+                        ConsoleLevel::Info => ("INFO", ui.visuals().weak_text_color()),
                         ConsoleLevel::Warn => ("WARN", Color32::from_rgb(235, 180, 80)),
                         ConsoleLevel::Error => ("ERROR", Color32::from_rgb(240, 125, 105)),
                     };
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(&entry.at).small().color(MUTED));
+                        ui.label(
+                            RichText::new(&entry.at)
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
                         ui.label(RichText::new(label).small().strong().color(color));
                         ui.label(
                             RichText::new(&entry.message)
                                 .monospace()
-                                .color(Color32::WHITE),
+                                .color(ui.visuals().text_color()),
                         );
                     });
                 }
@@ -4877,17 +5028,31 @@ impl PostlyApp {
     fn render_sse_content(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if let Some(content_type) = &self.sse_content_type {
-                ui.label(RichText::new(content_type).small().color(MUTED));
+                ui.label(
+                    RichText::new(content_type)
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
             }
             if let Some(protocol) = &self.sse_protocol {
-                ui.label(RichText::new(protocol).small().color(MUTED));
+                ui.label(
+                    RichText::new(protocol)
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
             }
             if let Some(url) = &self.sse_url {
-                ui.label(RichText::new(url).small().color(MUTED));
+                ui.label(
+                    RichText::new(url)
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
             }
         });
         if self.sse_events.is_empty() {
-            ui.label(RichText::new("Waiting for SSE events…").color(MUTED));
+            ui.label(
+                RichText::new("Waiting for SSE events…").color(ui.visuals().weak_text_color()),
+            );
             return;
         }
         ui.add_space(5.0);
@@ -4902,11 +5067,17 @@ impl PostlyApp {
                                     .strong()
                                     .color(ACCENT),
                             );
-                            ui.label(RichText::new(&received.received_at).small().color(MUTED));
+                            ui.label(
+                                RichText::new(&received.received_at)
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
                             if let Some(event) = &received.event.event {
                                 ui.label(RichText::new(format!("event: {event}")));
                             } else {
-                                ui.label(RichText::new("message").color(MUTED));
+                                ui.label(
+                                    RichText::new("message").color(ui.visuals().weak_text_color()),
+                                );
                             }
                             if let Some(id) = &received.event.id {
                                 ui.label(RichText::new(format!("id: {id}")));
@@ -4928,7 +5099,9 @@ impl PostlyApp {
 
     fn render_graphql_schema_content(&mut self, ui: &mut egui::Ui) {
         if self.pending_graphql_schema {
-            ui.label(RichText::new("Fetching GraphQL schema…").color(MUTED));
+            ui.label(
+                RichText::new("Fetching GraphQL schema…").color(ui.visuals().weak_text_color()),
+            );
             return;
         }
         if let Some(error) = &self.graphql_schema_error {
@@ -4938,18 +5111,23 @@ impl PostlyApp {
                     "The endpoint may disable introspection or return an incomplete schema.",
                 )
                 .small()
-                .color(MUTED),
+                .color(ui.visuals().weak_text_color()),
             );
             return;
         }
         let Some(schema) = self.graphql_schema.as_ref() else {
             ui.label(
-                RichText::new("Choose Inspect schema in the GraphQL body editor.").color(MUTED),
+                RichText::new("Choose Inspect schema in the GraphQL body editor.")
+                    .color(ui.visuals().weak_text_color()),
             );
             return;
         };
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Roots").strong().color(Color32::WHITE));
+            ui.label(
+                RichText::new("Roots")
+                    .strong()
+                    .color(ui.visuals().text_color()),
+            );
             for (label, value) in [
                 ("query", schema.query_type.as_deref()),
                 ("mutation", schema.mutation_type.as_deref()),
@@ -4958,18 +5136,22 @@ impl PostlyApp {
                 ui.label(
                     RichText::new(format!("{label}: {}", value.unwrap_or("—")))
                         .small()
-                        .color(MUTED),
+                        .color(ui.visuals().weak_text_color()),
                 );
             }
             ui.label(
                 RichText::new(format!("{} named types", schema.types.len()))
                     .small()
-                    .color(MUTED),
+                    .color(ui.visuals().weak_text_color()),
             );
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Filter").small().color(MUTED));
+            ui.label(
+                RichText::new("Filter")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
             ui.add(
                 TextEdit::singleline(&mut self.graphql_schema_search)
                     .hint_text("type, field or description")
@@ -5026,7 +5208,11 @@ impl PostlyApp {
                     .default_open(is_root || !query.is_empty())
                     .show(ui, |ui| {
                         if let Some(description) = &graphql_type.description {
-                            ui.label(RichText::new(description).small().color(MUTED));
+                            ui.label(
+                                RichText::new(description)
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
                         }
                         for field in &matching_fields {
                             let arguments = if field.arguments.is_empty() {
@@ -5058,14 +5244,23 @@ impl PostlyApp {
                                 }
                             });
                             if let Some(description) = &field.description {
-                                ui.label(RichText::new(description).small().color(MUTED));
+                                ui.label(
+                                    RichText::new(description)
+                                        .small()
+                                        .color(ui.visuals().weak_text_color()),
+                                );
                             }
                         }
                         for input in &graphql_type.input_fields {
                             ui.monospace(format!("{}: {}", input.name, input.type_name));
                         }
                         if !graphql_type.enum_values.is_empty() {
-                            ui.label(RichText::new("Values").small().strong().color(MUTED));
+                            ui.label(
+                                RichText::new("Values")
+                                    .small()
+                                    .strong()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
                             ui.horizontal_wrapped(|ui| {
                                 for value in &graphql_type.enum_values {
                                     ui.monospace(&value.name);
@@ -5079,7 +5274,7 @@ impl PostlyApp {
                                     graphql_type.possible_types.join(", ")
                                 ))
                                 .small()
-                                .color(MUTED),
+                                .color(ui.visuals().weak_text_color()),
                             );
                         }
                     });
@@ -5107,13 +5302,13 @@ impl PostlyApp {
                                 if total == 1 { "" } else { "es" }
                             ))
                             .small()
-                            .color(MUTED),
+                            .color(ui.visuals().weak_text_color()),
                         );
                         if lines.len() == 50 {
                             ui.label(
                                 RichText::new("showing the first 50 matching lines")
                                     .small()
-                                    .color(MUTED),
+                                    .color(ui.visuals().weak_text_color()),
                             );
                         }
                     });
@@ -5138,7 +5333,7 @@ impl PostlyApp {
                                     egui::Label::new(
                                         RichText::new(format!("{:>5}", index + 1))
                                             .monospace()
-                                            .color(MUTED),
+                                            .color(ui.visuals().weak_text_color()),
                                     ),
                                 );
                                 let line = lines.get(index).copied().unwrap_or_default();
@@ -5167,7 +5362,10 @@ impl PostlyApp {
             }
             ResponseTab::Cookies => {
                 if response.cookies.is_empty() {
-                    ui.label(RichText::new("No Set-Cookie headers in this response.").color(MUTED));
+                    ui.label(
+                        RichText::new("No Set-Cookie headers in this response.")
+                            .color(ui.visuals().weak_text_color()),
+                    );
                 } else {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         egui::Grid::new("response-cookies")
@@ -5220,11 +5418,15 @@ impl PostlyApp {
             ResponseTab::Console => {}
             ResponseTab::SseEvents => self.render_sse_content(ui),
             ResponseTab::WebSocket => {
-                ui.label(RichText::new("WebSocket console is not active.").color(MUTED));
+                ui.label(
+                    RichText::new("WebSocket console is not active.")
+                        .color(ui.visuals().weak_text_color()),
+                );
             }
             ResponseTab::GraphqlSchema => {
                 ui.label(
-                    RichText::new("Open the Schema tab to browse GraphQL types.").color(MUTED),
+                    RichText::new("Open the Schema tab to browse GraphQL types.")
+                        .color(ui.visuals().weak_text_color()),
                 );
             }
         }
@@ -5703,7 +5905,7 @@ async fn execute_grpc_request(
 impl eframe::App for PostlyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        ctx.set_visuals(egui::Visuals::dark());
+        ctx.set_theme(self.transport.theme.preference());
         self.handle_global_shortcuts(&ctx);
         let pending = self.poll_pending();
         self.draw_navigator(ui);
@@ -5741,9 +5943,9 @@ fn tab_button(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response 
     };
     ui.add(
         egui::Button::new(RichText::new(label).color(if selected {
-            Color32::WHITE
+            ui.visuals().text_color()
         } else {
-            MUTED
+            ui.visuals().weak_text_color()
         }))
         .fill(fill),
     )
@@ -5817,9 +6019,21 @@ fn render_key_values(
         .striped(true)
         .min_col_width(120.0)
         .show(ui, |ui| {
-            ui.label(RichText::new("Enabled").small().color(MUTED));
-            ui.label(RichText::new("Key").small().color(MUTED));
-            ui.label(RichText::new("Value").small().color(MUTED));
+            ui.label(
+                RichText::new("Enabled")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.label(
+                RichText::new("Key")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.label(
+                RichText::new("Value")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
             ui.end_row();
             for (index, pair) in values.iter_mut().enumerate() {
                 changed |= ui.checkbox(&mut pair.enabled, "").changed();
@@ -5849,11 +6063,31 @@ fn render_multipart_parts(ui: &mut egui::Ui, parts: &mut Vec<MultipartPart>) -> 
         .striped(true)
         .min_col_width(100.0)
         .show(ui, |ui| {
-            ui.label(RichText::new("Enabled").small().color(MUTED));
-            ui.label(RichText::new("Name").small().color(MUTED));
-            ui.label(RichText::new("Value").small().color(MUTED));
-            ui.label(RichText::new("File path").small().color(MUTED));
-            ui.label(RichText::new("Content type").small().color(MUTED));
+            ui.label(
+                RichText::new("Enabled")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.label(
+                RichText::new("Name")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.label(
+                RichText::new("Value")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.label(
+                RichText::new("File path")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.label(
+                RichText::new("Content type")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
             ui.end_row();
             for (index, part) in parts.iter_mut().enumerate() {
                 changed |= ui.checkbox(&mut part.enabled, "").changed();
@@ -5899,9 +6133,21 @@ fn render_headers(ui: &mut egui::Ui, headers: &mut Vec<HeaderEntry>) -> bool {
         .striped(true)
         .min_col_width(120.0)
         .show(ui, |ui| {
-            ui.label(RichText::new("Enabled").small().color(MUTED));
-            ui.label(RichText::new("Name").small().color(MUTED));
-            ui.label(RichText::new("Value").small().color(MUTED));
+            ui.label(
+                RichText::new("Enabled")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.label(
+                RichText::new("Name")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.label(
+                RichText::new("Value")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
             ui.end_row();
             for (index, header) in headers.iter_mut().enumerate() {
                 changed |= ui.checkbox(&mut header.enabled, "").changed();
@@ -6654,6 +6900,7 @@ mod tests {
         app.transport.ca_cert_path = "/tmp/company-ca.pem".to_owned();
         app.transport.client_identity_path = "/tmp/client-identity.pem".to_owned();
         app.transport.insecure_tls = true;
+        app.transport.theme = ThemeMode::Light;
         app.transport_settings_dirty = true;
         app.save_transport_settings().expect("save settings");
 
@@ -6671,6 +6918,7 @@ mod tests {
             "/tmp/client-identity.pem"
         );
         assert!(reopened.transport.insecure_tls);
+        assert_eq!(reopened.transport.theme, ThemeMode::Light);
         assert!(!reopened.transport_settings_dirty);
     }
 

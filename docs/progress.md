@@ -98,6 +98,8 @@ Implemented:
 - Native GUI developer console retains bounded execution, protocol and script
   events, exposes warnings/errors separately and redacts known sensitive values
   before display.
+- Native GUI appearance supports persisted dark, light and system themes while
+  deriving secondary text, panels and headings from the active egui palette.
 - `postly mock` serves saved response examples through a deterministic local HTTP
   server, with method/path routing, response headers and bodies, status codes,
   bounded request-header parsing, optional per-example delay and `--once` mode.

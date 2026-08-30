@@ -29,6 +29,11 @@ The native GUI keeps saved request-tab paths and the active tab in the ignored
 tab points to a canonical request file, while an unsaved draft remains in
 memory and is covered by the separate recovery snapshot.
 
+The GUI persists its appearance preference alongside transport settings in
+`.postly/gui-settings.json`. Dark, light and system mode are mapped to egui's
+theme preference; the interface uses the active palette for custom panels and
+secondary text so light mode remains readable.
+
 The CLI mock server is a read-only runtime over the same canonical files. It
 loads saved response examples, derives routes from each request method and URL
 path, and never writes to the workspace while serving. Mock-only delay metadata
