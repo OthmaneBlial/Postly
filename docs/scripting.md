@@ -17,7 +17,8 @@ The supported compatibility slice includes:
 - `pm.variables.get/set/replaceIn`
 - `pm.request` URL, method and readable headers
 - `pm.response.code/status/responseTime/text/json/headers/cookies`
-- `pm.test` and `pm.expect` equality, inclusion, property and boolean checks
+- `pm.test` and `pm.expect` equality, inclusion, property, boolean, numeric, type, regex and negated checks
+- `pm.response.to.be.ok`, response header checks and `pm.response.cookies.get`
 - `console.log`, `console.warn` and `console.error` capture
 
 Script output is kept local. CLI output reports assertions but deliberately

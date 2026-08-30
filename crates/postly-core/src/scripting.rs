@@ -256,25 +256,41 @@ function assert(condition, message) {
 }
 
 function expect(value) {
-  const to = {
-    equal: (expected) => assert(value === expected, "expected " + JSON.stringify(value) + " to equal " + JSON.stringify(expected)),
-    eql: (expected) => assert(JSON.stringify(value) === JSON.stringify(expected), "expected " + JSON.stringify(value) + " to deeply equal " + JSON.stringify(expected)),
-    include: (expected) => assert(value.includes(expected), "expected " + JSON.stringify(value) + " to include " + JSON.stringify(expected)),
-    have: {
-      property: function (name, expected) {
-        assert(value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, name), "expected property " + name);
-        if (arguments.length > 1) assert(value[name] === expected, "expected property " + name + " to equal " + JSON.stringify(expected));
+  function expectation(negated) {
+    const prefix = negated ? " not" : "";
+    const check = (condition, message) => assert(negated ? !condition : condition, message);
+    const to = {
+      equal: (expected) => check(value === expected, "expected " + JSON.stringify(value) + " to" + prefix + " equal " + JSON.stringify(expected)),
+      eql: (expected) => check(JSON.stringify(value) === JSON.stringify(expected), "expected " + JSON.stringify(value) + " to" + prefix + " deeply equal " + JSON.stringify(expected)),
+      include: (expected) => {
+        const included = typeof value === "string" || Array.isArray(value)
+          ? value.includes(expected)
+          : value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, expected);
+        check(included, "expected " + JSON.stringify(value) + " to" + prefix + " include " + JSON.stringify(expected));
+      },
+      match: (pattern) => check(typeof value === "string" && pattern.test(value), "expected " + JSON.stringify(value) + " to" + prefix + " match the pattern"),
+      have: {
+        property: function (name, expected) {
+          const present = value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, name);
+          check(present, "expected property " + name);
+          if (arguments.length > 1 && present) check(value[name] === expected, "expected property " + name + " to" + prefix + " equal " + JSON.stringify(expected));
+        }
       }
-    }
-  };
-  Object.defineProperty(to, "be", {
-    value: {
-      get true() { assert(value === true, "expected " + JSON.stringify(value) + " to be true"); return true; },
-      get false() { assert(value === false, "expected " + JSON.stringify(value) + " to be false"); return true; },
-      get ok() { assert(Boolean(value), "expected " + JSON.stringify(value) + " to be truthy"); return true; }
-    }
-  });
-  return { to };
+    };
+    Object.defineProperty(to, "be", {
+      value: {
+        get true() { check(value === true, "expected " + JSON.stringify(value) + " to" + prefix + " be true"); return true; },
+        get false() { check(value === false, "expected " + JSON.stringify(value) + " to" + prefix + " be false"); return true; },
+        get ok() { check(Boolean(value), "expected " + JSON.stringify(value) + " to" + prefix + " be truthy"); return true; },
+        above: (expected) => check(value > expected, "expected " + JSON.stringify(value) + " to" + prefix + " be above " + expected),
+        below: (expected) => check(value < expected, "expected " + JSON.stringify(value) + " to" + prefix + " be below " + expected),
+        a: (type) => check(typeof value === text(type), "expected value to" + prefix + " be a " + type)
+      }
+    });
+    Object.defineProperty(to, "not", { get: () => expectation(!negated) });
+    return to;
+  }
+  return { to: expectation(false) };
 }
 
 const responseData = input.response;
@@ -285,20 +301,34 @@ if (responseData) {
     const found = responseHeaders.find((header) => header.key.toLowerCase() === text(name).toLowerCase() && header.enabled !== false);
     return found ? found.value : undefined;
   };
+  const responseCookies = responseData.cookies || [];
+  responseCookies.get = (name) => {
+    const found = responseCookies.find((cookie) => cookie.name.toLowerCase() === text(name).toLowerCase());
+    return found ? found.value : undefined;
+  };
+  const responseTo = {
+    have: {
+      status: (expected) => assert(responseData.status === expected, "expected status " + responseData.status + " to equal " + expected),
+      header: (name) => assert(responseHeaders.get(name) !== undefined, "expected response header " + name)
+    }
+  };
+  Object.defineProperty(responseTo, "be", {
+    value: {
+      get ok() {
+        assert(responseData.status >= 200 && responseData.status < 400, "expected response to be ok");
+        return true;
+      }
+    }
+  });
   response = {
     code: responseData.status,
     status: responseData.status_text,
     responseTime: responseData.duration_ms,
     headers: responseHeaders,
-    cookies: responseData.cookies || [],
+    cookies: responseCookies,
     text: () => responseData.body_text,
     json: () => JSON.parse(responseData.body_text),
-    to: {
-      have: {
-        status: (expected) => assert(responseData.status === expected, "expected status " + responseData.status + " to equal " + expected),
-        header: (name) => assert(responseHeaders.get(name) !== undefined, "expected response header " + name)
-      }
-    }
+    to: responseTo
   };
 }
 
@@ -384,7 +414,10 @@ mod tests {
         let response = HttpResponse {
             status: 201,
             status_text: "Created".to_owned(),
-            headers: Vec::new(),
+            headers: vec![crate::model::HeaderEntry::enabled(
+                "Content-Type",
+                "application/json",
+            )],
             body: br#"{"ok":true}"#.to_vec(),
             content_type: Some("application/json".to_owned()),
             duration_ms: 4,
@@ -413,16 +446,28 @@ mod tests {
                 pm.test("cookie", function () {
                     pm.expect(pm.response.cookies[0].name).to.eql("session");
                 });
+                pm.test("common matchers", function () {
+                    pm.response.to.be.ok;
+                    pm.response.to.have.header("content-type");
+                    pm.expect(pm.response.headers.get("content-type")).to.include("json");
+                    pm.expect(pm.response.cookies.get("SESSION")).to.eql("abc");
+                    pm.expect(pm.response.responseTime).to.be.below(10);
+                    pm.expect(pm.response.status).to.match(/Created/);
+                    pm.expect(pm.response.code).to.not.equal(200);
+                    pm.expect(pm.response.json()).to.be.a("object");
+                    pm.expect(pm.response.json()).to.have.property("ok", true);
+                });
             "#,
             &request,
             Some(&response),
             &VariableContext::default(),
         )
         .expect("script");
-        assert_eq!(result.tests.len(), 3);
+        assert_eq!(result.tests.len(), 4);
         assert!(!result.tests[0].passed);
         assert!(result.tests[1].passed);
         assert!(result.tests[2].passed);
+        assert!(result.tests[3].passed);
         assert_eq!(result.request["name"], "Scripted");
     }
 }

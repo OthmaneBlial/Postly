@@ -29,6 +29,7 @@ Implemented:
 - saved request rename/folder changes relocate the canonical file while preserving request identity.
 - OpenAPI 3 JSON/YAML import for common operations, parameters, JSON bodies and auth placeholders.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
+- Common response assertions now cover headers, cookies, status health, numeric/type/regex and negated expectations.
 - Stateful in-memory cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
 - runner iteration data from JSON objects/arrays plus pretty, JSON and JUnit reporters.
