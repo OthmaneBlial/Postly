@@ -14,8 +14,8 @@ use futures_util::{SinkExt, StreamExt};
 use postly_core::{
     parse_graphql_response, parse_graphql_schema, schema_introspection_query, ApiKeyLocation,
     Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions, Environment, GraphqlSchema,
-    HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, Request,
-    RequestBody, RequestSearchResult, ResponseView, SseEvent, SseParser, VariableContext,
+    HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, MultipartPart,
+    Request, RequestBody, RequestSearchResult, ResponseView, SseEvent, SseParser, VariableContext,
     Workspace,
 };
 use serde::{Deserialize, Serialize};
@@ -156,6 +156,9 @@ enum BodyKind {
     Raw,
     Json,
     Graphql,
+    FormUrlEncoded,
+    Multipart,
+    BinaryFile,
     Advanced,
 }
 
@@ -166,6 +169,9 @@ impl BodyKind {
             Self::Raw => "Raw text",
             Self::Json => "JSON",
             Self::Graphql => "GraphQL",
+            Self::FormUrlEncoded => "Form URL encoded",
+            Self::Multipart => "Multipart form-data",
+            Self::BinaryFile => "Binary file",
             Self::Advanced => "Advanced body",
         }
     }
@@ -607,10 +613,16 @@ impl PostlyApp {
                 self.graphql_operation_name = operation_name.clone().unwrap_or_default();
                 self.body_text.clear();
             }
-            RequestBody::FormUrlEncoded { .. }
-            | RequestBody::Multipart { .. }
-            | RequestBody::BinaryFile { .. } => {
-                self.body_kind = BodyKind::Advanced;
+            RequestBody::FormUrlEncoded { .. } => {
+                self.body_kind = BodyKind::FormUrlEncoded;
+                self.body_text.clear();
+            }
+            RequestBody::Multipart { .. } => {
+                self.body_kind = BodyKind::Multipart;
+                self.body_text.clear();
+            }
+            RequestBody::BinaryFile { .. } => {
+                self.body_kind = BodyKind::BinaryFile;
                 self.body_text.clear();
             }
         }
@@ -921,6 +933,28 @@ impl PostlyApp {
                         .then(|| self.graphql_operation_name.clone()),
                 }
             }
+            BodyKind::FormUrlEncoded => match &request.body {
+                RequestBody::FormUrlEncoded { fields } => RequestBody::FormUrlEncoded {
+                    fields: fields.clone(),
+                },
+                _ => RequestBody::FormUrlEncoded { fields: Vec::new() },
+            },
+            BodyKind::Multipart => match &request.body {
+                RequestBody::Multipart { parts } => RequestBody::Multipart {
+                    parts: parts.clone(),
+                },
+                _ => RequestBody::Multipart { parts: Vec::new() },
+            },
+            BodyKind::BinaryFile => match &request.body {
+                RequestBody::BinaryFile { path, content_type } => RequestBody::BinaryFile {
+                    path: path.clone(),
+                    content_type: content_type.clone(),
+                },
+                _ => RequestBody::BinaryFile {
+                    path: String::new(),
+                    content_type: None,
+                },
+            },
             BodyKind::Advanced => request.body,
         };
         for (index, assertion) in request.assertions.iter_mut().enumerate() {
@@ -2278,6 +2312,9 @@ impl PostlyApp {
                     BodyKind::Raw,
                     BodyKind::Json,
                     BodyKind::Graphql,
+                    BodyKind::FormUrlEncoded,
+                    BodyKind::Multipart,
+                    BodyKind::BinaryFile,
                 ] {
                     ui.selectable_value(&mut self.body_kind, kind, kind.label());
                 }
@@ -2300,6 +2337,25 @@ impl PostlyApp {
                 if self.graphql_variables.is_empty() {
                     self.graphql_variables = "{}".to_owned();
                 }
+            }
+            match self.body_kind {
+                BodyKind::FormUrlEncoded => {
+                    self.request.body = RequestBody::FormUrlEncoded { fields: Vec::new() };
+                }
+                BodyKind::Multipart => {
+                    self.request.body = RequestBody::Multipart { parts: Vec::new() };
+                }
+                BodyKind::BinaryFile => {
+                    self.request.body = RequestBody::BinaryFile {
+                        path: String::new(),
+                        content_type: None,
+                    };
+                }
+                BodyKind::None
+                | BodyKind::Raw
+                | BodyKind::Json
+                | BodyKind::Graphql
+                | BodyKind::Advanced => {}
             }
         }
         ui.add_space(10.0);
@@ -2401,10 +2457,57 @@ impl PostlyApp {
                     );
                 });
             }
+            BodyKind::FormUrlEncoded => {
+                ui.label(
+                    RichText::new(
+                        "Each enabled field is sent as application/x-www-form-urlencoded.",
+                    )
+                    .small()
+                    .color(MUTED),
+                );
+                ui.add_space(8.0);
+                if let RequestBody::FormUrlEncoded { fields } = &mut self.request.body {
+                    self.dirty |=
+                        render_key_values(ui, fields, "form-url-encoded", "＋ Add form field");
+                }
+            }
+            BodyKind::Multipart => {
+                ui.label(
+                    RichText::new(
+                        "Use a value for text parts or a file path for upload parts. Disabled parts are not sent.",
+                    )
+                    .small()
+                    .color(MUTED),
+                );
+                ui.add_space(8.0);
+                if let RequestBody::Multipart { parts } = &mut self.request.body {
+                    self.dirty |= render_multipart_parts(ui, parts);
+                }
+            }
+            BodyKind::BinaryFile => {
+                ui.label(
+                    RichText::new(
+                        "The file is read only when the request is sent; its contents stay outside the project model.",
+                    )
+                    .small()
+                    .color(MUTED),
+                );
+                ui.add_space(8.0);
+                if let RequestBody::BinaryFile { path, content_type } = &mut self.request.body {
+                    let mut changed = labeled_singleline(ui, "File path", path);
+                    let mut content_type_value = content_type.clone().unwrap_or_default();
+                    if labeled_singleline(ui, "Content type", &mut content_type_value) {
+                        *content_type =
+                            (!content_type_value.trim().is_empty()).then_some(content_type_value);
+                        changed = true;
+                    }
+                    self.dirty |= changed;
+                }
+            }
             BodyKind::Advanced => {
                 ui.label(
                     RichText::new(
-                        "This imported body is preserved by the core model. Its dedicated editor is next.",
+                        "This body uses an older unsupported editor state; choose a specific body format above.",
                     )
                     .color(MUTED),
                 );
@@ -3669,6 +3772,56 @@ fn render_key_values(
     changed
 }
 
+fn render_multipart_parts(ui: &mut egui::Ui, parts: &mut Vec<MultipartPart>) -> bool {
+    let mut changed = false;
+    let mut remove = None;
+    egui::Grid::new("multipart-parts")
+        .striped(true)
+        .min_col_width(100.0)
+        .show(ui, |ui| {
+            ui.label(RichText::new("Enabled").small().color(MUTED));
+            ui.label(RichText::new("Name").small().color(MUTED));
+            ui.label(RichText::new("Value").small().color(MUTED));
+            ui.label(RichText::new("File path").small().color(MUTED));
+            ui.label(RichText::new("Content type").small().color(MUTED));
+            ui.end_row();
+            for (index, part) in parts.iter_mut().enumerate() {
+                changed |= ui.checkbox(&mut part.enabled, "").changed();
+                changed |= ui.text_edit_singleline(&mut part.name).changed();
+                changed |= ui.text_edit_singleline(&mut part.value).changed();
+                let mut file_path = part.file_path.clone().unwrap_or_default();
+                if ui.text_edit_singleline(&mut file_path).changed() {
+                    part.file_path = (!file_path.trim().is_empty()).then_some(file_path);
+                    changed = true;
+                }
+                let mut content_type = part.content_type.clone().unwrap_or_default();
+                if ui.text_edit_singleline(&mut content_type).changed() {
+                    part.content_type = (!content_type.trim().is_empty()).then_some(content_type);
+                    changed = true;
+                }
+                if ui.small_button("×").clicked() {
+                    remove = Some(index);
+                }
+                ui.end_row();
+            }
+        });
+    if let Some(index) = remove {
+        parts.remove(index);
+        changed = true;
+    }
+    if ui.button("＋ Add multipart part").clicked() {
+        parts.push(MultipartPart {
+            name: String::new(),
+            value: String::new(),
+            file_path: None,
+            content_type: None,
+            enabled: true,
+        });
+        changed = true;
+    }
+    changed
+}
+
 fn render_headers(ui: &mut egui::Ui, headers: &mut Vec<HeaderEntry>) -> bool {
     let mut changed = false;
     let mut remove = None;
@@ -3860,6 +4013,51 @@ mod tests {
             .edited_request()
             .expect_err("GraphQL variables must be an object");
         assert!(error.contains("GraphQL variables are invalid"));
+    }
+
+    #[test]
+    fn advanced_body_editors_round_trip_form_multipart_and_file_bodies() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        let bodies = [
+            (
+                BodyKind::FormUrlEncoded,
+                RequestBody::FormUrlEncoded {
+                    fields: vec![KeyValue::enabled("grant_type", "client_credentials")],
+                },
+            ),
+            (
+                BodyKind::Multipart,
+                RequestBody::Multipart {
+                    parts: vec![MultipartPart {
+                        name: "document".to_owned(),
+                        value: String::new(),
+                        file_path: Some("fixtures/document.json".to_owned()),
+                        content_type: Some("application/json".to_owned()),
+                        enabled: true,
+                    }],
+                },
+            ),
+            (
+                BodyKind::BinaryFile,
+                RequestBody::BinaryFile {
+                    path: "fixtures/payload.bin".to_owned(),
+                    content_type: Some("application/octet-stream".to_owned()),
+                },
+            ),
+        ];
+        for (kind, body) in bodies {
+            app.request.body = body.clone();
+            app.load_request_editors();
+            assert_eq!(app.body_kind, kind);
+            assert_eq!(
+                app.edited_request().expect("advanced body"),
+                Request {
+                    body,
+                    ..app.request.clone()
+                }
+            );
+        }
     }
 
     #[test]

@@ -18,6 +18,11 @@ my-api/
 
 Request files are independent merge units. The collection file stores metadata and collection-scoped variables; request files store method, URL, parameters, headers, body, auth, scripts and examples.
 
+The native GUI Body tab can edit raw text, JSON and GraphQL envelopes as well as
+URL-encoded fields, multipart text/file parts and binary file uploads. File
+contents are read at send time; only the project-relative or absolute path is
+stored in the request file.
+
 The native workspace can duplicate a saved request with a new stable UUID and a
 `copy` name, or delete a request file after validating that it is a request
 under the current workspace's `collections/` tree. Draft requests are not

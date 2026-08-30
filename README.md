@@ -240,7 +240,7 @@ Postly is intentionally growing from a strong HTTP foundation:
 
 | Protocol / format | Current capability |
 | --- | --- |
-| REST / HTTP | Native async requests, bodies, auth, cookies, response views, proxy and TLS slices |
+| REST / HTTP | Native async requests, raw/JSON/form/multipart/file bodies, auth, cookies, response views, proxy and TLS slices |
 | GraphQL | Structured query, variables, operation name, error-aware response parsing, schema introspection and GUI explorer |
 | Server-Sent Events | Chunk-safe progressive events, metadata, cancellation and bounded <code>Last-Event-ID</code> reconnects |
 | WebSocket | <code>ws://</code>/<code>wss://</code>, headers/auth, text and binary frames, ping/pong, console and bounded history |
