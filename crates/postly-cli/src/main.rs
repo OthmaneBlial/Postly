@@ -481,7 +481,7 @@ enum Command {
         #[arg(
             long,
             value_name = "URL",
-            help = "Route the request through an HTTP(S) proxy"
+            help = "Route the request through an HTTP(S) or SOCKS proxy"
         )]
         proxy: Option<String>,
         #[arg(
@@ -536,7 +536,7 @@ enum Command {
         #[arg(
             long,
             value_name = "URL",
-            help = "Route the request through an HTTP(S) proxy"
+            help = "Route the request through an HTTP(S) or SOCKS proxy"
         )]
         proxy: Option<String>,
         #[arg(
@@ -586,7 +586,7 @@ enum Command {
         #[arg(
             long,
             value_name = "URL",
-            help = "Route the stream through an HTTP(S) proxy"
+            help = "Route the stream through an HTTP(S) or SOCKS proxy"
         )]
         proxy: Option<String>,
         #[arg(
@@ -651,7 +651,7 @@ enum Command {
         #[arg(
             long,
             value_name = "URL",
-            help = "Route the request through an HTTP(S) proxy"
+            help = "Route the request through an HTTP(S) or SOCKS proxy"
         )]
         proxy: Option<String>,
         #[arg(
@@ -781,7 +781,7 @@ enum Command {
         #[arg(
             long,
             value_name = "URL",
-            help = "Route collection requests through an HTTP(S) proxy"
+            help = "Route collection requests through an HTTP(S) or SOCKS proxy"
         )]
         proxy: Option<String>,
         #[arg(
