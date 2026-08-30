@@ -7,13 +7,15 @@ sent during connection setup, and incoming text/binary messages are emitted as
 they arrive.
 
 ~~~bash
-postly websocket ws://127.0.0.1:9000/socket --send '{"type":"ping"}'
+postly websocket ws://127.0.0.1:9000/socket --send '{"type":"ping"}' --reconnect 3
 postly ws wss://api.example.test/stream --output-json
 postly websocket ws://127.0.0.1:9000/socket --bearer local-token
 ~~~
 
 JSON output uses one object per line with `type` and `data`; binary and pong
 payloads are base64-encoded. Ping frames are answered with pong frames, and the
-CLI exits cleanly on a server close. The timeout is an inactivity timeout for
-the receive loop. A dedicated GUI WebSocket workspace, reconnect policy and
-interactive stdin console remain planned.
+CLI exits cleanly on a server close. `--reconnect N` gives bounded retries for
+failed handshakes or server-initiated closes, resending the configured messages
+on each new connection. The timeout is an inactivity timeout for the receive
+loop. A dedicated GUI WebSocket workspace and interactive stdin console remain
+planned.

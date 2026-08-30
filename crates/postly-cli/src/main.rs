@@ -88,6 +88,7 @@ struct WebsocketOptions {
     basic_user: Option<String>,
     basic_password: Option<String>,
     timeout: u64,
+    reconnect: u32,
     output_json: bool,
 }
 
@@ -226,6 +227,8 @@ enum Command {
         basic_password: Option<String>,
         #[arg(long, default_value_t = 300)]
         timeout: u64,
+        #[arg(long, default_value_t = 0)]
+        reconnect: u32,
         #[arg(long)]
         output_json: bool,
     },
@@ -542,6 +545,7 @@ async fn main() -> Result<()> {
             basic_user,
             basic_password,
             timeout,
+            reconnect,
             output_json,
         } => {
             run_websocket(WebsocketOptions {
@@ -552,6 +556,7 @@ async fn main() -> Result<()> {
                 basic_user,
                 basic_password,
                 timeout,
+                reconnect,
                 output_json,
             })
             .await
@@ -801,8 +806,91 @@ async fn stream_sse(options: SseOptions) -> Result<()> {
 }
 
 async fn run_websocket(options: WebsocketOptions) -> Result<()> {
+    let mut reconnects_used = 0;
+    loop {
+        let websocket_request = build_websocket_request(&options)?;
+        let connection = tokio::time::timeout(
+            Duration::from_secs(options.timeout),
+            connect_async(websocket_request),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "WebSocket handshake did not complete within {} seconds",
+                options.timeout
+            )
+        })?;
+        let (mut socket, response) = match connection {
+            Ok(connection) => connection,
+            Err(error) if reconnects_used < options.reconnect => {
+                reconnects_used += 1;
+                print_websocket_state("reconnecting", options.output_json)?;
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                eprintln!("WebSocket connection failed, retrying: {error}");
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        print_websocket_state("connected", options.output_json)?;
+        if !options.output_json {
+            println!("HTTP handshake: {}", response.status());
+        }
+        for message in &options.send {
+            socket.send(Message::text(message)).await?;
+        }
+
+        let server_closed = loop {
+            let next = tokio::time::timeout(Duration::from_secs(options.timeout), socket.next())
+                .await
+                .with_context(|| {
+                    format!(
+                        "no WebSocket message received within {} seconds",
+                        options.timeout
+                    )
+                })?;
+            let Some(message) = next else {
+                break true;
+            };
+            match message? {
+                Message::Text(text) => {
+                    print_websocket_message("text", text.to_string(), options.output_json)?
+                }
+                Message::Binary(bytes) => print_websocket_message(
+                    "binary",
+                    base64::engine::general_purpose::STANDARD.encode(bytes),
+                    options.output_json,
+                )?,
+                Message::Ping(bytes) => {
+                    socket.send(Message::Pong(bytes)).await?;
+                }
+                Message::Pong(bytes) => print_websocket_message(
+                    "pong",
+                    base64::engine::general_purpose::STANDARD.encode(bytes),
+                    options.output_json,
+                )?,
+                Message::Close(_) => {
+                    break true;
+                }
+                Message::Frame(_) => {}
+            }
+        };
+        if server_closed && reconnects_used < options.reconnect {
+            reconnects_used += 1;
+            print_websocket_state("reconnecting", options.output_json)?;
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            continue;
+        }
+        print_websocket_state("closed", options.output_json)?;
+        return Ok(());
+    }
+}
+
+fn build_websocket_request(
+    options: &WebsocketOptions,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>> {
     let mut websocket_request = options
         .endpoint
+        .clone()
         .into_client_request()
         .context("WebSocket endpoint must be a valid ws:// or wss:// URL")?;
     for header in parse_headers(&options.headers)? {
@@ -812,7 +900,11 @@ async fn run_websocket(options: WebsocketOptions) -> Result<()> {
             .with_context(|| format!("invalid WebSocket header value: {}", header.key))?;
         websocket_request.headers_mut().insert(name, value);
     }
-    match parse_auth_flags(options.bearer, options.basic_user, options.basic_password)? {
+    match parse_auth_flags(
+        options.bearer.clone(),
+        options.basic_user.clone(),
+        options.basic_password.clone(),
+    )? {
         Auth::None => {}
         Auth::Bearer { token } => {
             let value = HeaderValue::from_str(&format!("Bearer {token}"))?;
@@ -830,48 +922,19 @@ async fn run_websocket(options: WebsocketOptions) -> Result<()> {
         }
         Auth::ApiKey { .. } => unreachable!("CLI auth flags do not create API keys"),
     }
+    Ok(websocket_request)
+}
 
-    let (mut socket, response) = connect_async(websocket_request).await?;
-    if !options.output_json {
-        println!("WebSocket connected · {}", response.status());
+fn print_websocket_state(state: &str, output_json: bool) -> Result<()> {
+    if output_json {
+        println!(
+            "{}",
+            serde_json::to_string(&json!({"type": "connection", "state": state}))?
+        );
+    } else {
+        println!("WebSocket {state}");
     }
-    for message in options.send {
-        socket.send(Message::text(message)).await?;
-    }
-
-    loop {
-        let next = tokio::time::timeout(Duration::from_secs(options.timeout), socket.next())
-            .await
-            .with_context(|| {
-                format!(
-                    "no WebSocket message received within {} seconds",
-                    options.timeout
-                )
-            })?;
-        let Some(message) = next else {
-            break;
-        };
-        match message? {
-            Message::Text(text) => {
-                print_websocket_message("text", text.to_string(), options.output_json)?
-            }
-            Message::Binary(bytes) => print_websocket_message(
-                "binary",
-                base64::engine::general_purpose::STANDARD.encode(bytes),
-                options.output_json,
-            )?,
-            Message::Ping(bytes) => {
-                socket.send(Message::Pong(bytes)).await?;
-            }
-            Message::Pong(bytes) => print_websocket_message(
-                "pong",
-                base64::engine::general_purpose::STANDARD.encode(bytes),
-                options.output_json,
-            )?,
-            Message::Close(_) => break,
-            Message::Frame(_) => {}
-        }
-    }
+    io::stdout().flush()?;
     Ok(())
 }
 
@@ -1643,10 +1706,50 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            reconnect: 0,
             output_json: true,
         })
         .await
         .expect("WebSocket command");
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn websocket_command_reconnects_a_bounded_number_of_times() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            for reply in [None, Some("after reconnect")] {
+                let (stream, _) = listener.accept().await.expect("connection");
+                let mut socket = tokio_tungstenite::accept_async(stream)
+                    .await
+                    .expect("WebSocket handshake");
+                match socket.next().await.expect("message").expect("frame") {
+                    Message::Text(text) => assert_eq!(text.to_string(), "hello"),
+                    message => panic!("expected text message, got {message:?}"),
+                }
+                if let Some(reply) = reply {
+                    socket.send(Message::text(reply)).await.expect("reply");
+                }
+                socket.send(Message::Close(None)).await.expect("close");
+            }
+        });
+
+        run_websocket(WebsocketOptions {
+            endpoint: format!("ws://{address}/socket"),
+            send: vec!["hello".to_owned()],
+            headers: Vec::new(),
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            reconnect: 1,
+            output_json: true,
+        })
+        .await
+        .expect("WebSocket reconnect command");
         server.await.expect("server");
     }
 }
