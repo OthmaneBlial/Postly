@@ -12,7 +12,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | HTTPS certificates | core and CLI PEM CA/client-identity slice; native GUI HTTP/SSE Transport settings; PKCS#12/passphrases and domain association pending | local HTTPS CA and mutual-TLS tests, GUI settings persistence and file/format diagnostics |
 | Postman Collection v2.1 export | working slice | export/import round-trip fixture |
 | Postman environment export | working slice | export serialization fixture |
-| Postman scripts | opt-in basic execution plus native source editing | Node bridge tests, GUI persistence test and migration docs |
+| Postman scripts | opt-in basic execution, native source editing and explicit GUI preview | Node bridge tests, GUI persistence/preview tests and migration docs |
 | Postman pm.* runtime | partial tested subset, including scoped variables, iteration data, request headers and common response matchers | compatibility matrix and script tests |
 | Explicit response assertions | working core/runner slice | status/header/body/JSON Pointer runner integration test |
 | Native response viewer | working GUI slice | virtualized line rows, search, copy, local save and wrapping |

@@ -13,11 +13,11 @@ use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
     export_curl_command, message_from_json, message_to_json, parse_curl_command,
-    parse_graphql_response, parse_graphql_schema, schema_introspection_query, ApiKeyLocation,
-    Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions, Environment, GraphqlSchema,
-    GrpcRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse,
-    KeyValue, MultipartPart, Request, RequestBody, RequestSearchResult, ResponseView, SseEvent,
-    SseParser, VariableContext, Workspace,
+    parse_graphql_response, parse_graphql_schema, run_script, schema_introspection_query,
+    ApiKeyLocation, Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions,
+    Environment, GraphqlSchema, GrpcRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter,
+    HttpEngine, HttpResponse, KeyValue, MultipartPart, Request, RequestBody, RequestSearchResult,
+    ResponseView, ScriptResult, SseEvent, SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -119,6 +119,27 @@ enum ResponseTab {
     SseEvents,
     WebSocket,
     GraphqlSchema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptRunKind {
+    PreRequest,
+    Tests,
+}
+
+impl ScriptRunKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PreRequest => "pre-request",
+            Self::Tests => "post-response tests",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ScriptRunReport {
+    kind: ScriptRunKind,
+    result: ScriptResult,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,6 +432,9 @@ pub struct PostlyApp {
     pending_graphql_schema: bool,
     pending_grpc: bool,
     pending_cancellation: Option<CancellationToken>,
+    script_pending: Option<Receiver<Result<ScriptRunReport, String>>>,
+    script_report: Option<ScriptRunReport>,
+    script_error: Option<String>,
     sse_pending: Option<Receiver<Result<SseStreamUpdate, String>>>,
     sse_cancellation: Option<CancellationToken>,
     sse_events: VecDeque<ReceivedSseEvent>,
@@ -511,6 +535,9 @@ impl PostlyApp {
             pending_graphql_schema: false,
             pending_grpc: false,
             pending_cancellation: None,
+            script_pending: None,
+            script_report: None,
+            script_error: None,
             sse_pending: None,
             sse_cancellation: None,
             sse_events: VecDeque::new(),
@@ -810,6 +837,9 @@ impl PostlyApp {
         self.pending_graphql_schema = false;
         self.pending_grpc = false;
         self.pending_cancellation = None;
+        self.script_pending = None;
+        self.script_report = None;
+        self.script_error = None;
         self.sse_pending = None;
         self.sse_cancellation = None;
         self.sse_events.clear();
@@ -1337,7 +1367,10 @@ impl PostlyApp {
     }
 
     fn send_current(&mut self) -> Result<(), String> {
-        if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
+        if self.pending.is_some()
+            || self.sse_pending.is_some()
+            || self.websocket_pending.is_some()
+            || self.script_pending.is_some()
         {
             return Ok(());
         }
@@ -1379,7 +1412,10 @@ impl PostlyApp {
     }
 
     fn start_grpc_current(&mut self, request: Request) -> Result<(), String> {
-        if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
+        if self.pending.is_some()
+            || self.sse_pending.is_some()
+            || self.websocket_pending.is_some()
+            || self.script_pending.is_some()
         {
             return Ok(());
         }
@@ -1414,8 +1450,49 @@ impl PostlyApp {
         Ok(())
     }
 
+    fn start_script(&mut self, kind: ScriptRunKind) -> Result<(), String> {
+        if self.script_pending.is_some()
+            || self.pending.is_some()
+            || self.sse_pending.is_some()
+            || self.websocket_pending.is_some()
+        {
+            return Ok(());
+        }
+        let script = match kind {
+            ScriptRunKind::PreRequest => self.pre_request_script.clone(),
+            ScriptRunKind::Tests => self.test_script.clone(),
+        };
+        if script.trim().is_empty() {
+            return Err(format!("{} script is empty", kind.label()));
+        }
+        let response =
+            match kind {
+                ScriptRunKind::PreRequest => None,
+                ScriptRunKind::Tests => Some(self.response.clone().ok_or_else(|| {
+                    "run the request before running post-response tests".to_owned()
+                })?),
+            };
+        let request = self.edited_request()?;
+        let context = self.context();
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let result = run_script(&script, &request, response.as_ref(), &context)
+                .map(|result| ScriptRunReport { kind, result })
+                .map_err(|error| error.to_string());
+            let _ = sender.send(result);
+        });
+        self.script_pending = Some(receiver);
+        self.script_report = None;
+        self.script_error = None;
+        self.status_message = format!("Running {} script…", kind.label());
+        Ok(())
+    }
+
     fn start_graphql_schema(&mut self) -> Result<(), String> {
-        if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
+        if self.pending.is_some()
+            || self.sse_pending.is_some()
+            || self.websocket_pending.is_some()
+            || self.script_pending.is_some()
         {
             return Ok(());
         }
@@ -1462,7 +1539,10 @@ impl PostlyApp {
     }
 
     fn start_sse_current(&mut self) -> Result<(), String> {
-        if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
+        if self.pending.is_some()
+            || self.sse_pending.is_some()
+            || self.websocket_pending.is_some()
+            || self.script_pending.is_some()
         {
             return Ok(());
         }
@@ -1631,7 +1711,10 @@ impl PostlyApp {
     }
 
     fn start_websocket_current(&mut self) -> Result<(), String> {
-        if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
+        if self.pending.is_some()
+            || self.sse_pending.is_some()
+            || self.websocket_pending.is_some()
+            || self.script_pending.is_some()
         {
             return Ok(());
         }
@@ -1788,11 +1871,49 @@ impl PostlyApp {
         }
     }
 
+    fn poll_script_pending(&mut self) -> bool {
+        let Some(receiver) = self.script_pending.as_ref() else {
+            return false;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return true,
+            Err(TryRecvError::Disconnected) => Err("script worker stopped unexpectedly".to_owned()),
+        };
+        self.script_pending = None;
+        match result {
+            Ok(report) => {
+                let failed = report.result.failed_tests().count();
+                self.status_message = if failed == 0 {
+                    format!(
+                        "{} script finished · {} test(s)",
+                        report.kind.label(),
+                        report.result.tests.len()
+                    )
+                } else {
+                    format!(
+                        "{} script finished · {failed} failed test(s)",
+                        report.kind.label()
+                    )
+                };
+                self.script_report = Some(report);
+                self.script_error = None;
+            }
+            Err(error) => {
+                self.status_message = "Script failed".to_owned();
+                self.script_error = Some(error);
+                self.script_report = None;
+            }
+        }
+        false
+    }
+
     fn poll_pending(&mut self) -> bool {
+        let script_pending = self.poll_script_pending();
         let http_pending = self.poll_http_pending();
         let sse_pending = self.poll_sse_pending();
         let websocket_pending = self.poll_websocket_pending();
-        http_pending || sse_pending || websocket_pending
+        script_pending || http_pending || sse_pending || websocket_pending
     }
 
     fn poll_http_pending(&mut self) -> bool {
@@ -2390,7 +2511,8 @@ impl PostlyApp {
                 let mut delete_clicked = false;
                 let busy = self.pending.is_some()
                     || self.sse_pending.is_some()
-                    || self.websocket_pending.is_some();
+                    || self.websocket_pending.is_some()
+                    || self.script_pending.is_some();
                 ui.horizontal(|ui| {
                     if ui
                         .add(
@@ -2742,7 +2864,8 @@ impl PostlyApp {
         let mut inspect_schema_clicked = false;
         let busy = self.pending.is_some()
             || self.sse_pending.is_some()
-            || self.websocket_pending.is_some();
+            || self.websocket_pending.is_some()
+            || self.script_pending.is_some();
         match self.body_kind {
             BodyKind::None => {
                 ui.label(RichText::new("This request has no body.").color(MUTED));
@@ -3157,11 +3280,18 @@ impl PostlyApp {
         ui.heading(RichText::new("Scripts").color(Color32::WHITE));
         ui.label(
             RichText::new(
-                "Preserved Postman scripts are editable here. Execution remains explicit through the CLI runner with --scripts.",
+                "Preserved Postman scripts are editable here. Execution is always explicit; GUI runs are local previews and never persist script changes automatically.",
             )
             .small()
             .color(MUTED),
         );
+        let script_busy = self.script_pending.is_some()
+            || self.pending.is_some()
+            || self.sse_pending.is_some()
+            || self.websocket_pending.is_some();
+        let has_response = self.response.is_some();
+        let mut run_pre_request_clicked = false;
+        let mut run_tests_clicked = false;
         ui.add_space(8.0);
         ui.label(
             RichText::new("Pre-request script")
@@ -3180,6 +3310,22 @@ impl PostlyApp {
         {
             self.dirty = true;
         }
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    !script_busy && !self.pre_request_script.trim().is_empty(),
+                    egui::Button::new("Run pre-request preview"),
+                )
+                .clicked()
+            {
+                run_pre_request_clicked = true;
+            }
+            ui.label(
+                RichText::new("Runs with the current request and variable snapshot.")
+                    .small()
+                    .color(MUTED),
+            );
+        });
         ui.add_space(10.0);
         ui.label(
             RichText::new("Post-response / test script")
@@ -3198,14 +3344,96 @@ impl PostlyApp {
         {
             self.dirty = true;
         }
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    !script_busy && has_response && !self.test_script.trim().is_empty(),
+                    egui::Button::new("Run tests against response"),
+                )
+                .clicked()
+            {
+                run_tests_clicked = true;
+            }
+            if !has_response {
+                ui.label(
+                    RichText::new("Send the request first to provide a response.")
+                        .small()
+                        .color(MUTED),
+                );
+            }
+        });
         ui.add_space(8.0);
         ui.label(
             RichText::new(
-                "The current script bridge is opt-in and requires Node.js. It is not a sandbox for hostile code; see docs/scripting.md.",
+                "The current script bridge is opt-in and requires Node.js. GUI runs are previews only; this is not a sandbox for hostile code. See docs/scripting.md.",
             )
             .small()
             .color(MUTED),
         );
+        if let Some(error) = &self.script_error {
+            ui.add_space(8.0);
+            ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+        }
+        if let Some(report) = &self.script_report {
+            ui.add_space(8.0);
+            let failed = report.result.failed_tests().count();
+            ui.group(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "Last {} preview · {} test(s), {} log entr{}",
+                        report.kind.label(),
+                        report.result.tests.len(),
+                        report.result.logs.len(),
+                        if report.result.logs.len() == 1 {
+                            "y"
+                        } else {
+                            "ies"
+                        }
+                    ))
+                    .strong()
+                    .color(if failed == 0 {
+                        Color32::from_rgb(100, 205, 145)
+                    } else {
+                        Color32::from_rgb(240, 125, 105)
+                    }),
+                );
+                for test in &report.result.tests {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(if test.passed { "✓" } else { "✗" });
+                        ui.label(&test.name);
+                        if let Some(error) = &test.error {
+                            ui.label(RichText::new(error).small().color(MUTED));
+                        }
+                    });
+                }
+                if !report.result.logs.is_empty() {
+                    egui::CollapsingHeader::new("Captured logs (local only)")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            for log in &report.result.logs {
+                                ui.monospace(format!("[{}] {}", log.level, log.message));
+                            }
+                        });
+                }
+                ui.label(
+                    RichText::new(
+                        "Preview output is not applied to the saved request or environment.",
+                    )
+                    .small()
+                    .color(MUTED),
+                );
+            });
+        }
+        if run_pre_request_clicked {
+            if let Err(error) = self.start_script(ScriptRunKind::PreRequest) {
+                self.status_message = format!("Script preview failed: {error}");
+            }
+        }
+        if run_tests_clicked {
+            if let Err(error) = self.start_script(ScriptRunKind::Tests) {
+                self.status_message = format!("Script preview failed: {error}");
+            }
+        }
     }
 
     fn render_assertions(&mut self, ui: &mut egui::Ui) {
@@ -3466,6 +3694,7 @@ impl PostlyApp {
                 } else if self.pending.is_some()
                     || self.sse_pending.is_some()
                     || self.websocket_pending.is_some()
+                    || self.script_pending.is_some()
                 {
                     ui.label(RichText::new("Waiting for the local protocol worker…").color(MUTED));
                 } else {
@@ -4651,6 +4880,41 @@ mod tests {
             .expect("blank script is valid")
             .test_script
             .is_none());
+    }
+
+    #[test]
+    fn script_preview_runs_in_a_worker_without_applying_changes() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.pre_request_script = r#"
+            pm.request.headers.add({ key: "X-Preview", value: "yes" });
+            pm.test("preview ran", function () { pm.expect(true).to.be.true; });
+        "#
+        .to_owned();
+        app.start_script(ScriptRunKind::PreRequest)
+            .expect("start preview");
+        for _ in 0..400 {
+            if !app.poll_script_pending() && app.script_report.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let report = app.script_report.as_ref().expect("preview report");
+        assert_eq!(report.kind, ScriptRunKind::PreRequest);
+        assert_eq!(report.result.tests.len(), 1);
+        assert!(report.result.tests[0].passed);
+        assert!(!app
+            .request
+            .headers
+            .iter()
+            .any(|header| header.key == "X-Preview"));
     }
 
     #[test]

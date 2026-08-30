@@ -10,8 +10,9 @@ postly run ./project --scripts --reporter json
 
 The native workspace exposes the same sources in its `Scripts` tab. Saving a
 request writes the pre-request and post-response/test text back to the
-canonical `.postly.toml` file; the GUI currently edits and preserves scripts
-but does not execute them automatically.
+canonical `.postly.toml` file. The GUI offers explicit local preview buttons
+for each script type, but never executes them automatically or applies their
+variable/request changes to the saved workspace.
 
 The current prototype is a Rust-controlled, no-shell Node.js bridge. It uses a
 short-lived `node:vm` context with a two-second synchronous execution limit.

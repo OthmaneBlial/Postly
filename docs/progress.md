@@ -45,7 +45,8 @@ Implemented:
 - WebSocket CLI and native GUI client for `ws://` and `wss://` with headers/auth, interactive text sends, text/binary/pong output, ping replies, bounded reconnects/history and local integration coverage.
 - native GUI HTTP, SSE and WebSocket workers support explicit cancellation, with cancellation-aware body/stream reads and local worker tests.
 - Native GUI `Scripts` tab edits and persists imported pre-request/test source;
-  execution remains explicit through the CLI runner.
+  explicit GUI previews now run in a worker and display test/log results without
+  applying changes automatically; CLI runner execution remains explicit too.
 - native GUI Transport tab with persisted local timeout, HTTP(S) proxy, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE workflows.
 - Native GUI Body tab editors for URL-encoded fields, multipart text/file parts and binary file uploads, with disabled entries and optional content types preserved.
 - Native GUI command palette with searchable request actions and keyboard shortcuts for new, save, send, cancel, response clearing and wrapping.
