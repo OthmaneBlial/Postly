@@ -15,9 +15,10 @@ use postly_core::{
     export_curl_command, message_from_json, message_to_json, parse_curl_command,
     parse_graphql_response, parse_graphql_schema, run_script, schema_introspection_query,
     ApiKeyLocation, Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions,
-    Environment, GraphqlSchema, GrpcRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter,
-    HttpEngine, HttpResponse, KeyValue, MultipartPart, Request, RequestBody, RequestSearchResult,
-    ResponseView, ScriptResult, SecretStore, SseEvent, SseParser, VariableContext, Workspace,
+    Environment, EnvironmentVariable, GraphqlSchema, GrpcRequest, GrpcSchema, HeaderEntry,
+    HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, MultipartPart, Request,
+    RequestBody, RequestSearchResult, ResponseView, ScriptResult, SecretStore, SseEvent, SseParser,
+    VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -397,6 +398,15 @@ struct RecoverySnapshot {
     request: Request,
 }
 
+#[derive(Debug, Clone)]
+struct EnvironmentVariableDraft {
+    key: String,
+    value: String,
+    enabled: bool,
+    secret: bool,
+    secret_ref: Option<String>,
+}
+
 fn recovery_path(root: &Path) -> PathBuf {
     root.join(RECOVERY_FILE)
 }
@@ -539,6 +549,11 @@ pub struct PostlyApp {
     curl_import_open: bool,
     curl_import_text: String,
     curl_import_error: Option<String>,
+    environment_editor_open: bool,
+    environment_editor_path: Option<PathBuf>,
+    environment_editor_name: String,
+    environment_editor_variables: Vec<EnvironmentVariableDraft>,
+    environment_editor_error: Option<String>,
     dirty: bool,
     recovery_restored: bool,
     recovery_last_saved: Option<Instant>,
@@ -646,6 +661,11 @@ impl PostlyApp {
             curl_import_open: false,
             curl_import_text: String::new(),
             curl_import_error: None,
+            environment_editor_open: false,
+            environment_editor_path: None,
+            environment_editor_name: String::new(),
+            environment_editor_variables: Vec::new(),
+            environment_editor_error: None,
             dirty: false,
             recovery_restored: false,
             recovery_last_saved: None,
@@ -733,6 +753,106 @@ impl PostlyApp {
         self.recovery_last_saved = None;
         self.reset_new_request();
         self.status_message = "Recovered draft discarded".to_owned();
+    }
+
+    fn open_environment_editor(&mut self, index: Option<usize>) {
+        self.environment_editor_error = None;
+        if let Some(index) = index {
+            let Some((path, environment)) = self.environments.get(index).cloned() else {
+                return;
+            };
+            self.environment_editor_path = Some(path);
+            self.environment_editor_name = environment.name;
+            self.environment_editor_variables = environment
+                .variables
+                .into_iter()
+                .map(|(key, variable)| EnvironmentVariableDraft {
+                    key,
+                    value: variable.value,
+                    enabled: variable.enabled,
+                    secret: variable.secret,
+                    secret_ref: variable.secret_ref,
+                })
+                .collect();
+        } else {
+            self.environment_editor_path = None;
+            self.environment_editor_name = "local".to_owned();
+            self.environment_editor_variables = Vec::new();
+        }
+        self.environment_editor_open = true;
+    }
+
+    fn save_environment_editor(&mut self) -> Result<(), String> {
+        let name = self.environment_editor_name.trim();
+        if name.is_empty() {
+            return Err("environment name cannot be empty".to_owned());
+        }
+        let mut variables = std::collections::BTreeMap::new();
+        let store = SecretStore::for_workspace(self.workspace.root());
+        for row in &self.environment_editor_variables {
+            let key = row.key.trim();
+            if key.is_empty() {
+                continue;
+            }
+            if variables.contains_key(key) {
+                return Err(format!("duplicate environment variable: {key}"));
+            }
+            let variable = if row.secret {
+                let reference = if row.value.is_empty() {
+                    row.secret_ref.clone().ok_or_else(|| {
+                        format!("secret value is required for environment variable {key}")
+                    })?
+                } else {
+                    store
+                        .set_environment_secret(name, key, &row.value)
+                        .map_err(|error| error.to_string())?
+                        .into_string()
+                };
+                EnvironmentVariable {
+                    value: String::new(),
+                    enabled: row.enabled,
+                    secret: true,
+                    secret_ref: Some(reference),
+                }
+            } else {
+                if row.secret_ref.is_some() {
+                    return Err(format!(
+                        "remove keychain-backed variable {key} instead of unmarking it as secret"
+                    ));
+                }
+                EnvironmentVariable {
+                    value: row.value.clone(),
+                    enabled: row.enabled,
+                    secret: false,
+                    secret_ref: None,
+                }
+            };
+            variables.insert(key.to_owned(), variable);
+        }
+        let environment = Environment {
+            format: "postly-environment".to_owned(),
+            version: 1,
+            name: name.to_owned(),
+            variables,
+        };
+        let path = self
+            .workspace
+            .save_environment(&environment)
+            .map_err(|error| error.to_string())?;
+        if let Some(previous_path) = self.environment_editor_path.as_ref() {
+            if previous_path != &path {
+                fs::remove_file(previous_path).map_err(|error| error.to_string())?;
+            }
+        }
+        self.environments = self
+            .workspace
+            .environments()
+            .map_err(|error| error.to_string())?;
+        self.selected_environment = Some(environment.name.clone());
+        self.environment_editor_open = false;
+        self.environment_editor_path = Some(path.clone());
+        self.status_message = format!("Environment saved locally — {}", path.display());
+        Ok(())
     }
 
     fn refresh_requests(&mut self, preferred_path: Option<&Path>) -> Result<(), String> {
@@ -2443,6 +2563,7 @@ impl PostlyApp {
         let mut request_clicked = None;
         let mut new_clicked = false;
         let mut environment_clicked = None;
+        let mut environment_edit_clicked = None;
         let mut history_clicked = None;
         let mut search_result_clicked = None;
         let mut clear_history_clicked = false;
@@ -2637,6 +2758,20 @@ impl PostlyApp {
                             }
                         }
                     });
+                ui.horizontal(|ui| {
+                    if ui.small_button("＋ New environment").clicked() {
+                        environment_edit_clicked = Some(None);
+                    }
+                    if let Some(selected) = self.selected_environment.as_deref() {
+                        if ui.small_button("Edit selected").clicked() {
+                            environment_edit_clicked = Some(
+                                self.environments
+                                    .iter()
+                                    .position(|(_, environment)| environment.name == selected),
+                            );
+                        }
+                    }
+                });
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new(self.workspace.root().display().to_string())
@@ -2664,6 +2799,9 @@ impl PostlyApp {
         if let Some(environment) = environment_clicked {
             self.selected_environment = environment;
         }
+        if let Some(index) = environment_edit_clicked {
+            self.open_environment_editor(index);
+        }
         if clear_history_clicked {
             match self.workspace.clear_history() {
                 Ok(()) => {
@@ -2676,6 +2814,114 @@ impl PostlyApp {
         if let Some(entry) = history_clicked {
             if let Err(error) = self.reopen_history(&entry) {
                 self.status_message = format!("History reopen failed: {error}");
+            }
+        }
+    }
+
+    fn draw_environment_editor(&mut self, ctx: &egui::Context) {
+        if !self.environment_editor_open {
+            return;
+        }
+        let mut save_clicked = false;
+        let mut cancel_clicked = false;
+        egui::Window::new("Environment editor")
+            .collapsible(false)
+            .resizable(true)
+            .default_width(720.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new(
+                        "Plain values stay in the local environment file. Secret values are stored in the OS credential store; only opaque references are written.",
+                    )
+                    .small()
+                    .color(MUTED),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label("Environment name");
+                    ui.add(
+                        TextEdit::singleline(&mut self.environment_editor_name)
+                            .desired_width(320.0),
+                    );
+                });
+                ui.add_space(10.0);
+                ui.label(RichText::new("Variables").strong().color(Color32::WHITE));
+                ui.add_space(4.0);
+                let mut remove = None;
+                egui::ScrollArea::vertical()
+                    .id_salt("environment-editor-variables")
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        egui::Grid::new("environment-editor-grid")
+                            .striped(true)
+                            .min_col_width(70.0)
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("Enabled").small().color(MUTED));
+                                ui.label(RichText::new("Key").small().color(MUTED));
+                                ui.label(RichText::new("Secret").small().color(MUTED));
+                                ui.label(RichText::new("Value").small().color(MUTED));
+                                ui.end_row();
+                                for (index, row) in self
+                                    .environment_editor_variables
+                                    .iter_mut()
+                                    .enumerate()
+                                {
+                                    ui.checkbox(&mut row.enabled, "");
+                                    ui.text_edit_singleline(&mut row.key);
+                                    ui.checkbox(&mut row.secret, "");
+                                    let hint = if row.secret_ref.is_some() && row.value.is_empty() {
+                                        "Stored in OS credential store; leave blank to keep"
+                                    } else if row.secret {
+                                        "Secret value"
+                                    } else {
+                                        "Value"
+                                    };
+                                    ui.add(
+                                        TextEdit::singleline(&mut row.value)
+                                            .password(row.secret)
+                                            .hint_text(hint)
+                                            .desired_width(360.0),
+                                    );
+                                    if ui.small_button("×").clicked() {
+                                        remove = Some(index);
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                if let Some(index) = remove {
+                    self.environment_editor_variables.remove(index);
+                }
+                if ui.button("＋ Add variable").clicked() {
+                    self.environment_editor_variables.push(EnvironmentVariableDraft {
+                        key: String::new(),
+                        value: String::new(),
+                        enabled: true,
+                        secret: false,
+                        secret_ref: None,
+                    });
+                }
+                ui.add_space(8.0);
+                if let Some(error) = &self.environment_editor_error {
+                    ui.colored_label(Color32::from_rgb(240, 120, 110), error);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Save environment").clicked() {
+                        save_clicked = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel_clicked = true;
+                    }
+                });
+            });
+        if cancel_clicked {
+            self.environment_editor_open = false;
+            self.environment_editor_error = None;
+        }
+        if save_clicked {
+            match self.save_environment_editor() {
+                Ok(()) => self.environment_editor_error = None,
+                Err(error) => self.environment_editor_error = Some(error),
             }
         }
     }
@@ -4850,6 +5096,7 @@ impl eframe::App for PostlyApp {
         self.draw_editor(ui);
         self.draw_command_palette(&ctx);
         self.draw_curl_import_dialog(&ctx);
+        self.draw_environment_editor(&ctx);
         self.persist_recovery_if_due();
         if pending {
             ctx.request_repaint_after(Duration::from_millis(80));
@@ -5195,6 +5442,57 @@ mod tests {
         assert!(!reopened.recovery_restored);
         assert_eq!(reopened.request.name, "New request");
         assert!(reopened.dirty);
+    }
+
+    #[test]
+    fn environment_editor_saves_plain_values_preserves_disabled_flags_and_renames() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.open_environment_editor(None);
+        app.environment_editor_name = "staging".to_owned();
+        app.environment_editor_variables
+            .push(EnvironmentVariableDraft {
+                key: "baseUrl".to_owned(),
+                value: "https://staging.example.test".to_owned(),
+                enabled: true,
+                secret: false,
+                secret_ref: None,
+            });
+        app.environment_editor_variables
+            .push(EnvironmentVariableDraft {
+                key: "disabled".to_owned(),
+                value: "kept locally".to_owned(),
+                enabled: false,
+                secret: false,
+                secret_ref: None,
+            });
+        app.save_environment_editor().expect("save environment");
+        let original_path = app
+            .environments
+            .iter()
+            .find(|(_, environment)| environment.name == "staging")
+            .map(|(path, _)| path.clone())
+            .expect("saved environment");
+        let saved = app
+            .environments
+            .iter()
+            .find(|(_, environment)| environment.name == "staging")
+            .map(|(_, environment)| environment.clone())
+            .expect("saved environment model");
+        assert_eq!(
+            saved.variables["baseUrl"].value,
+            "https://staging.example.test"
+        );
+        assert!(!saved.variables["disabled"].enabled);
+
+        app.open_environment_editor(Some(0));
+        app.environment_editor_name = "production".to_owned();
+        app.save_environment_editor().expect("rename environment");
+        assert!(!original_path.exists());
+        assert!(app
+            .environments
+            .iter()
+            .any(|(_, environment)| environment.name == "production"));
     }
 
     #[test]

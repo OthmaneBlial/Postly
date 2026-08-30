@@ -87,6 +87,9 @@ Implemented:
 - Native GUI crash recovery persists a bounded, private draft snapshot with
   atomic replacement, Unix `0600` permissions, automatic restore as a new
   unsaved request and an explicit discard action.
+- Native GUI environment editing creates, updates and renames local environment
+  files, preserves disabled flags, masks existing keychain-backed values and
+  sends newly entered secret values through the OS credential store.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:

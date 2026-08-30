@@ -38,6 +38,13 @@ contains only an opaque workspace-scoped reference. Postly ignores runtime
 environment files by default; commit a separate redacted template when sharing
 a project:
 
+The native GUI exposes `＋ New environment` and `Edit selected` actions beside
+the environment selector. It manages plain values in the local TOML file,
+preserves disabled flags, masks existing keychain-backed values and sends newly
+entered secret values through the operating-system credential store. Leaving an
+existing secret field blank preserves its opaque reference; remove the variable
+when it should no longer exist.
+
 ~~~text
 environments/staging.postly-env.toml
 environments/staging.example.toml
