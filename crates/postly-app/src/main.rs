@@ -2405,6 +2405,16 @@ fn build_websocket_request(
         let value = resolve_websocket_value(&pair.value, context)?;
         url.query_pairs_mut().append_pair(&key, &value);
     }
+    if let Auth::ApiKey {
+        key,
+        value,
+        location: ApiKeyLocation::Query,
+    } = &request.auth
+    {
+        let key = resolve_websocket_value(key, context)?;
+        let value = resolve_websocket_value(value, context)?;
+        url.query_pairs_mut().append_pair(&key, &value);
+    }
 
     let mut websocket_request = url
         .as_str()
@@ -2470,25 +2480,21 @@ fn build_websocket_request(
         Auth::ApiKey {
             key,
             value,
-            location,
+            location: ApiKeyLocation::Header,
         } => {
             let key = resolve_websocket_value(key, context)?;
             let value = resolve_websocket_value(value, context)?;
-            match location {
-                ApiKeyLocation::Header => {
-                    let name = HeaderName::from_bytes(key.as_bytes()).map_err(|error| {
-                        format!("invalid WebSocket API key name {key}: {error}")
-                    })?;
-                    websocket_request.headers_mut().insert(
-                        name,
-                        HeaderValue::from_str(&value).map_err(|error| error.to_string())?,
-                    );
-                }
-                ApiKeyLocation::Query => {
-                    return Err("WebSocket API keys in query are not supported yet".to_owned());
-                }
-            }
+            let name = HeaderName::from_bytes(key.as_bytes())
+                .map_err(|error| format!("invalid WebSocket API key name {key}: {error}"))?;
+            websocket_request.headers_mut().insert(
+                name,
+                HeaderValue::from_str(&value).map_err(|error| error.to_string())?,
+            );
         }
+        Auth::ApiKey {
+            location: ApiKeyLocation::Query,
+            ..
+        } => {}
     }
     Ok(websocket_request)
 }
@@ -3029,6 +3035,25 @@ mod tests {
         assert!(finished, "SSE worker did not cancel");
         assert_eq!(app.status_message, "SSE stream cancelled");
         assert!(app.response_error.is_none());
+    }
+
+    #[test]
+    fn websocket_request_resolves_query_api_key_auth() {
+        let mut request = Request::new("Query key", "GET", "ws://example.test/socket");
+        request.auth = Auth::ApiKey {
+            key: "api_key".to_owned(),
+            value: "{{token}}".to_owned(),
+            location: ApiKeyLocation::Query,
+        };
+        let mut context = VariableContext::default();
+        context.set_runtime("token", "secret value");
+
+        let websocket_request = build_websocket_request(&request, &context).expect("request");
+        assert_eq!(
+            websocket_request.uri().to_string(),
+            "ws://example.test/socket?api_key=secret+value"
+        );
+        assert!(websocket_request.headers().get("api_key").is_none());
     }
 
     #[test]
