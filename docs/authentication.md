@@ -9,6 +9,7 @@ references only when a request runs. Current HTTP authentication includes:
 - API key in a header or query parameter
 - OAuth 2.0 Client Credentials
 - OAuth 2.0 Authorization Code + PKCE (explicit/manual code exchange)
+- OAuth 2.0 Refresh Token
 
 ## OAuth 2.0 Client Credentials
 
@@ -58,6 +59,25 @@ The PKCE verifier must be 43–128 RFC 7636 unreserved characters. Tokens are
 cached only in memory for the current HTTP engine, keyed to the explicit code
 exchange inputs, and never written to the workspace, history or logs.
 
+## OAuth 2.0 Refresh Token
+
+Refresh-token requests use the configured token endpoint with
+`grant_type=refresh_token`, the client ID, the refresh token and optional client
+secret/scope:
+
+```toml
+[auth]
+type = "oauth2_refresh_token"
+token_url = "https://auth.example.test/token"
+client_id = "postly-local"
+refresh_token = "{{oauthRefreshToken}}"
+scope = "read:users"
+```
+
+The GUI exposes the token URL, client ID, refresh token and scope. The CLI
+accepts the same flow with `--oauth-refresh-token` alongside the OAuth token
+URL/client ID options.
+
 Tokens are cached only in memory inside the current HTTP engine and only when
 the response supplies an `expires_in` value longer than the refresh safety
 window. The cache is not written to the workspace, history or logs. Client
@@ -69,5 +89,5 @@ secret values. Responses are bounded before parsing, and missing or malformed
 `access_token` fields fail the request clearly.
 
 OAuth token orchestration currently applies to HTTP requests. WebSocket,
-SSE-specific token orchestration, Device Code, refresh-token workflows and AWS
-Signature V4 remain planned.
+SSE-specific token orchestration, Device Code and AWS Signature V4 remain
+planned.

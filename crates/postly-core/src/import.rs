@@ -816,9 +816,12 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
             } else {
                 grant_type.as_str()
             };
-            if !matches!(grant_type, "client_credentials" | "authorization_code") {
+            if !matches!(
+                grant_type,
+                "client_credentials" | "authorization_code" | "refresh_token"
+            ) {
                 report.warn(format!(
-                    "{subject} uses unsupported OAuth 2.0 grant type {grant_type}; client_credentials and authorization_code + PKCE are currently supported."
+                    "{subject} uses unsupported OAuth 2.0 grant type {grant_type}; client_credentials, authorization_code + PKCE and refresh_token are currently supported."
                 ));
                 return ParsedAuth {
                     auth: Auth::None,
@@ -865,6 +868,24 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
                     redirect_uri,
                     code,
                     code_verifier,
+                    client_secret: (!client_secret.is_empty()).then_some(client_secret),
+                    scope: (!scope.is_empty()).then_some(scope),
+                }
+            } else if grant_type == "refresh_token" {
+                let refresh_token = auth_value_any(oauth, &["refreshToken", "refresh_token"]);
+                if token_url.is_empty() || client_id.is_empty() || refresh_token.is_empty() {
+                    report.warn(format!(
+                        "{subject} has incomplete OAuth 2.0 refresh-token fields; authentication requires manual review."
+                    ));
+                    return ParsedAuth {
+                        auth: Auth::None,
+                        requires_review: true,
+                    };
+                }
+                Auth::OAuth2RefreshToken {
+                    token_url,
+                    client_id,
+                    refresh_token,
                     client_secret: (!client_secret.is_empty()).then_some(client_secret),
                     scope: (!scope.is_empty()).then_some(scope),
                 }
@@ -1267,6 +1288,34 @@ TOKEN='last value'
                 redirect_uri: "http://127.0.0.1:8787/callback".to_owned(),
                 code: "returned-code".to_owned(),
                 code_verifier: "a".repeat(43),
+                client_secret: None,
+                scope: Some("read:users".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn imports_postman_oauth_refresh_token() {
+        let mut report = ImportReport::default();
+        let value = serde_json::json!({
+            "type": "oauth2",
+            "oauth2": [
+                { "key": "grant_type", "value": "refresh_token" },
+                { "key": "accessTokenUrl", "value": "https://auth.example.test/token" },
+                { "key": "clientId", "value": "postly" },
+                { "key": "refreshToken", "value": "refresh-123" },
+                { "key": "scope", "value": "read:users" }
+            ]
+        });
+        let parsed = parse_auth(Some(&value), "Refresh request", &mut report);
+        assert!(!parsed.requires_review);
+        assert!(report.warnings.is_empty());
+        assert_eq!(
+            parsed.auth,
+            Auth::OAuth2RefreshToken {
+                token_url: "https://auth.example.test/token".to_owned(),
+                client_id: "postly".to_owned(),
+                refresh_token: "refresh-123".to_owned(),
                 client_secret: None,
                 scope: Some("read:users".to_owned()),
             }

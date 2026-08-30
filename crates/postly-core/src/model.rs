@@ -354,6 +354,16 @@ pub enum Auth {
         #[serde(default)]
         scope: Option<String>,
     },
+    /// OAuth 2.0 refresh-token exchange.
+    OAuth2RefreshToken {
+        token_url: String,
+        client_id: String,
+        refresh_token: String,
+        #[serde(default)]
+        client_secret: Option<String>,
+        #[serde(default)]
+        scope: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

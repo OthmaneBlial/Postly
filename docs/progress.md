@@ -14,7 +14,7 @@ Implemented:
 - Variable scopes, precedence and undefined-variable diagnostics.
 - Native async HTTP execution with common body/auth/header/query behavior.
 - Custom PEM CA bundles and combined PEM client identities in the shared HTTP engine and CLI workflows, with actionable file/format diagnostics and local HTTPS/mTLS integration tests.
-- Basic, Bearer, API-key, OAuth 2.0 Client Credentials and explicit Authorization Code + PKCE token exchange in the native model, GUI, Postman import/export and shared HTTP engine, with in-memory expiry-aware token caching and local token-exchange integration tests.
+- Basic, Bearer, API-key, OAuth 2.0 Client Credentials, explicit Authorization Code + PKCE and Refresh Token exchanges in the native model, GUI, CLI, Postman import/export and shared HTTP engine, with in-memory expiry-aware token caching and local token-exchange integration tests.
 - Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass tests.
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
@@ -126,7 +126,7 @@ Not yet implemented:
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
 - transactional workspace restore and broader multi-document crash recovery.
-- Device Code and refresh-token OAuth flows, plus a browser callback UX for Authorization Code/PKCE; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in the CLI.
+- Device Code OAuth flow and a browser callback UX for Authorization Code/PKCE; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in the CLI.
 - OpenAPI cyclic/remote references and deeper protocol-specific GUI tooling.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
   cross-client/memory benchmarks and deeper packaging/release validation.

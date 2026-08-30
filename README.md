@@ -54,8 +54,8 @@ This repository contains working vertical slices, not a static interface mockup.
 - **HTTP and REST:** GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS and custom
   methods; query parameters, duplicate headers, cookies, redirects, compression,
   timeouts, cancellation, raw/JSON/form/multipart/file bodies and response metadata.
-- **Authentication:** Basic, Bearer, API key, OAuth 2.0 Client Credentials and
-  explicit Authorization Code + PKCE token exchange, including variable
+- **Authentication:** Basic, Bearer, API key, OAuth 2.0 Client Credentials,
+  Authorization Code + PKCE and Refresh Token exchanges, including variable
   resolution and local expiry-aware token caching.
 - **Privacy-aware environments:** plain values stay in ignored local files;
   `postly env set --secret` stores new values in the OS credential store and keeps

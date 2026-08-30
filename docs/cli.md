@@ -171,7 +171,8 @@ cloud service. `postly request` and `postly new request` also accept
 `--oauth-scope` directly. For an explicit Authorization Code + PKCE exchange,
 add `--oauth-authorization-url`, `--oauth-redirect-uri`, `--oauth-code` and
 `--oauth-code-verifier`; complete the provider login in the browser first.
-Saved requests can then be run normally:
+For an already-issued refresh token, use `--oauth-refresh-token` instead of
+the PKCE options. Saved requests can then be run normally:
 
 ~~~bash
 postly send ./my-api/collections/my-api/requests/private/users.postly.toml \

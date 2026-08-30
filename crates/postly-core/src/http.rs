@@ -131,7 +131,7 @@ struct OAuthTokenKey {
     client_id: String,
     scope: Option<String>,
     client_secret_fingerprint: u64,
-    code_fingerprint: u64,
+    grant_credential_fingerprint: u64,
     code_verifier_fingerprint: u64,
     redirect_uri: Option<String>,
 }
@@ -609,6 +609,22 @@ impl HttpEngine {
                 Some(code_verifier),
                 Some(redirect_uri),
             ),
+            Auth::OAuth2RefreshToken {
+                token_url,
+                client_id,
+                refresh_token,
+                client_secret,
+                scope,
+            } => (
+                "refresh_token",
+                token_url,
+                client_id,
+                client_secret.as_ref(),
+                scope.as_ref(),
+                Some(refresh_token),
+                None,
+                None,
+            ),
             _ => return Ok(None),
         };
 
@@ -618,7 +634,7 @@ impl HttpEngine {
         let scope = scope
             .map(|value| context.resolve(value).value)
             .filter(|value| !value.trim().is_empty());
-        let code = code.map(|value| context.resolve(value).value);
+        let grant_credential = code.map(|value| context.resolve(value).value);
         let code_verifier = code_verifier.map(|value| context.resolve(value).value);
         let redirect_uri = redirect_uri.map(|value| context.resolve(value).value);
 
@@ -635,7 +651,7 @@ impl HttpEngine {
             ));
         }
         if grant_type == "authorization_code" {
-            if code.as_deref().unwrap_or_default().is_empty()
+            if grant_credential.as_deref().unwrap_or_default().is_empty()
                 || code_verifier.as_deref().unwrap_or_default().is_empty()
                 || redirect_uri.as_deref().unwrap_or_default().is_empty()
             {
@@ -665,7 +681,9 @@ impl HttpEngine {
             client_secret_fingerprint: secret_fingerprint(
                 client_secret.as_deref().unwrap_or_default(),
             ),
-            code_fingerprint: secret_fingerprint(code.as_deref().unwrap_or_default()),
+            grant_credential_fingerprint: secret_fingerprint(
+                grant_credential.as_deref().unwrap_or_default(),
+            ),
             code_verifier_fingerprint: secret_fingerprint(
                 code_verifier.as_deref().unwrap_or_default(),
             ),
@@ -701,7 +719,10 @@ impl HttpEngine {
             form.push(("scope", scope));
         }
         if grant_type == "authorization_code" {
-            form.push(("code", code.expect("validated authorization code")));
+            form.push((
+                "code",
+                grant_credential.expect("validated authorization code"),
+            ));
             form.push((
                 "redirect_uri",
                 redirect_uri.expect("validated redirect URI"),
@@ -709,6 +730,16 @@ impl HttpEngine {
             form.push((
                 "code_verifier",
                 code_verifier.expect("validated PKCE code verifier"),
+            ));
+        } else if grant_type == "refresh_token" {
+            if grant_credential.as_deref().unwrap_or_default().is_empty() {
+                return Err(HttpError::OAuthToken(
+                    "OAuth refresh token cannot be empty".to_owned(),
+                ));
+            }
+            form.push((
+                "refresh_token",
+                grant_credential.expect("validated refresh token"),
             ));
         }
         let mut response = self
@@ -974,6 +1005,14 @@ fn apply_auth(
                 format!("{} {}", token.token_type, token.access_token),
             );
         }
+        Auth::OAuth2RefreshToken { .. } => {
+            let token = oauth_token
+                .ok_or_else(|| HttpError::OAuthToken("access token was not acquired".to_owned()))?;
+            builder = builder.header(
+                "authorization",
+                format!("{} {}", token.token_type, token.access_token),
+            );
+        }
     }
     Ok(builder)
 }
@@ -1116,6 +1155,23 @@ fn resolve_auth(diagnostics: &mut Vec<VariableDiagnostic>, auth: &Auth, context:
             diagnostics.extend(context.resolve(redirect_uri).diagnostics);
             diagnostics.extend(context.resolve(code).diagnostics);
             diagnostics.extend(context.resolve(code_verifier).diagnostics);
+            if let Some(client_secret) = client_secret {
+                diagnostics.extend(context.resolve(client_secret).diagnostics);
+            }
+            if let Some(scope) = scope {
+                diagnostics.extend(context.resolve(scope).diagnostics);
+            }
+        }
+        Auth::OAuth2RefreshToken {
+            token_url,
+            client_id,
+            refresh_token,
+            client_secret,
+            scope,
+        } => {
+            diagnostics.extend(context.resolve(token_url).diagnostics);
+            diagnostics.extend(context.resolve(client_id).diagnostics);
+            diagnostics.extend(context.resolve(refresh_token).diagnostics);
             if let Some(client_secret) = client_secret {
                 diagnostics.extend(context.resolve(client_secret).diagnostics);
             }
@@ -1543,6 +1599,65 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.body_text(), "profile");
         server.await.expect("PKCE server");
+    }
+
+    #[tokio::test]
+    async fn exchanges_oauth_refresh_token() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut token_socket, _) = listener.accept().await.expect("token connection");
+            let token_request = read_request_headers(&mut token_socket).await;
+            assert!(token_request.contains("POST /oauth/token HTTP/1.1"));
+            assert!(token_request.contains("grant_type=refresh_token"));
+            assert!(token_request.contains("client_id=postly-refresh"));
+            assert!(token_request.contains("refresh_token=refresh-123"));
+            let token_body =
+                br#"{"access_token":"refresh-access","token_type":"Bearer","expires_in":3600}"#;
+            let token_response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                token_body.len(),
+                String::from_utf8_lossy(token_body)
+            );
+            token_socket
+                .write_all(token_response.as_bytes())
+                .await
+                .expect("token response");
+
+            let (mut api_socket, _) = listener.accept().await.expect("API connection");
+            let api_request = read_request_headers(&mut api_socket).await;
+            assert!(api_request.contains("GET /account HTTP/1.1"));
+            assert!(api_request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer refresh-access"));
+            api_socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 7\r\nconnection: close\r\n\r\naccount",
+                )
+                .await
+                .expect("API response");
+        });
+
+        let mut request = Request::new(
+            "Refresh request",
+            "GET",
+            format!("http://{address}/account"),
+        );
+        request.auth = Auth::OAuth2RefreshToken {
+            token_url: format!("http://{address}/oauth/token"),
+            client_id: "postly-refresh".to_owned(),
+            refresh_token: "refresh-123".to_owned(),
+            client_secret: None,
+            scope: Some("read:account".to_owned()),
+        };
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("refresh response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "account");
+        server.await.expect("refresh server");
     }
 
     #[tokio::test]

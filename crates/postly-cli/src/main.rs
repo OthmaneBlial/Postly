@@ -62,6 +62,7 @@ struct ImmediateRequestOptions {
     oauth_redirect_uri: Option<String>,
     oauth_code: Option<String>,
     oauth_code_verifier: Option<String>,
+    oauth_refresh_token: Option<String>,
     timeout: u64,
     proxy: Option<String>,
     no_proxy: Option<String>,
@@ -391,6 +392,7 @@ struct NewRequestOptions {
     oauth_redirect_uri: Option<String>,
     oauth_code: Option<String>,
     oauth_code_verifier: Option<String>,
+    oauth_refresh_token: Option<String>,
 }
 
 #[derive(Debug, Default, Args)]
@@ -419,6 +421,8 @@ struct OAuthCliArgs {
     oauth_code: Option<String>,
     #[arg(long, value_name = "VERIFIER", help = "OAuth 2.0 PKCE code verifier")]
     oauth_code_verifier: Option<String>,
+    #[arg(long, value_name = "TOKEN", help = "OAuth 2.0 refresh token")]
+    oauth_refresh_token: Option<String>,
 }
 
 struct HistoryOptions {
@@ -1082,6 +1086,7 @@ async fn main() -> Result<()> {
                 oauth_redirect_uri: oauth.oauth_redirect_uri,
                 oauth_code: oauth.oauth_code,
                 oauth_code_verifier: oauth.oauth_code_verifier,
+                oauth_refresh_token: oauth.oauth_refresh_token,
             }),
         },
         Command::Request {
@@ -1121,6 +1126,7 @@ async fn main() -> Result<()> {
                 oauth_redirect_uri: oauth.oauth_redirect_uri,
                 oauth_code: oauth.oauth_code,
                 oauth_code_verifier: oauth.oauth_code_verifier,
+                oauth_refresh_token: oauth.oauth_refresh_token,
                 timeout,
                 proxy,
                 no_proxy,
@@ -1742,6 +1748,7 @@ fn create_request(options: NewRequestOptions) -> Result<()> {
             oauth_redirect_uri: options.oauth_redirect_uri,
             oauth_code: options.oauth_code,
             oauth_code_verifier: options.oauth_code_verifier,
+            oauth_refresh_token: options.oauth_refresh_token,
         },
     )?;
     request.body = parse_cli_body(options.data, options.json_body)?;
@@ -1767,6 +1774,7 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
             oauth_redirect_uri: options.oauth_redirect_uri,
             oauth_code: options.oauth_code,
             oauth_code_verifier: options.oauth_code_verifier,
+            oauth_refresh_token: options.oauth_refresh_token,
         },
     )?;
     request.body = parse_cli_body(options.data, options.json_body)?;
@@ -2453,6 +2461,9 @@ fn build_websocket_request(
             unreachable!("CLI auth flags do not create OAuth 2.0 credentials")
         }
         Auth::OAuth2AuthorizationCodePkce { .. } => {
+            unreachable!("CLI auth flags do not create OAuth 2.0 credentials")
+        }
+        Auth::OAuth2RefreshToken { .. } => {
             unreachable!("CLI auth flags do not create OAuth 2.0 credentials")
         }
     }
@@ -3297,6 +3308,7 @@ fn parse_auth_flags_with_oauth(
         oauth_redirect_uri,
         oauth_code,
         oauth_code_verifier,
+        oauth_refresh_token,
     } = oauth;
     if oauth_token_url.is_some()
         || oauth_client_id.is_some()
@@ -3306,6 +3318,7 @@ fn parse_auth_flags_with_oauth(
         || oauth_redirect_uri.is_some()
         || oauth_code.is_some()
         || oauth_code_verifier.is_some()
+        || oauth_refresh_token.is_some()
     {
         if bearer.is_some() || basic_user.is_some() || basic_password.is_some() {
             bail!("choose either bearer/basic authentication or OAuth 2.0");
@@ -3317,6 +3330,9 @@ fn parse_auth_flags_with_oauth(
             || oauth_code.is_some()
             || oauth_code_verifier.is_some();
         if is_pkce {
+            if oauth_refresh_token.is_some() {
+                bail!("choose either OAuth 2.0 PKCE or a refresh token");
+            }
             let authorization_url = oauth_authorization_url
                 .context("--oauth-authorization-url is required for OAuth 2.0 PKCE")?;
             let redirect_uri = oauth_redirect_uri
@@ -3331,6 +3347,15 @@ fn parse_auth_flags_with_oauth(
                 redirect_uri,
                 code,
                 code_verifier,
+                client_secret: oauth_client_secret,
+                scope: oauth_scope,
+            });
+        }
+        if let Some(refresh_token) = oauth_refresh_token {
+            return Ok(Auth::OAuth2RefreshToken {
+                token_url,
+                client_id,
+                refresh_token,
                 client_secret: oauth_client_secret,
                 scope: oauth_scope,
             });
@@ -3530,6 +3555,33 @@ mod tests {
                 redirect_uri: "http://127.0.0.1:8787/callback".to_owned(),
                 code: "returned-code".to_owned(),
                 code_verifier: "a".repeat(43),
+                client_secret: None,
+                scope: Some("read:users".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_oauth_refresh_token_cli_flags() {
+        let auth = parse_auth_flags_with_oauth(
+            None,
+            None,
+            None,
+            OAuthCliArgs {
+                oauth_token_url: Some("https://auth.example.test/token".to_owned()),
+                oauth_client_id: Some("postly".to_owned()),
+                oauth_refresh_token: Some("refresh-123".to_owned()),
+                oauth_scope: Some("read:users".to_owned()),
+                ..OAuthCliArgs::default()
+            },
+        )
+        .expect("refresh-token flags");
+        assert_eq!(
+            auth,
+            Auth::OAuth2RefreshToken {
+                token_url: "https://auth.example.test/token".to_owned(),
+                client_id: "postly".to_owned(),
+                refresh_token: "refresh-123".to_owned(),
                 client_secret: None,
                 scope: Some("read:users".to_owned()),
             }
