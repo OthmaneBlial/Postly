@@ -249,6 +249,7 @@ fn auth_label(auth: &Auth) -> &'static str {
         Auth::Bearer { .. } => "Bearer",
         Auth::ApiKey { .. } => "API key",
         Auth::OAuth2ClientCredentials { .. } => "OAuth 2.0 client credentials",
+        Auth::OAuth2AuthorizationCodePkce { .. } => "OAuth 2.0 authorization code + PKCE",
     }
 }
 

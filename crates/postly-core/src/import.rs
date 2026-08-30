@@ -811,9 +811,14 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
         "oauth2" => {
             let oauth = value.get("oauth2");
             let grant_type = auth_value_any(oauth, &["grant_type", "grantType"]);
-            if !grant_type.is_empty() && grant_type != "client_credentials" {
+            let grant_type = if grant_type.is_empty() {
+                "client_credentials"
+            } else {
+                grant_type.as_str()
+            };
+            if !matches!(grant_type, "client_credentials" | "authorization_code") {
                 report.warn(format!(
-                    "{subject} uses OAuth 2.0 grant type {grant_type}; only client_credentials is currently supported."
+                    "{subject} uses unsupported OAuth 2.0 grant type {grant_type}; client_credentials and authorization_code + PKCE are currently supported."
                 ));
                 return ParsedAuth {
                     auth: Auth::None,
@@ -832,20 +837,53 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
             let client_id = auth_value_any(oauth, &["clientId", "client_id"]);
             let client_secret = auth_value_any(oauth, &["clientSecret", "client_secret"]);
             let scope = auth_value_any(oauth, &["scope"]);
-            if token_url.is_empty() || client_id.is_empty() || client_secret.is_empty() {
-                report.warn(format!(
-                    "{subject} has incomplete OAuth 2.0 client credentials; authentication requires manual review."
-                ));
-                return ParsedAuth {
-                    auth: Auth::None,
-                    requires_review: true,
-                };
-            }
-            Auth::OAuth2ClientCredentials {
-                token_url,
-                client_id,
-                client_secret,
-                scope: (!scope.is_empty()).then_some(scope),
+            if grant_type == "authorization_code" {
+                let authorization_url =
+                    auth_value_any(oauth, &["authUrl", "authorizationUrl", "authorization_url"]);
+                let redirect_uri = auth_value_any(oauth, &["redirectUri", "redirect_uri"]);
+                let code = auth_value_any(oauth, &["code", "authorizationCode"]);
+                let code_verifier = auth_value_any(oauth, &["codeVerifier", "code_verifier"]);
+                if authorization_url.is_empty()
+                    || token_url.is_empty()
+                    || client_id.is_empty()
+                    || redirect_uri.is_empty()
+                    || code.is_empty()
+                    || code_verifier.is_empty()
+                {
+                    report.warn(format!(
+                        "{subject} has incomplete OAuth 2.0 authorization-code + PKCE fields; authentication requires manual review."
+                    ));
+                    return ParsedAuth {
+                        auth: Auth::None,
+                        requires_review: true,
+                    };
+                }
+                Auth::OAuth2AuthorizationCodePkce {
+                    authorization_url,
+                    token_url,
+                    client_id,
+                    redirect_uri,
+                    code,
+                    code_verifier,
+                    client_secret: (!client_secret.is_empty()).then_some(client_secret),
+                    scope: (!scope.is_empty()).then_some(scope),
+                }
+            } else {
+                if token_url.is_empty() || client_id.is_empty() || client_secret.is_empty() {
+                    report.warn(format!(
+                        "{subject} has incomplete OAuth 2.0 client credentials; authentication requires manual review."
+                    ));
+                    return ParsedAuth {
+                        auth: Auth::None,
+                        requires_review: true,
+                    };
+                }
+                Auth::OAuth2ClientCredentials {
+                    token_url,
+                    client_id,
+                    client_secret,
+                    scope: (!scope.is_empty()).then_some(scope),
+                }
             }
         }
         "noauth" => Auth::None,
@@ -1199,5 +1237,39 @@ TOKEN='last value'
                 ..
             } if content_type == "text/html"
         ));
+    }
+
+    #[test]
+    fn imports_postman_oauth_authorization_code_pkce() {
+        let mut report = ImportReport::default();
+        let value = serde_json::json!({
+            "type": "oauth2",
+            "oauth2": [
+                { "key": "grant_type", "value": "authorization_code" },
+                { "key": "authUrl", "value": "https://auth.example.test/authorize" },
+                { "key": "accessTokenUrl", "value": "https://auth.example.test/token" },
+                { "key": "clientId", "value": "postly" },
+                { "key": "redirectUri", "value": "http://127.0.0.1:8787/callback" },
+                { "key": "code", "value": "returned-code" },
+                { "key": "codeVerifier", "value": "a".repeat(43) },
+                { "key": "scope", "value": "read:users" }
+            ]
+        });
+        let parsed = parse_auth(Some(&value), "PKCE request", &mut report);
+        assert!(!parsed.requires_review);
+        assert!(report.warnings.is_empty());
+        assert_eq!(
+            parsed.auth,
+            Auth::OAuth2AuthorizationCodePkce {
+                authorization_url: "https://auth.example.test/authorize".to_owned(),
+                token_url: "https://auth.example.test/token".to_owned(),
+                client_id: "postly".to_owned(),
+                redirect_uri: "http://127.0.0.1:8787/callback".to_owned(),
+                code: "returned-code".to_owned(),
+                code_verifier: "a".repeat(43),
+                client_secret: None,
+                scope: Some("read:users".to_owned()),
+            }
+        );
     }
 }

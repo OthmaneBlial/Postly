@@ -166,8 +166,12 @@ bodies are omitted by default; including them is an explicit choice and the
 generated file should be reviewed before sharing.
 
 Saved requests can use OAuth 2.0 Client Credentials without an account or
-cloud service. Configure the auth block in the native request file or through
-the GUI, then run it normally:
+cloud service. `postly request` and `postly new request` also accept
+`--oauth-token-url`, `--oauth-client-id`, `--oauth-client-secret` and
+`--oauth-scope` directly. For an explicit Authorization Code + PKCE exchange,
+add `--oauth-authorization-url`, `--oauth-redirect-uri`, `--oauth-code` and
+`--oauth-code-verifier`; complete the provider login in the browser first.
+Saved requests can then be run normally:
 
 ~~~bash
 postly send ./my-api/collections/my-api/requests/private/users.postly.toml \

@@ -288,6 +288,7 @@ enum AuthKind {
     Basic,
     ApiKey,
     OAuth2ClientCredentials,
+    OAuth2AuthorizationCodePkce,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,6 +340,7 @@ impl AuthKind {
             Self::Basic => "Basic auth",
             Self::ApiKey => "API key",
             Self::OAuth2ClientCredentials => "OAuth 2.0 client credentials",
+            Self::OAuth2AuthorizationCodePkce => "OAuth 2.0 authorization code + PKCE",
         }
     }
 }
@@ -572,6 +574,9 @@ pub struct PostlyApp {
     auth_secondary: String,
     auth_tertiary: String,
     auth_quaternary: String,
+    auth_fifth: String,
+    auth_sixth: String,
+    auth_seventh: String,
     api_key_location: ApiKeyLocation,
     response_tab: ResponseTab,
     console_entries: VecDeque<ConsoleEntry>,
@@ -692,6 +697,9 @@ impl PostlyApp {
             auth_secondary: String::new(),
             auth_tertiary: String::new(),
             auth_quaternary: String::new(),
+            auth_fifth: String::new(),
+            auth_sixth: String::new(),
+            auth_seventh: String::new(),
             api_key_location: ApiKeyLocation::Header,
             response_tab: ResponseTab::Pretty,
             console_entries: VecDeque::new(),
@@ -1410,6 +1418,9 @@ impl PostlyApp {
                 self.auth_secondary.clear();
                 self.auth_tertiary.clear();
                 self.auth_quaternary.clear();
+                self.auth_fifth.clear();
+                self.auth_sixth.clear();
+                self.auth_seventh.clear();
                 self.api_key_location = ApiKeyLocation::Header;
             }
             Auth::Bearer { token } => {
@@ -1418,6 +1429,9 @@ impl PostlyApp {
                 self.auth_secondary.clear();
                 self.auth_tertiary.clear();
                 self.auth_quaternary.clear();
+                self.auth_fifth.clear();
+                self.auth_sixth.clear();
+                self.auth_seventh.clear();
                 self.api_key_location = ApiKeyLocation::Header;
             }
             Auth::Basic { username, password } => {
@@ -1426,6 +1440,9 @@ impl PostlyApp {
                 self.auth_secondary.clone_from(password);
                 self.auth_tertiary.clear();
                 self.auth_quaternary.clear();
+                self.auth_fifth.clear();
+                self.auth_sixth.clear();
+                self.auth_seventh.clear();
                 self.api_key_location = ApiKeyLocation::Header;
             }
             Auth::ApiKey {
@@ -1438,6 +1455,9 @@ impl PostlyApp {
                 self.auth_secondary.clone_from(value);
                 self.auth_tertiary.clear();
                 self.auth_quaternary.clear();
+                self.auth_fifth.clear();
+                self.auth_sixth.clear();
+                self.auth_seventh.clear();
                 self.api_key_location = location.clone();
             }
             Auth::OAuth2ClientCredentials {
@@ -1451,6 +1471,29 @@ impl PostlyApp {
                 self.auth_secondary.clone_from(client_id);
                 self.auth_tertiary.clone_from(client_secret);
                 self.auth_quaternary = scope.clone().unwrap_or_default();
+                self.auth_fifth.clear();
+                self.auth_sixth.clear();
+                self.auth_seventh.clear();
+                self.api_key_location = ApiKeyLocation::Header;
+            }
+            Auth::OAuth2AuthorizationCodePkce {
+                authorization_url,
+                token_url,
+                client_id,
+                redirect_uri,
+                code,
+                code_verifier,
+                scope,
+                ..
+            } => {
+                self.auth_kind = AuthKind::OAuth2AuthorizationCodePkce;
+                self.auth_primary.clone_from(authorization_url);
+                self.auth_secondary.clone_from(token_url);
+                self.auth_tertiary.clone_from(client_id);
+                self.auth_quaternary.clone_from(redirect_uri);
+                self.auth_fifth.clone_from(code);
+                self.auth_sixth.clone_from(code_verifier);
+                self.auth_seventh = scope.clone().unwrap_or_default();
                 self.api_key_location = ApiKeyLocation::Header;
             }
         }
@@ -1817,6 +1860,31 @@ impl PostlyApp {
                     values.push(scope.clone());
                 }
             }
+            Auth::OAuth2AuthorizationCodePkce {
+                authorization_url,
+                token_url,
+                client_id,
+                redirect_uri,
+                code,
+                code_verifier,
+                client_secret,
+                scope,
+            } => {
+                values.extend([
+                    authorization_url.clone(),
+                    token_url.clone(),
+                    client_id.clone(),
+                    redirect_uri.clone(),
+                    code.clone(),
+                    code_verifier.clone(),
+                ]);
+                if let Some(client_secret) = client_secret {
+                    values.push(client_secret.clone());
+                }
+                if let Some(scope) = scope {
+                    values.push(scope.clone());
+                }
+            }
         }
         if let Ok(body) = serde_json::to_string(&request.body) {
             values.push(body);
@@ -2025,6 +2093,16 @@ impl PostlyApp {
                 client_secret: self.auth_tertiary.clone(),
                 scope: (!self.auth_quaternary.trim().is_empty())
                     .then(|| self.auth_quaternary.clone()),
+            },
+            AuthKind::OAuth2AuthorizationCodePkce => Auth::OAuth2AuthorizationCodePkce {
+                authorization_url: self.auth_primary.clone(),
+                token_url: self.auth_secondary.clone(),
+                client_id: self.auth_tertiary.clone(),
+                redirect_uri: self.auth_quaternary.clone(),
+                code: self.auth_fifth.clone(),
+                code_verifier: self.auth_sixth.clone(),
+                client_secret: None,
+                scope: (!self.auth_seventh.trim().is_empty()).then(|| self.auth_seventh.clone()),
             },
         };
         if request.grpc.is_some() {
@@ -4347,6 +4425,7 @@ impl PostlyApp {
                     AuthKind::Basic,
                     AuthKind::ApiKey,
                     AuthKind::OAuth2ClientCredentials,
+                    AuthKind::OAuth2AuthorizationCodePkce,
                 ] {
                     ui.selectable_value(&mut self.auth_kind, kind, kind.label());
                 }
@@ -4448,6 +4527,64 @@ impl PostlyApp {
                 ui.label("Scope (optional)");
                 if ui
                     .add(TextEdit::singleline(&mut self.auth_quaternary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+            }
+            AuthKind::OAuth2AuthorizationCodePkce => {
+                ui.label(
+                    RichText::new(
+                        "PKCE uses an explicit browser login: paste the returned code and verifier for the local token exchange.",
+                    )
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+                );
+                ui.label("Authorization URL");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_primary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Token URL");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_secondary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Client ID");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_tertiary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Redirect URI");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_quaternary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Authorization code");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_fifth).password(true))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("PKCE verifier");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_sixth).password(true))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Scope (optional)");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_seventh))
                     .changed()
                 {
                     self.dirty = true;
@@ -5730,6 +5867,12 @@ fn build_websocket_request(
                     .to_owned(),
             );
         }
+        Auth::OAuth2AuthorizationCodePkce { .. } => {
+            return Err(
+                "OAuth 2.0 authorization code + PKCE is currently supported for HTTP requests, not WebSockets"
+                    .to_owned(),
+            );
+        }
     }
     Ok(websocket_request)
 }
@@ -5804,6 +5947,12 @@ fn apply_grpc_metadata<T>(
         Auth::OAuth2ClientCredentials { .. } => {
             return Err(
                 "OAuth 2.0 client credentials are not yet supported for native gRPC calls"
+                    .to_owned(),
+            );
+        }
+        Auth::OAuth2AuthorizationCodePkce { .. } => {
+            return Err(
+                "OAuth 2.0 authorization code + PKCE is not yet supported for native gRPC calls"
                     .to_owned(),
             );
         }
@@ -6803,6 +6952,41 @@ mod tests {
         assert_eq!(reopened.auth_kind, AuthKind::OAuth2ClientCredentials);
         assert_eq!(reopened.auth_primary, "{{tokenUrl}}");
         assert_eq!(reopened.auth_tertiary, "{{clientSecret}}");
+    }
+
+    #[test]
+    fn oauth_pkce_editor_round_trips_authentication() {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.auth_kind = AuthKind::OAuth2AuthorizationCodePkce;
+        app.auth_primary = "https://auth.example.test/authorize".to_owned();
+        app.auth_secondary = "https://auth.example.test/token".to_owned();
+        app.auth_tertiary = "postly".to_owned();
+        app.auth_quaternary = "http://127.0.0.1:8787/callback".to_owned();
+        app.auth_fifth = "returned-code".to_owned();
+        app.auth_sixth = "a".repeat(43);
+        app.auth_seventh = "read:users".to_owned();
+
+        let request = app.edited_request().expect("PKCE editor state");
+        assert_eq!(
+            request.auth,
+            Auth::OAuth2AuthorizationCodePkce {
+                authorization_url: "https://auth.example.test/authorize".to_owned(),
+                token_url: "https://auth.example.test/token".to_owned(),
+                client_id: "postly".to_owned(),
+                redirect_uri: "http://127.0.0.1:8787/callback".to_owned(),
+                code: "returned-code".to_owned(),
+                code_verifier: "a".repeat(43),
+                client_secret: None,
+                scope: Some("read:users".to_owned()),
+            }
+        );
+        let mut reopened = app;
+        reopened.request.auth = request.auth;
+        reopened.load_request_editors();
+        assert_eq!(reopened.auth_kind, AuthKind::OAuth2AuthorizationCodePkce);
+        assert_eq!(reopened.auth_fifth, "returned-code");
+        assert_eq!(reopened.auth_sixth, "a".repeat(43));
     }
 
     #[test]

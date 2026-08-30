@@ -126,10 +126,14 @@ pub struct HttpEngine {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct OAuthTokenKey {
+    grant_type: String,
     token_url: String,
     client_id: String,
     scope: Option<String>,
     client_secret_fingerprint: u64,
+    code_fingerprint: u64,
+    code_verifier_fingerprint: u64,
+    redirect_uri: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -561,28 +565,111 @@ impl HttpEngine {
         auth: &Auth,
         context: &VariableContext,
     ) -> Result<Option<CachedOAuthToken>, HttpError> {
-        let Auth::OAuth2ClientCredentials {
+        let (
+            grant_type,
             token_url,
             client_id,
             client_secret,
             scope,
-        } = auth
-        else {
-            return Ok(None);
+            code,
+            code_verifier,
+            redirect_uri,
+        ) = match auth {
+            Auth::OAuth2ClientCredentials {
+                token_url,
+                client_id,
+                client_secret,
+                scope,
+            } => (
+                "client_credentials",
+                token_url,
+                client_id,
+                Some(client_secret),
+                scope.as_ref(),
+                None,
+                None,
+                None,
+            ),
+            Auth::OAuth2AuthorizationCodePkce {
+                token_url,
+                client_id,
+                redirect_uri,
+                code,
+                code_verifier,
+                client_secret,
+                scope,
+                ..
+            } => (
+                "authorization_code",
+                token_url,
+                client_id,
+                client_secret.as_ref(),
+                scope.as_ref(),
+                Some(code),
+                Some(code_verifier),
+                Some(redirect_uri),
+            ),
+            _ => return Ok(None),
         };
 
         let token_url = context.resolve(token_url).value;
         let client_id = context.resolve(client_id).value;
-        let client_secret = context.resolve(client_secret).value;
+        let client_secret = client_secret.map(|value| context.resolve(value).value);
         let scope = scope
-            .as_deref()
             .map(|value| context.resolve(value).value)
             .filter(|value| !value.trim().is_empty());
+        let code = code.map(|value| context.resolve(value).value);
+        let code_verifier = code_verifier.map(|value| context.resolve(value).value);
+        let redirect_uri = redirect_uri.map(|value| context.resolve(value).value);
+
+        if token_url.trim().is_empty() || client_id.trim().is_empty() {
+            return Err(HttpError::OAuthToken(
+                "OAuth token URL and client ID cannot be empty".to_owned(),
+            ));
+        }
+        if grant_type == "client_credentials"
+            && client_secret.as_deref().unwrap_or_default().is_empty()
+        {
+            return Err(HttpError::OAuthToken(
+                "OAuth client secret cannot be empty".to_owned(),
+            ));
+        }
+        if grant_type == "authorization_code" {
+            if code.as_deref().unwrap_or_default().is_empty()
+                || code_verifier.as_deref().unwrap_or_default().is_empty()
+                || redirect_uri.as_deref().unwrap_or_default().is_empty()
+            {
+                return Err(HttpError::OAuthToken(
+                    "OAuth authorization code, code verifier and redirect URI are required"
+                        .to_owned(),
+                ));
+            }
+            let verifier_len = code_verifier.as_deref().unwrap_or_default().len();
+            if !(43..=128).contains(&verifier_len)
+                || !code_verifier
+                    .as_deref()
+                    .unwrap_or_default()
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(&byte))
+            {
+                return Err(HttpError::OAuthToken(
+                    "OAuth PKCE code verifier must be 43-128 unreserved characters".to_owned(),
+                ));
+            }
+        }
         let key = OAuthTokenKey {
+            grant_type: grant_type.to_owned(),
             token_url: token_url.clone(),
             client_id: client_id.clone(),
             scope: scope.clone(),
-            client_secret_fingerprint: secret_fingerprint(&client_secret),
+            client_secret_fingerprint: secret_fingerprint(
+                client_secret.as_deref().unwrap_or_default(),
+            ),
+            code_fingerprint: secret_fingerprint(code.as_deref().unwrap_or_default()),
+            code_verifier_fingerprint: secret_fingerprint(
+                code_verifier.as_deref().unwrap_or_default(),
+            ),
+            redirect_uri: redirect_uri.clone(),
         };
         let now = Instant::now();
         {
@@ -604,12 +691,25 @@ impl HttpEngine {
             HttpError::OAuthToken(format!("invalid token endpoint URL: {error}"))
         })?;
         let mut form = vec![
-            ("grant_type", "client_credentials".to_owned()),
+            ("grant_type", grant_type.to_owned()),
             ("client_id", client_id),
-            ("client_secret", client_secret),
         ];
+        if let Some(client_secret) = client_secret {
+            form.push(("client_secret", client_secret));
+        }
         if let Some(scope) = scope {
             form.push(("scope", scope));
+        }
+        if grant_type == "authorization_code" {
+            form.push(("code", code.expect("validated authorization code")));
+            form.push((
+                "redirect_uri",
+                redirect_uri.expect("validated redirect URI"),
+            ));
+            form.push((
+                "code_verifier",
+                code_verifier.expect("validated PKCE code verifier"),
+            ));
         }
         let mut response = self
             .client
@@ -866,6 +966,14 @@ fn apply_auth(
                 format!("{} {}", token.token_type, token.access_token),
             );
         }
+        Auth::OAuth2AuthorizationCodePkce { .. } => {
+            let token = oauth_token
+                .ok_or_else(|| HttpError::OAuthToken("access token was not acquired".to_owned()))?;
+            builder = builder.header(
+                "authorization",
+                format!("{} {}", token.token_type, token.access_token),
+            );
+        }
     }
     Ok(builder)
 }
@@ -988,6 +1096,29 @@ fn resolve_auth(diagnostics: &mut Vec<VariableDiagnostic>, auth: &Auth, context:
             diagnostics.extend(context.resolve(token_url).diagnostics);
             diagnostics.extend(context.resolve(client_id).diagnostics);
             diagnostics.extend(context.resolve(client_secret).diagnostics);
+            if let Some(scope) = scope {
+                diagnostics.extend(context.resolve(scope).diagnostics);
+            }
+        }
+        Auth::OAuth2AuthorizationCodePkce {
+            authorization_url,
+            token_url,
+            client_id,
+            redirect_uri,
+            code,
+            code_verifier,
+            client_secret,
+            scope,
+        } => {
+            diagnostics.extend(context.resolve(authorization_url).diagnostics);
+            diagnostics.extend(context.resolve(token_url).diagnostics);
+            diagnostics.extend(context.resolve(client_id).diagnostics);
+            diagnostics.extend(context.resolve(redirect_uri).diagnostics);
+            diagnostics.extend(context.resolve(code).diagnostics);
+            diagnostics.extend(context.resolve(code_verifier).diagnostics);
+            if let Some(client_secret) = client_secret {
+                diagnostics.extend(context.resolve(client_secret).diagnostics);
+            }
             if let Some(scope) = scope {
                 diagnostics.extend(context.resolve(scope).diagnostics);
             }
@@ -1349,6 +1480,69 @@ mod tests {
         }
 
         server.await.expect("OAuth server");
+    }
+
+    #[tokio::test]
+    async fn exchanges_oauth_authorization_code_with_pkce() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let verifier = "a".repeat(43);
+        let expected_verifier = verifier.clone();
+        let server = tokio::spawn(async move {
+            let (mut token_socket, _) = listener.accept().await.expect("token connection");
+            let token_request = read_request_headers(&mut token_socket).await;
+            assert!(token_request.contains("POST /oauth/token HTTP/1.1"));
+            assert!(token_request.contains("grant_type=authorization_code"));
+            assert!(token_request.contains("client_id=postly-pkce"));
+            assert!(token_request.contains("code=returned-code"));
+            assert!(token_request.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8787%2Fcallback"));
+            assert!(token_request.contains(&format!("code_verifier={expected_verifier}")));
+            let token_body =
+                br#"{"access_token":"pkce-access","token_type":"Bearer","expires_in":3600}"#;
+            let token_response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                token_body.len(),
+                String::from_utf8_lossy(token_body)
+            );
+            token_socket
+                .write_all(token_response.as_bytes())
+                .await
+                .expect("token response");
+
+            let (mut api_socket, _) = listener.accept().await.expect("API connection");
+            let api_request = read_request_headers(&mut api_socket).await;
+            assert!(api_request.contains("GET /profile HTTP/1.1"));
+            assert!(api_request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer pkce-access"));
+            api_socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 7\r\nconnection: close\r\n\r\nprofile",
+                )
+                .await
+                .expect("API response");
+        });
+
+        let auth = Auth::OAuth2AuthorizationCodePkce {
+            authorization_url: "https://auth.example.test/authorize".to_owned(),
+            token_url: format!("http://{address}/oauth/token"),
+            client_id: "postly-pkce".to_owned(),
+            redirect_uri: "http://127.0.0.1:8787/callback".to_owned(),
+            code: "returned-code".to_owned(),
+            code_verifier: verifier,
+            client_secret: None,
+            scope: Some("read:profile".to_owned()),
+        };
+        let mut request = Request::new("PKCE request", "GET", format!("http://{address}/profile"));
+        request.auth = auth;
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("PKCE response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "profile");
+        server.await.expect("PKCE server");
     }
 
     #[tokio::test]

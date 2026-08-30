@@ -424,6 +424,29 @@ fn postman_auth(auth: &Auth) -> Option<Value> {
                 { "key": "scope", "value": scope.clone().unwrap_or_default(), "type": "string" },
             ],
         }),
+        Auth::OAuth2AuthorizationCodePkce {
+            authorization_url,
+            token_url,
+            client_id,
+            redirect_uri,
+            code,
+            code_verifier,
+            client_secret,
+            scope,
+        } => json!({
+            "type": "oauth2",
+            "oauth2": [
+                { "key": "grant_type", "value": "authorization_code", "type": "string" },
+                { "key": "authUrl", "value": authorization_url, "type": "string" },
+                { "key": "accessTokenUrl", "value": token_url, "type": "string" },
+                { "key": "clientId", "value": client_id, "type": "string" },
+                { "key": "clientSecret", "value": client_secret.clone().unwrap_or_default(), "type": "string" },
+                { "key": "redirectUri", "value": redirect_uri, "type": "string" },
+                { "key": "code", "value": code, "type": "string" },
+                { "key": "codeVerifier", "value": code_verifier, "type": "string" },
+                { "key": "scope", "value": scope.clone().unwrap_or_default(), "type": "string" },
+            ],
+        }),
     };
     Some(value)
 }
@@ -664,6 +687,27 @@ mod tests {
         assert_eq!(oauth[1]["value"], "https://auth.example.test/token");
         assert_eq!(oauth[3]["value"], "{{clientSecret}}");
         assert_eq!(oauth[4]["value"], "read:users");
+    }
+
+    #[test]
+    fn exports_oauth_authorization_code_pkce_for_postman() {
+        let auth = Auth::OAuth2AuthorizationCodePkce {
+            authorization_url: "https://auth.example.test/authorize".to_owned(),
+            token_url: "https://auth.example.test/token".to_owned(),
+            client_id: "postly".to_owned(),
+            redirect_uri: "http://127.0.0.1:8787/callback".to_owned(),
+            code: "returned-code".to_owned(),
+            code_verifier: "a".repeat(43),
+            client_secret: None,
+            scope: Some("read:users".to_owned()),
+        };
+        let document = postman_auth(&auth).expect("Postman auth");
+        assert_eq!(document["type"], "oauth2");
+        let oauth = &document["oauth2"];
+        assert_eq!(oauth[0]["value"], "authorization_code");
+        assert_eq!(oauth[1]["value"], "https://auth.example.test/authorize");
+        assert_eq!(oauth[5]["value"], "http://127.0.0.1:8787/callback");
+        assert_eq!(oauth[7]["value"], "a".repeat(43));
     }
 
     #[test]

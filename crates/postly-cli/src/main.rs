@@ -58,6 +58,10 @@ struct ImmediateRequestOptions {
     oauth_client_id: Option<String>,
     oauth_client_secret: Option<String>,
     oauth_scope: Option<String>,
+    oauth_authorization_url: Option<String>,
+    oauth_redirect_uri: Option<String>,
+    oauth_code: Option<String>,
+    oauth_code_verifier: Option<String>,
     timeout: u64,
     proxy: Option<String>,
     no_proxy: Option<String>,
@@ -383,9 +387,13 @@ struct NewRequestOptions {
     oauth_client_id: Option<String>,
     oauth_client_secret: Option<String>,
     oauth_scope: Option<String>,
+    oauth_authorization_url: Option<String>,
+    oauth_redirect_uri: Option<String>,
+    oauth_code: Option<String>,
+    oauth_code_verifier: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 struct OAuthCliArgs {
     #[arg(long, value_name = "URL", help = "OAuth 2.0 token endpoint")]
     oauth_token_url: Option<String>,
@@ -395,6 +403,22 @@ struct OAuthCliArgs {
     oauth_client_secret: Option<String>,
     #[arg(long, value_name = "SCOPE", help = "Optional OAuth 2.0 scope")]
     oauth_scope: Option<String>,
+    #[arg(
+        long,
+        value_name = "URL",
+        help = "OAuth 2.0 authorization endpoint for PKCE"
+    )]
+    oauth_authorization_url: Option<String>,
+    #[arg(long, value_name = "URI", help = "OAuth 2.0 redirect URI for PKCE")]
+    oauth_redirect_uri: Option<String>,
+    #[arg(
+        long,
+        value_name = "CODE",
+        help = "OAuth 2.0 authorization code for PKCE"
+    )]
+    oauth_code: Option<String>,
+    #[arg(long, value_name = "VERIFIER", help = "OAuth 2.0 PKCE code verifier")]
+    oauth_code_verifier: Option<String>,
 }
 
 struct HistoryOptions {
@@ -1054,6 +1078,10 @@ async fn main() -> Result<()> {
                 oauth_client_id: oauth.oauth_client_id,
                 oauth_client_secret: oauth.oauth_client_secret,
                 oauth_scope: oauth.oauth_scope,
+                oauth_authorization_url: oauth.oauth_authorization_url,
+                oauth_redirect_uri: oauth.oauth_redirect_uri,
+                oauth_code: oauth.oauth_code,
+                oauth_code_verifier: oauth.oauth_code_verifier,
             }),
         },
         Command::Request {
@@ -1089,6 +1117,10 @@ async fn main() -> Result<()> {
                 oauth_client_id: oauth.oauth_client_id,
                 oauth_client_secret: oauth.oauth_client_secret,
                 oauth_scope: oauth.oauth_scope,
+                oauth_authorization_url: oauth.oauth_authorization_url,
+                oauth_redirect_uri: oauth.oauth_redirect_uri,
+                oauth_code: oauth.oauth_code,
+                oauth_code_verifier: oauth.oauth_code_verifier,
                 timeout,
                 proxy,
                 no_proxy,
@@ -1701,10 +1733,16 @@ fn create_request(options: NewRequestOptions) -> Result<()> {
         options.bearer,
         options.basic_user,
         options.basic_password,
-        options.oauth_token_url,
-        options.oauth_client_id,
-        options.oauth_client_secret,
-        options.oauth_scope,
+        OAuthCliArgs {
+            oauth_token_url: options.oauth_token_url,
+            oauth_client_id: options.oauth_client_id,
+            oauth_client_secret: options.oauth_client_secret,
+            oauth_scope: options.oauth_scope,
+            oauth_authorization_url: options.oauth_authorization_url,
+            oauth_redirect_uri: options.oauth_redirect_uri,
+            oauth_code: options.oauth_code,
+            oauth_code_verifier: options.oauth_code_verifier,
+        },
     )?;
     request.body = parse_cli_body(options.data, options.json_body)?;
     let path = workspace.save_request(&collection, &request)?;
@@ -1720,10 +1758,16 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
         options.bearer,
         options.basic_user,
         options.basic_password,
-        options.oauth_token_url,
-        options.oauth_client_id,
-        options.oauth_client_secret,
-        options.oauth_scope,
+        OAuthCliArgs {
+            oauth_token_url: options.oauth_token_url,
+            oauth_client_id: options.oauth_client_id,
+            oauth_client_secret: options.oauth_client_secret,
+            oauth_scope: options.oauth_scope,
+            oauth_authorization_url: options.oauth_authorization_url,
+            oauth_redirect_uri: options.oauth_redirect_uri,
+            oauth_code: options.oauth_code,
+            oauth_code_verifier: options.oauth_code_verifier,
+        },
     )?;
     request.body = parse_cli_body(options.data, options.json_body)?;
     let response = execute(
@@ -2406,6 +2450,9 @@ fn build_websocket_request(
         }
         Auth::ApiKey { .. } => unreachable!("CLI auth flags do not create API keys"),
         Auth::OAuth2ClientCredentials { .. } => {
+            unreachable!("CLI auth flags do not create OAuth 2.0 credentials")
+        }
+        Auth::OAuth2AuthorizationCodePkce { .. } => {
             unreachable!("CLI auth flags do not create OAuth 2.0 credentials")
         }
     }
@@ -3232,28 +3279,62 @@ fn parse_auth_flags(
     basic_user: Option<String>,
     basic_password: Option<String>,
 ) -> Result<Auth> {
-    parse_auth_flags_with_oauth(bearer, basic_user, basic_password, None, None, None, None)
+    parse_auth_flags_with_oauth(bearer, basic_user, basic_password, OAuthCliArgs::default())
 }
 
 fn parse_auth_flags_with_oauth(
     bearer: Option<String>,
     basic_user: Option<String>,
     basic_password: Option<String>,
-    oauth_token_url: Option<String>,
-    oauth_client_id: Option<String>,
-    oauth_client_secret: Option<String>,
-    oauth_scope: Option<String>,
+    oauth: OAuthCliArgs,
 ) -> Result<Auth> {
+    let OAuthCliArgs {
+        oauth_token_url,
+        oauth_client_id,
+        oauth_client_secret,
+        oauth_scope,
+        oauth_authorization_url,
+        oauth_redirect_uri,
+        oauth_code,
+        oauth_code_verifier,
+    } = oauth;
     if oauth_token_url.is_some()
         || oauth_client_id.is_some()
         || oauth_client_secret.is_some()
         || oauth_scope.is_some()
+        || oauth_authorization_url.is_some()
+        || oauth_redirect_uri.is_some()
+        || oauth_code.is_some()
+        || oauth_code_verifier.is_some()
     {
         if bearer.is_some() || basic_user.is_some() || basic_password.is_some() {
-            bail!("choose either bearer/basic authentication or OAuth 2.0 client credentials");
+            bail!("choose either bearer/basic authentication or OAuth 2.0");
         }
         let token_url = oauth_token_url.context("--oauth-token-url is required for OAuth 2.0")?;
         let client_id = oauth_client_id.context("--oauth-client-id is required for OAuth 2.0")?;
+        let is_pkce = oauth_authorization_url.is_some()
+            || oauth_redirect_uri.is_some()
+            || oauth_code.is_some()
+            || oauth_code_verifier.is_some();
+        if is_pkce {
+            let authorization_url = oauth_authorization_url
+                .context("--oauth-authorization-url is required for OAuth 2.0 PKCE")?;
+            let redirect_uri = oauth_redirect_uri
+                .context("--oauth-redirect-uri is required for OAuth 2.0 PKCE")?;
+            let code = oauth_code.context("--oauth-code is required for OAuth 2.0 PKCE")?;
+            let code_verifier = oauth_code_verifier
+                .context("--oauth-code-verifier is required for OAuth 2.0 PKCE")?;
+            return Ok(Auth::OAuth2AuthorizationCodePkce {
+                authorization_url,
+                token_url,
+                client_id,
+                redirect_uri,
+                code,
+                code_verifier,
+                client_secret: oauth_client_secret,
+                scope: oauth_scope,
+            });
+        }
         let client_secret =
             oauth_client_secret.context("--oauth-client-secret is required for OAuth 2.0")?;
         return Ok(Auth::OAuth2ClientCredentials {
@@ -3390,10 +3471,13 @@ mod tests {
             None,
             None,
             None,
-            Some("https://auth.example.test/token".to_owned()),
-            Some("postly".to_owned()),
-            Some("secret".to_owned()),
-            Some("read:users".to_owned()),
+            OAuthCliArgs {
+                oauth_token_url: Some("https://auth.example.test/token".to_owned()),
+                oauth_client_id: Some("postly".to_owned()),
+                oauth_client_secret: Some("secret".to_owned()),
+                oauth_scope: Some("read:users".to_owned()),
+                ..OAuthCliArgs::default()
+            },
         )
         .expect("OAuth flags");
         assert_eq!(
@@ -3409,13 +3493,47 @@ mod tests {
             None,
             None,
             None,
-            Some("https://auth.example.test/token".to_owned()),
-            Some("postly".to_owned()),
-            None,
-            None,
+            OAuthCliArgs {
+                oauth_token_url: Some("https://auth.example.test/token".to_owned()),
+                oauth_client_id: Some("postly".to_owned()),
+                ..OAuthCliArgs::default()
+            },
         )
         .expect_err("incomplete OAuth flags");
         assert!(error.to_string().contains("--oauth-client-secret"));
+    }
+
+    #[test]
+    fn parses_oauth_pkce_cli_flags() {
+        let auth = parse_auth_flags_with_oauth(
+            None,
+            None,
+            None,
+            OAuthCliArgs {
+                oauth_token_url: Some("https://auth.example.test/token".to_owned()),
+                oauth_client_id: Some("postly".to_owned()),
+                oauth_scope: Some("read:users".to_owned()),
+                oauth_authorization_url: Some("https://auth.example.test/authorize".to_owned()),
+                oauth_redirect_uri: Some("http://127.0.0.1:8787/callback".to_owned()),
+                oauth_code: Some("returned-code".to_owned()),
+                oauth_code_verifier: Some("a".repeat(43)),
+                ..OAuthCliArgs::default()
+            },
+        )
+        .expect("PKCE flags");
+        assert_eq!(
+            auth,
+            Auth::OAuth2AuthorizationCodePkce {
+                authorization_url: "https://auth.example.test/authorize".to_owned(),
+                token_url: "https://auth.example.test/token".to_owned(),
+                client_id: "postly".to_owned(),
+                redirect_uri: "http://127.0.0.1:8787/callback".to_owned(),
+                code: "returned-code".to_owned(),
+                code_verifier: "a".repeat(43),
+                client_secret: None,
+                scope: Some("read:users".to_owned()),
+            }
+        );
     }
 
     #[test]

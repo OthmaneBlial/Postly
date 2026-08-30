@@ -20,7 +20,7 @@ and manual-review cases remain visible in the report.
 | Postman Collection v2.1 JSON parsing | working slice | importer tests and fixture |
 | folders and request files | working slice | filesystem round-trip and importer tests |
 | variables and environments | working slice; keychain-backed `postly env set --secret` and explicit `.env --secret KEY` references resolve without persisting the value | variable precedence tests, secure-store round-trip tests, environment import and dotenv parser tests |
-| common headers, bodies and auth | working slice; GUI edits raw/JSON/GraphQL, URL-encoded, multipart and binary-file bodies; OAuth 2.0 Client Credentials supported, other OAuth grants require review | model/import/export coverage, GUI round-trip tests and local token-exchange/cache integration test |
+| common headers, bodies and auth | working slice; GUI edits raw/JSON/GraphQL, URL-encoded, multipart and binary-file bodies; OAuth 2.0 Client Credentials and explicit Authorization Code + PKCE token exchange supported; Device Code/refresh workflows require review | model/import/export coverage, GUI round-trip tests and local token-exchange/cache integration tests |
 | HTTP(S)/SOCKS proxy routing | working HTTP/SSE slice; explicit CLI/GUI proxy, bypass list and env/system proxy support; WebSocket/gRPC routing pending | local proxy forwarding, direct bypass, SOCKS URL construction and invalid-proxy tests |
 | HTTPS certificates | core and CLI PEM CA/client-identity slice; native GUI HTTP/SSE Transport settings; PKCS#12/passphrases and domain association pending | local HTTPS CA and mutual-TLS tests, GUI settings persistence and file/format diagnostics |
 | Postman Collection v2.1 export | working slice | export/import round-trip fixture |

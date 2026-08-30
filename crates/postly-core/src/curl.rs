@@ -120,6 +120,12 @@ pub fn export_curl_command(request: &Request) -> CurlExportResult {
                     .to_owned(),
             );
         }
+        Auth::OAuth2AuthorizationCodePkce { .. } => {
+            warnings.push(
+                "OAuth 2.0 authorization code + PKCE was not materialized; exchange the code before running the copied command."
+                    .to_owned(),
+            );
+        }
     }
 
     match &request.body {

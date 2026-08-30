@@ -336,6 +336,24 @@ pub enum Auth {
         #[serde(default)]
         scope: Option<String>,
     },
+    /// OAuth 2.0 Authorization Code with PKCE.
+    ///
+    /// The authorization step is intentionally explicit: a user completes the
+    /// provider login in their browser, then supplies the returned code and
+    /// verifier for the local token exchange. Postly never handles provider
+    /// credentials or stores the resulting access token on disk.
+    OAuth2AuthorizationCodePkce {
+        authorization_url: String,
+        token_url: String,
+        client_id: String,
+        redirect_uri: String,
+        code: String,
+        code_verifier: String,
+        #[serde(default)]
+        client_secret: Option<String>,
+        #[serde(default)]
+        scope: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
