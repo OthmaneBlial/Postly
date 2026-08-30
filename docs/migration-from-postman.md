@@ -42,7 +42,7 @@ interoperability path, not a claim of perfect Postman round-trip fidelity.
 Current limitations:
 
 - Script execution is opt-in and currently depends on a local Node.js installation; the bridge is a tested prototype, not an embedded or hardened sandbox.
-- Authorization Code, PKCE and other OAuth 2.0 grant types remain reviewable; Client Credentials is the currently supported OAuth flow.
+- Authorization Code + PKCE, Refresh Token and Client Credentials are supported in the HTTP engine; Device Code and browser callback UX remain planned, so those imports still require review.
 - GraphQL request metadata is retained in the structured native body model.
 - File paths should be checked after import because their meaning depends on the source project location.
 - Collection-level and folder-level script inheritance is materialized into request source, while variable persistence and broader runtime behavior remain limited.

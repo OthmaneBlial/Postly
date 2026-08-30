@@ -1,0 +1,45 @@
+{
+  "info": {
+    "name": "Postly OAuth 2.0 migration fixture",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Authorization Code with PKCE",
+      "request": {
+        "method": "GET",
+        "url": "https://api.example.test/profile",
+        "auth": {
+          "type": "oauth2",
+          "oauth2": [
+            { "key": "grant_type", "value": "authorization_code" },
+            { "key": "authUrl", "value": "https://auth.example.test/authorize" },
+            { "key": "accessTokenUrl", "value": "https://auth.example.test/token" },
+            { "key": "clientId", "value": "postly-public" },
+            { "key": "redirectUri", "value": "http://127.0.0.1:8787/callback" },
+            { "key": "code", "value": "authorization-code" },
+            { "key": "codeVerifier", "value": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~" },
+            { "key": "scope", "value": "profile" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Refresh Token",
+      "request": {
+        "method": "GET",
+        "url": "https://api.example.test/profile",
+        "auth": {
+          "type": "oauth2",
+          "oauth2": [
+            { "key": "grant_type", "value": "refresh_token" },
+            { "key": "accessTokenUrl", "value": "https://auth.example.test/token" },
+            { "key": "clientId", "value": "postly-public" },
+            { "key": "refreshToken", "value": "refresh-token" },
+            { "key": "scope", "value": "profile" }
+          ]
+        }
+      }
+    }
+  ]
+}
