@@ -60,6 +60,7 @@ struct ImmediateRequestOptions {
     oauth_scope: Option<String>,
     timeout: u64,
     proxy: Option<String>,
+    no_proxy: Option<String>,
     ca_cert: Option<PathBuf>,
     client_identity: Option<PathBuf>,
     insecure: bool,
@@ -79,6 +80,7 @@ struct GraphqlOptions {
     basic_password: Option<String>,
     timeout: u64,
     proxy: Option<String>,
+    no_proxy: Option<String>,
     ca_cert: Option<PathBuf>,
     client_identity: Option<PathBuf>,
     insecure: bool,
@@ -306,6 +308,7 @@ struct SseOptions {
     timeout: u64,
     reconnect: u32,
     proxy: Option<String>,
+    no_proxy: Option<String>,
     ca_cert: Option<PathBuf>,
     client_identity: Option<PathBuf>,
     insecure: bool,
@@ -332,6 +335,7 @@ struct RunOptions<'a> {
     scripts: bool,
     timeout: u64,
     proxy: Option<&'a str>,
+    no_proxy: Option<&'a str>,
     ca_cert: Option<&'a Path>,
     client_identity: Option<&'a Path>,
     reporter: Reporter,
@@ -344,6 +348,7 @@ struct SendOptions<'a> {
     scripts: bool,
     timeout: u64,
     proxy: Option<&'a str>,
+    no_proxy: Option<&'a str>,
     ca_cert: Option<&'a Path>,
     client_identity: Option<&'a Path>,
     insecure: bool,
@@ -353,6 +358,7 @@ struct SendOptions<'a> {
 struct ExecuteOptions<'a> {
     timeout: u64,
     proxy: Option<&'a str>,
+    no_proxy: Option<&'a str>,
     ca_cert: Option<&'a Path>,
     client_identity: Option<&'a Path>,
     insecure: bool,
@@ -480,6 +486,13 @@ enum Command {
         proxy: Option<String>,
         #[arg(
             long,
+            requires = "proxy",
+            value_name = "HOSTS",
+            help = "Bypass the proxy for comma-separated hosts, domains or IP ranges"
+        )]
+        no_proxy: Option<String>,
+        #[arg(
+            long,
             value_name = "PATH",
             help = "Trust an additional PEM-encoded CA certificate"
         )]
@@ -528,6 +541,13 @@ enum Command {
         proxy: Option<String>,
         #[arg(
             long,
+            requires = "proxy",
+            value_name = "HOSTS",
+            help = "Bypass the proxy for comma-separated hosts, domains or IP ranges"
+        )]
+        no_proxy: Option<String>,
+        #[arg(
+            long,
             value_name = "PATH",
             help = "Trust an additional PEM-encoded CA certificate"
         )]
@@ -569,6 +589,13 @@ enum Command {
             help = "Route the stream through an HTTP(S) proxy"
         )]
         proxy: Option<String>,
+        #[arg(
+            long,
+            requires = "proxy",
+            value_name = "HOSTS",
+            help = "Bypass the proxy for comma-separated hosts, domains or IP ranges"
+        )]
+        no_proxy: Option<String>,
         #[arg(
             long,
             value_name = "PATH",
@@ -627,6 +654,13 @@ enum Command {
             help = "Route the request through an HTTP(S) proxy"
         )]
         proxy: Option<String>,
+        #[arg(
+            long,
+            requires = "proxy",
+            value_name = "HOSTS",
+            help = "Bypass the proxy for comma-separated hosts, domains or IP ranges"
+        )]
+        no_proxy: Option<String>,
         #[arg(
             long,
             value_name = "PATH",
@@ -750,6 +784,13 @@ enum Command {
             help = "Route collection requests through an HTTP(S) proxy"
         )]
         proxy: Option<String>,
+        #[arg(
+            long,
+            requires = "proxy",
+            value_name = "HOSTS",
+            help = "Bypass the proxy for comma-separated hosts, domains or IP ranges"
+        )]
+        no_proxy: Option<String>,
         #[arg(
             long,
             value_name = "PATH",
@@ -1028,6 +1069,7 @@ async fn main() -> Result<()> {
             oauth,
             timeout,
             proxy,
+            no_proxy,
             ca_cert,
             client_identity,
             insecure,
@@ -1049,6 +1091,7 @@ async fn main() -> Result<()> {
                 oauth_scope: oauth.oauth_scope,
                 timeout,
                 proxy,
+                no_proxy,
                 ca_cert,
                 client_identity,
                 insecure,
@@ -1070,6 +1113,7 @@ async fn main() -> Result<()> {
             basic_password,
             timeout,
             proxy,
+            no_proxy,
             ca_cert,
             client_identity,
             insecure,
@@ -1088,6 +1132,7 @@ async fn main() -> Result<()> {
                 basic_password,
                 timeout,
                 proxy,
+                no_proxy,
                 ca_cert,
                 client_identity,
                 insecure,
@@ -1150,6 +1195,7 @@ async fn main() -> Result<()> {
             timeout,
             reconnect,
             proxy,
+            no_proxy,
             ca_cert,
             client_identity,
             insecure,
@@ -1164,6 +1210,7 @@ async fn main() -> Result<()> {
                 timeout,
                 reconnect,
                 proxy,
+                no_proxy,
                 ca_cert,
                 client_identity,
                 insecure,
@@ -1202,6 +1249,7 @@ async fn main() -> Result<()> {
             output_json,
             timeout,
             proxy,
+            no_proxy,
             ca_cert,
             client_identity,
             insecure,
@@ -1212,6 +1260,7 @@ async fn main() -> Result<()> {
                 scripts,
                 timeout,
                 proxy: proxy.as_deref(),
+                no_proxy: no_proxy.as_deref(),
                 ca_cert: ca_cert.as_deref(),
                 client_identity: client_identity.as_deref(),
                 insecure,
@@ -1293,6 +1342,7 @@ async fn main() -> Result<()> {
             scripts,
             timeout,
             proxy,
+            no_proxy,
             ca_cert,
             client_identity,
             reporter,
@@ -1307,6 +1357,7 @@ async fn main() -> Result<()> {
                 scripts,
                 timeout,
                 proxy: proxy.as_deref(),
+                no_proxy: no_proxy.as_deref(),
                 ca_cert: ca_cert.as_deref(),
                 client_identity: client_identity.as_deref(),
                 reporter: if output_json {
@@ -1681,6 +1732,7 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
         ExecuteOptions {
             timeout: options.timeout,
             proxy: options.proxy.as_deref(),
+            no_proxy: options.no_proxy.as_deref(),
             ca_cert: options.ca_cert.as_deref(),
             client_identity: options.client_identity.as_deref(),
             insecure: options.insecure,
@@ -1717,6 +1769,7 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
         ExecuteOptions {
             timeout: options.timeout,
             proxy: options.proxy.as_deref(),
+            no_proxy: options.no_proxy.as_deref(),
             ca_cert: options.ca_cert.as_deref(),
             client_identity: options.client_identity.as_deref(),
             insecure: options.insecure,
@@ -1770,6 +1823,7 @@ async fn introspect_graphql_schema(options: GraphqlOptions) -> Result<()> {
         ExecuteOptions {
             timeout: options.timeout,
             proxy: options.proxy.as_deref(),
+            no_proxy: options.no_proxy.as_deref(),
             ca_cert: options.ca_cert.as_deref(),
             client_identity: options.client_identity.as_deref(),
             insecure: options.insecure,
@@ -2129,6 +2183,7 @@ async fn stream_sse(options: SseOptions) -> Result<()> {
         timeout: Duration::from_secs(options.timeout),
         accept_invalid_certs: options.insecure,
         proxy: options.proxy.clone(),
+        no_proxy: options.no_proxy.clone(),
         ca_cert: options.ca_cert.clone(),
         client_identity: options.client_identity.clone(),
         cookie_jar: None,
@@ -2448,6 +2503,7 @@ async fn send_saved_request(options: SendOptions<'_>) -> Result<()> {
         ExecuteOptions {
             timeout: options.timeout,
             proxy: options.proxy,
+            no_proxy: options.no_proxy,
             ca_cert: options.ca_cert,
             client_identity: options.client_identity,
             insecure: options.insecure,
@@ -2892,6 +2948,7 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
     let engine = HttpEngine::new(&EngineOptions {
         timeout: Duration::from_secs(options.timeout),
         proxy: options.proxy.map(ToOwned::to_owned),
+        no_proxy: options.no_proxy.map(ToOwned::to_owned),
         ca_cert: options.ca_cert.map(Path::to_path_buf),
         client_identity: options.client_identity.map(Path::to_path_buf),
         cookie_jar: Some(workspace.root().join(".postly/cookies.json")),
@@ -3080,6 +3137,7 @@ async fn execute(
         timeout: Duration::from_secs(options.timeout),
         accept_invalid_certs: options.insecure,
         proxy: options.proxy.map(ToOwned::to_owned),
+        no_proxy: options.no_proxy.map(ToOwned::to_owned),
         ca_cert: options.ca_cert.map(Path::to_path_buf),
         client_identity: options.client_identity.map(Path::to_path_buf),
         cookie_jar: options.cookie_jar.map(Path::to_path_buf),
@@ -3845,6 +3903,7 @@ mod tests {
             basic_password: None,
             timeout: 10,
             proxy: None,
+            no_proxy: None,
             ca_cert: None,
             client_identity: None,
             insecure: false,
@@ -3894,6 +3953,7 @@ mod tests {
             basic_password: None,
             timeout: 10,
             proxy: None,
+            no_proxy: None,
             ca_cert: None,
             client_identity: None,
             insecure: false,
@@ -3981,6 +4041,7 @@ paths:
             timeout: 10,
             reconnect: 0,
             proxy: None,
+            no_proxy: None,
             ca_cert: None,
             client_identity: None,
             insecure: false,
@@ -4032,6 +4093,7 @@ paths:
             timeout: 10,
             reconnect: 1,
             proxy: None,
+            no_proxy: None,
             ca_cert: None,
             client_identity: None,
             insecure: false,
@@ -4175,6 +4237,7 @@ paths:
             scripts: false,
             timeout: 10,
             proxy: None,
+            no_proxy: None,
             ca_cert: None,
             client_identity: None,
             reporter: Reporter::Json,

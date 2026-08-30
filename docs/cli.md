@@ -131,7 +131,9 @@ credential store without printing it, while `--all` migrates only imported
 variables marked as secrets. Certificate options
 read PEM files from disk; private-key contents are never command-line output
 or history data. Request, GraphQL, SSE, send and run accept the same
-HTTP proxy and certificate flags where the transport applies.
+HTTP(S)/SOCKS proxy, `--no-proxy` bypass and certificate flags where the
+transport applies. When `--proxy` is omitted, platform and standard proxy
+environment variables are handled by the HTTP client.
 
 Import a conventional `.env` file explicitly. Values stay literal—there is no
 variable expansion or command execution—and only keys named with `--secret`

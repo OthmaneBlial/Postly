@@ -29,6 +29,8 @@ pub struct EngineOptions {
     pub accept_invalid_certs: bool,
     pub max_redirects: usize,
     pub proxy: Option<String>,
+    /// Optional comma-separated host/IP bypass list for an explicit proxy.
+    pub no_proxy: Option<String>,
     /// An additional PEM-encoded trust anchor for HTTPS connections.
     pub ca_cert: Option<PathBuf>,
     /// A PEM bundle containing the client certificate chain and private key.
@@ -44,6 +46,7 @@ impl Default for EngineOptions {
             accept_invalid_certs: false,
             max_redirects: 10,
             proxy: None,
+            no_proxy: None,
             ca_cert: None,
             client_identity: None,
             cookie_jar: None,
@@ -392,7 +395,15 @@ impl HttpEngine {
             .redirect(reqwest::redirect::Policy::limited(options.max_redirects))
             .cookie_provider(Arc::clone(&cookie_jar));
         if let Some(proxy) = options.proxy.as_deref() {
-            builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(HttpError::Proxy)?);
+            let no_proxy = options
+                .no_proxy
+                .as_deref()
+                .and_then(reqwest::NoProxy::from_string);
+            builder = builder.proxy(
+                reqwest::Proxy::all(proxy)
+                    .map_err(HttpError::Proxy)?
+                    .no_proxy(no_proxy),
+            );
         }
         if let Some(path) = options.ca_cert.as_deref() {
             let path_display = path.display().to_string();
@@ -1431,6 +1442,59 @@ mod tests {
         proxy.await.expect("proxy");
         assert_eq!(response.status, 200);
         assert_eq!(response.body_text(), "proxied-ok");
+    }
+
+    #[tokio::test]
+    async fn bypasses_an_explicit_proxy_for_a_no_proxy_host() {
+        let target_listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("target listener");
+        let target_address = target_listener.local_addr().expect("target address");
+        let target = tokio::spawn(async move {
+            let (mut socket, _) = target_listener.accept().await.expect("target connection");
+            let _ = read_request_headers(&mut socket).await;
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 10\r\n\r\ndirect-ok!",
+                )
+                .await
+                .expect("target response");
+        });
+        let proxy_listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("proxy listener");
+        let proxy_address = proxy_listener.local_addr().expect("proxy address");
+        let proxy = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(250), proxy_listener.accept())
+                .await
+                .is_err()
+        });
+
+        let engine = HttpEngine::new(&EngineOptions {
+            proxy: Some(format!("http://{proxy_address}")),
+            no_proxy: Some("127.0.0.1".to_owned()),
+            ..EngineOptions::default()
+        })
+        .expect("engine");
+        let request = Request::new("Direct", "GET", format!("http://{target_address}/direct"));
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("direct response");
+
+        target.await.expect("target");
+        assert!(proxy.await.expect("proxy observer"));
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "direct-ok!");
+    }
+
+    #[test]
+    fn accepts_socks_proxy_urls_when_building_the_http_engine() {
+        HttpEngine::new(&EngineOptions {
+            proxy: Some("socks5h://127.0.0.1:1080".to_owned()),
+            ..EngineOptions::default()
+        })
+        .expect("SOCKS proxy URL should be accepted");
     }
 
     #[test]

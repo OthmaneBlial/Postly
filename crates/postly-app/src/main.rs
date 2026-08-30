@@ -382,6 +382,7 @@ const MAX_RESPONSE_EXAMPLE_BYTES: usize = 4 * 1024 * 1024;
 struct TransportSettings {
     timeout_seconds: u64,
     proxy_url: String,
+    no_proxy_hosts: String,
     ca_cert_path: String,
     client_identity_path: String,
     insecure_tls: bool,
@@ -393,6 +394,7 @@ impl Default for TransportSettings {
         Self {
             timeout_seconds: 30,
             proxy_url: String::new(),
+            no_proxy_hosts: String::new(),
             ca_cert_path: String::new(),
             client_identity_path: String::new(),
             insecure_tls: false,
@@ -424,6 +426,8 @@ impl TransportSettings {
             timeout: Duration::from_secs(self.timeout_seconds.max(1)),
             accept_invalid_certs: self.insecure_tls,
             proxy: (!self.proxy_url.trim().is_empty()).then(|| self.proxy_url.trim().to_owned()),
+            no_proxy: (!self.no_proxy_hosts.trim().is_empty())
+                .then(|| self.no_proxy_hosts.trim().to_owned()),
             ca_cert: path(&self.ca_cert_path),
             client_identity: path(&self.client_identity_path),
             cookie_jar: Some(root.join(".postly/cookies.json")),
@@ -4485,13 +4489,33 @@ impl PostlyApp {
             .add(
                 TextEdit::singleline(&mut self.transport.proxy_url)
                     .desired_width(460.0)
-                    .hint_text("http://127.0.0.1:8080 (optional)"),
+                    .hint_text("http://127.0.0.1:8080 or socks5h://127.0.0.1:1080 (optional)"),
             )
             .changed();
         ui.label(
-            RichText::new("SOCKS and WebSocket proxying are not included in this slice.")
+            RichText::new("SOCKS URLs are supported for HTTP/SSE; environment proxy variables are used when no explicit proxy is set.")
                 .small()
                 .color(ui.visuals().weak_text_color()),
+        );
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("Bypass hosts / NO_PROXY")
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+        changed |= ui
+            .add(
+                TextEdit::singleline(&mut self.transport.no_proxy_hosts)
+                    .desired_width(460.0)
+                    .hint_text("localhost,127.0.0.1,.internal.example (optional)"),
+            )
+            .changed();
+        ui.label(
+            RichText::new(
+                "Comma-separated domains, hosts or IP ranges; applies to an explicit proxy.",
+            )
+            .small()
+            .color(ui.visuals().weak_text_color()),
         );
         ui.add_space(6.0);
         ui.label(
@@ -7088,6 +7112,7 @@ mod tests {
         let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
         app.transport.timeout_seconds = 45;
         app.transport.proxy_url = "http://127.0.0.1:8080".to_owned();
+        app.transport.no_proxy_hosts = "localhost,127.0.0.1".to_owned();
         app.transport.ca_cert_path = "/tmp/company-ca.pem".to_owned();
         app.transport.client_identity_path = "/tmp/client-identity.pem".to_owned();
         app.transport.insecure_tls = true;
@@ -7103,6 +7128,7 @@ mod tests {
         let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
         assert_eq!(reopened.transport.timeout_seconds, 45);
         assert_eq!(reopened.transport.proxy_url, "http://127.0.0.1:8080");
+        assert_eq!(reopened.transport.no_proxy_hosts, "localhost,127.0.0.1");
         assert_eq!(reopened.transport.ca_cert_path, "/tmp/company-ca.pem");
         assert_eq!(
             reopened.transport.client_identity_path,
