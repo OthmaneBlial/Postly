@@ -15,13 +15,24 @@ The importer preserves collection metadata, folders, request URLs, query paramet
 
 Collection and folder pre-request/test events are preserved into the native collection/request files in execution order. With `--scripts`, the current local Node.js bridge executes the preserved source and reports basic assertions; without that explicit flag, scripts remain source-only.
 
+Postly can also export the native collection and environment back to Postman
+JSON:
+
+~~~bash
+postly export collection ./project --output ./project.postman.json
+postly export environment ./project --name Local --output ./local.postman.json
+~~~
+
+The export covers the current native model and is intended as a practical
+interoperability path, not a claim of perfect Postman round-trip fidelity.
+
 Current limitations:
 
 - Script execution is opt-in and currently depends on a local Node.js installation; the bridge is a tested prototype, not an embedded or hardened sandbox.
 - GraphQL request metadata is retained as a reviewable raw JSON body.
 - File paths should be checked after import because their meaning depends on the source project location.
 - Collection-level and folder-level script inheritance is materialized into request source, while variable persistence and broader runtime behavior remain limited.
-- Export back to Postman, full pm.* compatibility and a measured behavioral score are planned.
+- Export back to Postman covers the current model; full pm.* compatibility and a measured behavioral score remain planned.
 
 The current compatibility matrix is machine-readable in compat/postman-script-compatibility.json. Every entry is marked planned until an actual runtime and regression fixture prove it.
 

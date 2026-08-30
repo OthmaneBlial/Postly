@@ -322,6 +322,7 @@ fn parse_request(
                 .collect()
         })
         .unwrap_or_default();
+    request.cookies = parse_pairs(value.get("cookie"));
     request.auth = parse_auth(value.get("auth"));
     request.body = parse_body(name, value.get("body"), report);
     request

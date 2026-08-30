@@ -8,10 +8,11 @@ use std::{
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use postly_core::{
-    import_curl_command, import_environment, import_postman_collection, run_requests, Auth,
-    Collection, EngineOptions, Environment, EnvironmentVariable, HeaderEntry, HistoryEntry,
-    HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions, ScriptResult,
-    ScriptTestResult, VariableContext, Workspace,
+    export_postman_collection, export_postman_environment, import_curl_command, import_environment,
+    import_postman_collection, run_requests, Auth, Collection, EngineOptions, Environment,
+    EnvironmentVariable, HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine,
+    Request, RequestBody, RunnerOptions, ScriptResult, ScriptTestResult, VariableContext,
+    Workspace,
 };
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
@@ -136,6 +137,11 @@ enum Command {
     Import {
         #[command(subcommand)]
         kind: ImportKind,
+    },
+    /// Export local data to a compatible Postman JSON format.
+    Export {
+        #[command(subcommand)]
+        kind: ExportKind,
     },
     /// Create or update a local environment without printing its values.
     Env {
@@ -263,6 +269,31 @@ enum ImportKind {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum ExportKind {
+    /// Export a local collection as Postman Collection v2.1 JSON.
+    Collection {
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+        #[arg(
+            long,
+            help = "Collection name; required when multiple collections exist"
+        )]
+        collection: Option<String>,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Export a local environment as a Postman environment JSON file.
+    Environment {
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -355,6 +386,7 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Import { kind } => import_command(kind),
+        Command::Export { kind } => export_command(kind),
         Command::Env { kind } => match kind {
             EnvKind::Set {
                 workspace,
@@ -556,6 +588,55 @@ fn import_command(kind: ImportKind) -> Result<()> {
         }
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn export_command(kind: ExportKind) -> Result<()> {
+    match kind {
+        ExportKind::Collection {
+            workspace,
+            collection,
+            output,
+        } => {
+            let workspace = Workspace::open(&workspace)?;
+            let collections = workspace.collections()?;
+            let collection = match collection {
+                Some(name) => collections
+                    .iter()
+                    .find(|candidate| {
+                        candidate.collection.name == name
+                            || candidate.collection.name.eq_ignore_ascii_case(&name)
+                    })
+                    .with_context(|| format!("collection not found: {name}"))?,
+                None => collections.first().with_context(|| {
+                    if collections.len() > 1 {
+                        "multiple collections found; pass --collection"
+                    } else {
+                        "no collections found"
+                    }
+                })?,
+            };
+            let report = export_postman_collection(&workspace, collection, output)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        ExportKind::Environment {
+            workspace,
+            name,
+            output,
+        } => {
+            let workspace = Workspace::open(&workspace)?;
+            let environment = workspace
+                .environments()?
+                .into_iter()
+                .find(|(_, candidate)| {
+                    candidate.name == name || candidate.name.eq_ignore_ascii_case(&name)
+                })
+                .with_context(|| format!("environment not found: {name}"))?
+                .1;
+            let report = export_postman_environment(&environment, output)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+    }
     Ok(())
 }
 

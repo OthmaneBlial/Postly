@@ -16,6 +16,7 @@ Postly is an open-source, Rust-first API development workspace designed around l
 - Local, human-readable TOML projects with one request per file.
 - Environment variables and Postman-style {{variable}} interpolation with precedence diagnostics.
 - Postman Collection v2.1 and environment import with a migration report.
+- Postman Collection v2.1 and environment export for round-trip interoperability.
 - OpenAPI 3 JSON/YAML import with generated requests and explicit warnings.
 - Opt-in Postman script execution through a local Node.js bridge with basic `pm.*` tests.
 - Headless commands for immediate requests, saved requests and sequential collection runs.
@@ -44,6 +45,8 @@ cargo run -- import collection ./collection.json --output ./my-api
 cargo run -- import environment ./environment.json --output ./my-api
 cargo run -- import openapi ./openapi.yaml --output ./my-api
 cargo run -- import curl "curl -H 'Accept: application/json' https://example.com/health" --output ./my-api
+cargo run --bin postly -- export collection ./my-api --output ./my-api.postman.json
+cargo run --bin postly -- export environment ./my-api --name Local --output ./local.postman.json
 cargo run -- list ./my-api
 ~~~
 

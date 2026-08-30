@@ -5,6 +5,7 @@
 //! the CLI can therefore share the same behavior without a cloud service.
 
 pub mod curl;
+pub mod export;
 pub mod history;
 pub mod http;
 pub mod import;
@@ -16,6 +17,9 @@ pub mod storage;
 pub mod variables;
 
 pub use curl::{import_curl_command, parse_curl_command, CurlImportResult, CurlParseError};
+pub use export::{
+    export_postman_collection, export_postman_environment, ExportError, ExportReport,
+};
 pub use history::{HistoryEntry, HistoryFilter, HistoryOutcome};
 pub use http::{EngineOptions, HttpEngine, HttpError, HttpResponse, ResponseCookie, ResponseView};
 pub use import::{import_environment, import_postman_collection, ImportReport};

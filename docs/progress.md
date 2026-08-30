@@ -15,6 +15,7 @@ Implemented:
 - Native async HTTP execution with common body/auth/header/query behavior.
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
+- Postman Collection v2.1 and environment export with a tested native round-trip.
 - collection/folder/request script source preservation and a truthful pm.* compatibility matrix.
 - collection and folder authentication inheritance is materialized into imported request files.
 - init, request, send, import, list and sequential run CLI commands.
@@ -41,7 +42,7 @@ Not yet implemented:
 
 ## Verification
 
-cargo xtask check is the required validation command for this milestone. The CLI was exercised against deterministic local HTTP servers: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, an environment created with env set resolved two variables into a saved request, a cURL command was imported and sent with HTTP 201, OpenAPI YAML generated two requests, an imported Postman test executed through the opt-in Node bridge, a two-request cookie exchange verified jar reuse plus response metadata, and history filters, clear and the 1,000-entry retention bound were tested. The native app compiles with the same core and has state tests for JSON/auth editing plus an async local-response test; native window interaction still needs manual desktop QA. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts.
+cargo xtask check is the required validation command for this milestone. The CLI was exercised against deterministic local HTTP servers: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, an environment created with env set resolved two variables into a saved request, a cURL command was imported and sent with HTTP 201, OpenAPI YAML generated two requests, an imported Postman test executed through the opt-in Node bridge, a two-request cookie exchange verified jar reuse plus response metadata, history filters/clear/retention were tested, and a native collection was exported and imported back with its request semantics. The native app compiles with the same core and has state tests for JSON/auth editing plus an async local-response and history-reopen test; native window interaction still needs manual desktop QA. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts.
 
 ## Next highest-value work
 
