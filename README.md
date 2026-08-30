@@ -1,98 +1,359 @@
+<div align="center">
+
 # Postly
 
-**The Postman alternative without an account.**
+### The Postman alternative without an account.
 
-Postly is an open-source, Rust-first API development workspace designed around local files, Git workflows and privacy. The core request engine and CLI run without signup, a cloud workspace or mandatory telemetry.
+Fast, native and local-first API development powered by Rust.
 
-> This repository is under active construction. The checked-in milestone is a working local CLI/core/native GUI slice, not a claim of complete Postman parity.
+<p>
+  <a href="https://github.com/OthmaneBlial/Postly"><img src="https://img.shields.io/badge/status-active%20development-5b8def?style=flat-square" alt="Active development"></a>
+  <a href="https://github.com/OthmaneBlial/Postly/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-8bc34a?style=flat-square" alt="MIT License"></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/built%20with-Rust-dea584?style=flat-square&logo=rust&logoColor=white" alt="Built with Rust"></a>
+  <a href="https://github.com/OthmaneBlial/Postly/stargazers"><img src="https://img.shields.io/github/stars/OthmaneBlial/Postly?style=flat-square&color=f5b942" alt="GitHub stars"></a>
+</p>
+
+<p>
+  <a href="#quick-start">Try it in 60 seconds</a> ·
+  <a href="docs/migration-from-postman.md">Migrate from Postman</a> ·
+  <a href="docs/progress.md">See what is real</a>
+</p>
+
+</div>
+
+Postly is an open-source <strong>API client</strong>, <strong>REST client</strong> and API testing
+workspace for developers who want their requests, collections and environments
+to stay on their machine. It is designed as a credible <strong>Postman alternative</strong>
+for local work: no signup, no mandatory cloud workspace, no Electron app and
+no telemetry dependency for the core workflow.
+
+> <strong>The promise:</strong> open a project, send a request, inspect the response, save
+> the work and keep moving — even when you are offline.
+
+## Why Postly?
+
+Postman made API development approachable. Postly keeps the familiar mental
+model — requests, collections, environments, scripts and runners — while
+changing the default relationship with your data.
+
+| Postly principle | What it means in practice |
+| --- | --- |
+| <strong>No account</strong> | Core local requests work without signup or login. |
+| <strong>Local-first</strong> | Request data, environments and history stay in the local workspace. |
+| <strong>Git-friendly</strong> | Collections are readable project files, with one request per file. |
+| <strong>Rust-powered</strong> | The core, HTTP engine, protocols, storage and CLI share native Rust code. |
+| <strong>Migration-minded</strong> | Postman Collection v2.1 and environment import include review diagnostics. |
+| <strong>Automation-ready</strong> | The same core powers the desktop workspace and headless CLI. |
+
+Postly is not claiming perfect Postman parity today. Compatibility is measured
+by executable fixtures and documented honestly as the product grows.
 
 ## What works today
 
-- Rust workspace with a reusable postly-core library.
-- Real HTTP requests using GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS and custom methods.
-- Query parameters, duplicate headers, cookies, raw/JSON/form/multipart/file bodies.
-- Bearer, Basic and API-key authentication.
-- Timeouts, redirects, compressed responses and explicit insecure-TLS opt-in.
-- Custom PEM CA bundles and combined PEM client identities for HTTPS CLI workflows, with local HTTPS/mTLS coverage.
-- Explicit HTTP(S) proxy routing for CLI requests, streams and collection runs.
-- Local, human-readable TOML projects with one request per file.
-- Environment variables and Postman-style {{variable}} interpolation with precedence diagnostics.
-- Postman Collection v2.1 and environment import with a migration report.
-- Postman Collection v2.1 and environment export for round-trip interoperability.
-- OpenAPI 3 JSON/YAML import with generated requests and explicit warnings.
-- Structured GraphQL query execution from the Rust core, CLI and native GUI, with variables and GraphQL error handling.
-- Progressive Server-Sent Events subscriptions from the CLI and native GUI with chunk-safe event parsing, bounded event history, JSON-lines output and bounded reconnects with `Last-Event-ID`.
-- Bidirectional WebSocket CLI and native GUI connections for `ws://` and `wss://`, with text/binary messages, ping/pong handling and bounded message history.
-- Local `.proto` gRPC service discovery and dynamic unary/server/client/bidirectional streaming calls with protobuf JSON messages, metadata and verified HTTPS roots.
-- Opt-in Postman script execution through a local Node.js bridge with basic `pm.*` tests.
-- Explicit local response assertions for status, headers, body text and JSON Pointer paths, usable without Node.js.
-- Headless commands for immediate requests, saved requests and sequential collection runs.
-- Searchable, filterable and bounded metadata-only local history for saved request executions (`postly history`).
-- A native Rust desktop request workspace (`postly-gui`) using the same core.
-- Native GUI request, SSE and WebSocket workers support explicit cancellation;
-  cancellation drops in-flight HTTP bodies and closes active protocol streams.
-- Response views include virtualized line numbers for large payloads, local search, copy, save-to-workspace and optional wrapping.
-- Saved requests can be duplicated or deleted from the native workspace with guarded project-local storage operations.
-- Saving a request name or folder relocates its canonical file while preserving its stable UUID.
-- No GitHub Actions; validation is designed to run locally with cargo xtask check.
+This is a working vertical slice, not a static UI mockup.
+
+- <strong>HTTP:</strong> GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS and custom methods;
+  query parameters, duplicate headers, cookies, raw/JSON/form/multipart/file
+  bodies, redirects, compression, timeouts and cancellation.
+- <strong>Authentication:</strong> Bearer, Basic and API-key auth with variable resolution.
+- <strong>TLS and routing:</strong> explicit insecure-TLS opt-in, custom PEM CA bundles,
+  combined PEM client identities, HTTP(S) proxy routing and actionable file
+  diagnostics. HTTPS and mutual TLS are covered by local integration tests.
+- <strong>Response inspection:</strong> status, headers, cookies, protocol, duration,
+  Pretty/Raw views, virtualized line rendering, search, wrapping, copy and
+  local response snapshots.
+- <strong>Collections:</strong> local TOML project model, nested request folders,
+  deterministic discovery, stable request identity, duplicate/delete/rename
+  flows and bounded metadata-only history.
+- <strong>Migration:</strong> Postman Collection v2.1 import/export, environment import/
+  export, OpenAPI 3.0/3.1 JSON/YAML import and common cURL import.
+- <strong>Testing and automation:</strong> explicit response assertions, opt-in Node.js
+  script bridge, basic <code>pm.*</code>, collection runner, iteration data, pretty/JSON/
+  JUnit reporters and deliberate exit behavior.
+- <strong>Modern APIs:</strong> structured GraphQL requests, progressive SSE subscriptions,
+  interactive WebSockets and dynamic <code>.proto</code> gRPC calls for unary and all
+  three streaming modes.
+- <strong>Native desktop workspace:</strong> a Rust/egui application using the same core,
+  with local history, request editing, cancellation and persisted local
+  Transport settings for HTTP/SSE.
+
+For the exact boundary of each feature, read the
+<a href="docs/compatibility.md">compatibility matrix</a> and the
+<a href="docs/progress.md">living progress log</a>.
 
 ## Quick start
 
-~~~bash
+### 1. Create a local API workspace
+
+```bash
+git clone https://github.com/OthmaneBlial/Postly.git
+cd Postly
+
 cargo run -- init ./my-api --name "My API"
-cargo run -- new request --workspace ./my-api --collection "My API" --name health https://example.com/health --query "probe=1"
-cargo run -- env set --workspace ./my-api --name Local --set baseUrl=https://example.com
-cargo run -- request https://httpbin.org/get
-cargo run -- list ./my-api
-cargo run -- history ./my-api --limit 10
-cargo run -- history ./my-api --search users --method GET
-cargo run -- history ./my-api --errors-only
+cargo run -- new request \
+  --workspace ./my-api \
+  --collection "My API" \
+  --name health \
+  https://example.com/health \
+  --query "probe=1"
+```
+
+### 2. Send a real request
+
+```bash
+cargo run -- request https://httpbin.org/get \
+  --query "source=postly" \
+  --header "Accept: application/json"
+```
+
+Use <code>--output-json</code> when another local tool should consume the response:
+
+```bash
+cargo run -- request https://httpbin.org/get --output-json
+```
+
+### 3. Open the native workspace
+
+```bash
 cargo run -p postly-app -- ./my-api
-~~~
+```
 
-Import an existing Postman export:
+The desktop app and CLI read the same local project. There is no account
+creation step and no hosted workspace required.
 
-~~~bash
+## Migrate from Postman
+
+The shortest path from Postman is deliberately explicit:
+
+```bash
+# Export a collection and environment from Postman first.
 cargo run -- import collection ./collection.json --output ./my-api
 cargo run -- import environment ./environment.json --output ./my-api
-cargo run -- import openapi ./openapi.yaml --output ./my-api
-cargo run -- import curl "curl -H 'Accept: application/json' https://example.com/health" --output ./my-api
-cargo run --bin postly -- export collection ./my-api --output ./my-api.postman.json
-cargo run --bin postly -- export environment ./my-api --name Local --output ./local.postman.json
+
+# Inspect the imported workspace.
 cargo run -- list ./my-api
-~~~
+cargo run -- run ./my-api --environment Local --reporter pretty
+```
 
-Send a saved request:
+Postly preserves supported collection metadata, folders, URLs, parameters,
+headers, bodies, auth, variables, examples and script source. Unsupported or
+ambiguous fields are reported for review instead of being silently presented as
+fully compatible.
 
-~~~bash
-cargo run -- send ./my-api/collections/my-api/requests/health.postly.toml
-cargo run -- send ./my-api/collections/my-api/requests/health.postly.toml --environment Local
-cargo run -- send ./my-api/collections/my-api/requests/health.postly.toml --scripts --environment Local
-~~~
+Read the complete <a href="docs/migration-from-postman.md">Postman migration guide</a>,
+the <a href="docs/compatibility.md">compatibility matrix</a> and the checked-in import
+fixtures in <code>compat/postman-import/</code>.
 
-The CLI can emit machine-readable response data with --output-json. `postly run` executes saved requests in deterministic path order and returns a failing exit code when a request returns a 4xx/5xx, cannot be sent, or an enabled script assertion fails. Pass `--scripts` to opt into the local Node.js bridge.
+## A Git-native API project
 
-## Local validation
+Your canonical API work can live beside the code that consumes it:
 
-~~~bash
+```text
+my-api/
+├── postly.toml
+├── collections/
+│   └── my-api/
+│       ├── postly.collection.toml
+│       └── requests/
+│           ├── health.postly.toml
+│           └── users/
+│               └── list-users.postly.toml
+└── environments/
+    └── local.postly-env.toml
+```
+
+That makes the workflow simple:
+
+```bash
+git clone <your-api-project>
+postly list .
+git diff
+git status
+```
+
+Keep secrets out of Git with local environment files and templates. Postly's
+metadata-only history and response snapshots live under ignored <code>.postly/</code>
+artifacts; canonical request files remain ordinary project data.
+
+## CLI for developers and automation
+
+The CLI is useful without the desktop application:
+
+```bash
+# Immediate REST request
+postly request https://api.example.com/users --bearer "$API_TOKEN"
+
+# Saved request with an environment
+postly send ./my-api/collections/my-api/requests/health.postly.toml \
+  --environment Local
+
+# Collection runner with machine-readable output
+postly run ./my-api --environment Local --reporter json
+postly run ./my-api --environment Local --reporter junit > postly-results.xml
+
+# Protocol workflows
+postly graphql https://api.example.com/graphql --query 'query { health }'
+postly sse https://api.example.com/events --reconnect 3
+postly websocket wss://api.example.com/socket --send '{"type":"ping"}'
+postly grpc describe ./api.proto
+```
+
+During development, <code>cargo run --</code> is equivalent to <code>postly</code>. A published
+binary/package is not claimed until the release and packaging gates are
+validated.
+
+## Environments, proxies and certificates
+
+```bash
+# Environment variables are resolved with Postman-style {{variables}} syntax.
+cargo run -- env set \
+  --workspace ./my-api \
+  --name Local \
+  --set baseUrl=https://api.example.com
+
+# Route CLI HTTP workflows through a trusted explicit proxy.
+cargo run -- request 'https://api.example.com/health' \
+  --proxy http://127.0.0.1:8080
+
+# Trust a private CA without disabling TLS verification.
+cargo run -- request 'https://internal.example.com/health' \
+  --ca-cert ./certs/company-ca.pem \
+  --client-identity ./certs/client-identity.pem
+```
+
+The GUI exposes the same HTTP/SSE controls in its <strong>Transport</strong> tab and stores
+only connection flags and file paths in ignored local settings. It never needs
+the private-key contents in the project. See <a href="docs/certificates.md">certificates</a>
+and <a href="docs/proxy.md">proxy behavior</a> for security boundaries and current limits.
+
+## Protocol coverage
+
+Postly is intentionally growing from a strong HTTP foundation:
+
+| Protocol / format | Current capability |
+| --- | --- |
+| REST / HTTP | Native async requests, bodies, auth, cookies, response views, proxy and TLS slices |
+| GraphQL | Structured query, variables, operation name, error-aware response parsing and GUI editor |
+| Server-Sent Events | Chunk-safe progressive events, metadata, cancellation and bounded <code>Last-Event-ID</code> reconnects |
+| WebSocket | <code>ws://</code>/<code>wss://</code>, headers/auth, text and binary frames, ping/pong, console and bounded history |
+| gRPC | Dynamic <code>.proto</code> discovery plus unary, server-streaming, client-streaming and bidi CLI calls |
+| OpenAPI | 3.0/3.1 JSON/YAML request generation with local reference resolution |
+
+Reflection, schema explorers, richer protocol-specific GUI surfaces and deeper
+TLS/proxy parity remain active roadmap work. The matrix is the source of truth.
+
+## Privacy by default
+
+Postly is built for developers who do not want an API client to become another
+cloud dependency.
+
+- No account wall for the core local workflow.
+- No mandatory cloud workspace or synchronization service.
+- No request payload upload to a Postly service.
+- No telemetry dependency in the current milestone.
+- Local history is bounded and metadata-only; it excludes query values,
+  headers, cookies, bodies, auth and response content.
+- Imported scripts are not magically sandboxed. Script permissions and runtime
+  boundaries are documented as they are implemented.
+
+Local-first is not the same thing as a security sandbox. Treat collections as
+sensitive code and data: review files, proxy settings, scripts, clipboard use
+and filesystem permissions before using production credentials.
+
+## Built in the open, measured honestly
+
+Postly deliberately does not publish invented numbers:
+
+- no “20× faster” claim without reproducible benchmarks;
+- no “100% Postman compatible” badge without semantic fixture coverage;
+- no fake testimonials, user counts or screenshots;
+- no GitHub Actions dependency — important checks run locally.
+
+Run the local validation pipeline:
+
+```bash
 cargo xtask fmt
 cargo xtask lint
 cargo xtask test
 cargo xtask check
-~~~
+```
 
-Use CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 on constrained disks.
+On a constrained disk, these settings reduce generated debug artifacts:
+
+```bash
+CARGO_PROFILE_DEV_DEBUG=0 \
+CARGO_PROFILE_TEST_DEBUG=0 \
+CARGO_INCREMENTAL=0 \
+cargo xtask check
+```
+
+The test suite includes importer regressions, filesystem round trips, variable
+diagnostics, local HTTP/proxy/TLS/mTLS servers, GraphQL, SSE, WebSocket, gRPC,
+cancellation, runner assertions and GUI worker state. See
+<a href="docs/development.md">development</a> for the contributor workflow.
 
 ## Product direction
 
-The long-term target is a credible local-first Postman replacement: a professional request workspace, Git-native collections, environments, scripting and tests, runner/CLI parity, Postman migration, OpenAPI, GraphQL, WebSockets, SSE and gRPC. Features are only documented as supported once executable behavior and tests exist.
+The long-term goal is straightforward: become the API client a developer can
+genuinely consider replacing Postman with, especially when local ownership,
+Git workflows, privacy and automation matter.
 
-See docs/progress.md, docs/architecture.md, docs/migration-from-postman.md, docs/openapi.md, docs/grpc.md, docs/scripting.md, docs/history.md, docs/proxy.md, docs/certificates.md and docs/compatibility.md.
+Highest-value roadmap areas include:
 
-## Privacy
+- broader Postman script and <code>pm.*</code> compatibility with a hardened runtime;
+- OS keychain integration and complete secret-handling workflows;
+- richer Postman fixtures and executable compatibility scoring;
+- gRPC reflection and a first-class gRPC GUI;
+- global search, tabs, command palette, accessibility and crash recovery;
+- deterministic protocol test servers, fuzzing, benchmarks and packaging.
 
-Postly has no account wall and no cloud dependency in this milestone. Requests, collections and imported environments are stored locally. Secrets are not sent to a Postly service, and the CLI does not log request bodies or authorization values. Saved-request history is local, ignored by Git, bounded, and stores only request metadata plus status and duration; it excludes query values, headers, cookies, bodies, auth and response content. Use `postly history --clear` to truncate it. Local execution is not a sandbox; imported scripts and future extensions will have an explicitly documented permission model.
+See <a href="docs/progress.md">docs/progress.md</a> for current evidence instead of a
+marketing-only roadmap.
+
+## Documentation
+
+- <a href="docs/architecture.md">Architecture</a>
+- <a href="docs/development.md">Development and local validation</a>
+- <a href="docs/collections.md">Collections</a>
+- <a href="docs/collections.md">Collections and environments</a>
+- <a href="docs/scripting.md">Scripting and pm.*</a>
+- <a href="docs/history.md">History</a>
+- <a href="docs/certificates.md">Certificates</a>
+- <a href="docs/proxy.md">Proxy</a>
+- <a href="docs/graphql.md">GraphQL</a>
+- <a href="docs/sse.md">SSE</a>
+- <a href="docs/websocket.md">WebSockets</a>
+- <a href="docs/grpc.md">gRPC</a>
+- <a href="docs/openapi.md">OpenAPI</a>
+- <a href="docs/migration-from-postman.md">Postman migration</a>
+- <a href="docs/compatibility.md">Compatibility status</a>
+- <a href="docs/progress.md">Project progress</a>
+
+## Contributing
+
+Postly is early, ambitious and deliberately evidence-driven. Good
+contributions include:
+
+1. a minimal regression fixture for a real migration edge case;
+2. a deterministic local protocol test;
+3. a UX improvement backed by a functioning core path;
+4. documentation that makes a limitation clearer;
+5. a benchmark with hardware, revision and methodology recorded.
+
+Please keep <code>base/</code> local: it is an ignored research corpus and must never be
+committed. Before opening a change, run the relevant local checks and state
+which product boundary the change improves.
 
 ## License
 
-Postly is released under the MIT License. Reference projects under base/ are ignored and are used only for research; their licenses remain their own.
+Postly is released under the <a href="LICENSE">MIT License</a>.
+
+<div align="center">
+
+### Build APIs with less friction — and keep your work yours.
+
+<a href="https://github.com/OthmaneBlial/Postly">Explore the repository</a> ·
+<a href="https://github.com/OthmaneBlial/Postly/issues">Share a migration edge case</a> ·
+<a href="https://github.com/OthmaneBlial/Postly/stargazers">Star Postly</a>
+
+</div>
