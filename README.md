@@ -17,6 +17,7 @@ Postly is an open-source, Rust-first API development workspace designed around l
 - Environment variables and Postman-style {{variable}} interpolation with precedence diagnostics.
 - Postman Collection v2.1 and environment import with a migration report.
 - Headless commands for immediate requests, saved requests and sequential collection runs.
+- Metadata-only local history for saved request executions (`postly history`).
 - No GitHub Actions; validation is designed to run locally with cargo xtask check.
 
 ## Quick start
@@ -27,6 +28,7 @@ cargo run -- new request --workspace ./my-api --collection "My API" --name healt
 cargo run -- env set --workspace ./my-api --name Local --set baseUrl=https://example.com
 cargo run -- request https://httpbin.org/get
 cargo run -- list ./my-api
+cargo run -- history ./my-api --limit 10
 ~~~
 
 Import an existing Postman export:
@@ -66,7 +68,7 @@ See docs/progress.md, docs/architecture.md, docs/migration-from-postman.md and d
 
 ## Privacy
 
-Postly has no account wall and no cloud dependency in this milestone. Requests, collections and imported environments are stored locally. Secrets are not sent to a Postly service, and the CLI does not log request bodies or authorization values. Local execution is not a sandbox; imported scripts and future extensions will have an explicitly documented permission model.
+Postly has no account wall and no cloud dependency in this milestone. Requests, collections and imported environments are stored locally. Secrets are not sent to a Postly service, and the CLI does not log request bodies or authorization values. Saved-request history is local, ignored by Git, and stores only request metadata plus status and duration; it excludes query values, headers, cookies, bodies, auth and response content. Local execution is not a sandbox; imported scripts and future extensions will have an explicitly documented permission model.
 
 ## License
 

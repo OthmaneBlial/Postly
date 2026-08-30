@@ -21,7 +21,7 @@ collections/<collection>/requests/<folder>/<request>.postly.toml
 environments/<environment>.postly-env.toml
 ~~~
 
-Request files carry stable UUIDs, readable names and all supported request semantics. Filesystem paths currently provide deterministic ordering; explicit ordering metadata can be added later if the UI needs drag-and-drop ordering. Indexes, history and response caches are future local concerns and must never become a prerequisite for opening a project.
+Request files carry stable UUIDs, readable names and all supported request semantics. Filesystem paths currently provide deterministic ordering; explicit ordering metadata can be added later if the UI needs drag-and-drop ordering. The optional `.postly/history.jsonl` file is machine-local metadata and must never become a prerequisite for opening a project.
 
 ## Runtime flow
 

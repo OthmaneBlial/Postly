@@ -8,4 +8,4 @@ Important boundaries:
 - Authorization headers, cookies and body contents must not appear in normal logs, error reports or benchmark output.
 - Imported environments may contain secrets. Store them in ignored local files until OS keychain integration is available.
 - --insecure disables TLS certificate verification for the current CLI request and should only be used intentionally.
-- Request history, crash recovery and clipboard integrations are future surfaces that require their own threat model.
+- Saved-request history is now available as a local metadata-only JSONL file under `.postly/history.jsonl`; it is ignored by Git and excludes query values, headers, cookies, bodies, auth and response content. Crash recovery and clipboard integrations remain future surfaces that require their own threat model.

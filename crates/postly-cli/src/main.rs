@@ -2,15 +2,15 @@ use std::{
     fs,
     io::{self, IsTerminal, Read},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use postly_core::{
     import_curl_command, import_environment, import_postman_collection, run_requests, Auth,
-    Collection, EngineOptions, Environment, EnvironmentVariable, HeaderEntry, HttpEngine, Request,
-    RequestBody, RunnerOptions, VariableContext, Workspace,
+    Collection, EngineOptions, Environment, EnvironmentVariable, HeaderEntry, HistoryEntry,
+    HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions, VariableContext, Workspace,
 };
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
@@ -130,6 +130,15 @@ enum Command {
     List {
         #[arg(default_value = ".")]
         path: PathBuf,
+    },
+    /// Show recent metadata-only executions from the local workspace.
+    History {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        output_json: bool,
     },
     /// Execute every saved request in a collection, sequentially.
     Run {
@@ -317,6 +326,11 @@ async fn main() -> Result<()> {
             } => set_environment(&workspace, &name, &values, &secrets),
         },
         Command::List { path } => list_workspace(&path),
+        Command::History {
+            path,
+            limit,
+            output_json,
+        } => list_history(&path, limit, output_json),
         Command::Run {
             path,
             environment,
@@ -413,7 +427,16 @@ async fn send_saved_request(
         collection.map(|collection| &collection.collection),
         environment_name,
     )?;
-    let response = execute(&request, context, timeout, insecure).await?;
+    let started = Instant::now();
+    let result = execute(&request, context, timeout, insecure).await;
+    let history_entry = match &result {
+        Ok(response) => HistoryEntry::from_response(&request, response),
+        Err(_) => HistoryEntry::from_error(&request, started.elapsed().as_millis() as u64),
+    };
+    if let Err(error) = workspace.record_history(&history_entry) {
+        tracing::warn!(error = %error, "could not write local request history");
+    }
+    let response = result?;
     print_response(&response, output_json)?;
     Ok(())
 }
@@ -498,6 +521,33 @@ fn list_workspace(path: &Path) -> Result<()> {
         for (_, environment) in environments {
             println!("  {}", environment.name);
         }
+    }
+    Ok(())
+}
+
+fn list_history(path: &Path, limit: usize, output_json: bool) -> Result<()> {
+    let workspace = Workspace::open(path)?;
+    let entries = workspace.history(limit)?;
+    if output_json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
+    }
+    if entries.is_empty() {
+        println!("No local request history.");
+        return Ok(());
+    }
+    for entry in entries {
+        let result = match entry.outcome {
+            HistoryOutcome::Completed => entry
+                .status
+                .map(|status| status.to_string())
+                .unwrap_or_else(|| "completed".to_owned()),
+            HistoryOutcome::Error => "error".to_owned(),
+        };
+        println!(
+            "{} {} {} — {} ({} ms)",
+            entry.method, result, entry.request_name, entry.url, entry.duration_ms
+        );
     }
     Ok(())
 }

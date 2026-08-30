@@ -9,6 +9,7 @@ target/
 tmp/
 *.log
 bench-generated/
+.postly/
 
 # Secrets and machine-local configuration
 .env

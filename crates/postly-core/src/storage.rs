@@ -1,16 +1,22 @@
 use std::{
-    fs, io,
+    fs,
+    fs::OpenOptions,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
 use thiserror::Error;
 
-use crate::model::{Collection, Environment, ProjectManifest, Request};
+use crate::{
+    history::HistoryEntry,
+    model::{Collection, Environment, ProjectManifest, Request},
+};
 
 const MANIFEST_FILE: &str = "postly.toml";
 const COLLECTION_FILE: &str = "postly.collection.toml";
 const ENVIRONMENT_SUFFIX: &str = ".postly-env.toml";
 const REQUEST_SUFFIX: &str = ".postly.toml";
+const HISTORY_FILE: &str = ".postly/history.jsonl";
 
 #[derive(Debug, Error)]
 pub enum WorkspaceError {
@@ -25,6 +31,11 @@ pub enum WorkspaceError {
     TomlSerialize {
         path: PathBuf,
         source: toml::ser::Error,
+    },
+    #[error("invalid JSON at {path}: {source}")]
+    Json {
+        path: PathBuf,
+        source: serde_json::Error,
     },
     #[error("workspace manifest is missing at {0}")]
     MissingManifest(PathBuf),
@@ -239,6 +250,61 @@ impl Workspace {
             .collect()
     }
 
+    pub fn history_path(&self) -> PathBuf {
+        self.root.join(HISTORY_FILE)
+    }
+
+    pub fn record_history(&self, entry: &HistoryEntry) -> Result<PathBuf, WorkspaceError> {
+        let path = self.history_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| WorkspaceError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        let line = serde_json::to_string(entry).map_err(|source| WorkspaceError::Json {
+            path: path.clone(),
+            source,
+        })?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|source| WorkspaceError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        writeln!(file, "{line}").map_err(|source| WorkspaceError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        Ok(path)
+    }
+
+    pub fn history(&self, limit: usize) -> Result<Vec<HistoryEntry>, WorkspaceError> {
+        let path = self.history_path();
+        if !path.is_file() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let text = fs::read_to_string(&path).map_err(|source| WorkspaceError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        let mut entries = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str::<HistoryEntry>(line).map_err(|source| WorkspaceError::Json {
+                    path: path.clone(),
+                    source,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        entries.reverse();
+        entries.truncate(limit);
+        Ok(entries)
+    }
+
     fn manifest_path(&self) -> PathBuf {
         self.root.join(MANIFEST_FILE)
     }
@@ -337,7 +403,7 @@ fn slugify(value: &str) -> Result<String, WorkspaceError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Request;
+    use crate::{history::HistoryEntry, model::Request};
 
     #[test]
     fn writes_and_reopens_git_friendly_request_files() {
@@ -360,5 +426,24 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].1.url, request.url);
         assert!(path.to_string_lossy().contains("users/read"));
+    }
+
+    #[test]
+    fn stores_newest_history_entries_without_request_secrets() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = Workspace::init(directory.path(), "Demo API").expect("init");
+        let request = Request::new(
+            "List users",
+            "GET",
+            "https://user:password@example.com/users?token=secret",
+        );
+        workspace
+            .record_history(&HistoryEntry::from_error(&request, 12))
+            .expect("history");
+
+        let entries = workspace.history(10).expect("read history");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url, "https://[redacted]example.com/users");
+        assert_eq!(entries[0].outcome, crate::HistoryOutcome::Error);
     }
 }
