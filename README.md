@@ -22,6 +22,7 @@ Postly is an open-source, Rust-first API development workspace designed around l
 - Progressive Server-Sent Events subscriptions from the CLI with chunk-safe event parsing and JSON-lines output.
 - Bidirectional WebSocket CLI connections for `ws://` and `wss://`, with text/binary messages and ping/pong handling.
 - Opt-in Postman script execution through a local Node.js bridge with basic `pm.*` tests.
+- Explicit local response assertions for status, headers, body text and JSON Pointer paths, usable without Node.js.
 - Headless commands for immediate requests, saved requests and sequential collection runs.
 - Searchable, filterable and bounded metadata-only local history for saved request executions (`postly history`).
 - A native Rust desktop request workspace (`postly-gui`) using the same core.

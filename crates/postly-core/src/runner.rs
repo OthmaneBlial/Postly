@@ -12,7 +12,7 @@ use tokio::sync::Notify;
 
 use crate::{
     http::{HttpEngine, HttpResponse},
-    model::{Request, Variables},
+    model::{Assertion, Request, Variables},
     scripting::{run_script, ScriptResult},
     variables::VariableContext,
 };
@@ -105,6 +105,78 @@ pub struct RunnerSummary {
     pub results: Vec<RunnerItemResult>,
 }
 
+fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<(), String> {
+    match assertion {
+        Assertion::Status { expected } => {
+            if response.status == *expected {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected status {}, received {}",
+                    expected, response.status
+                ))
+            }
+        }
+        Assertion::HeaderPresent { name } => {
+            if response
+                .headers
+                .iter()
+                .any(|header| header.key.eq_ignore_ascii_case(name))
+            {
+                Ok(())
+            } else {
+                Err(format!("expected response header {name}"))
+            }
+        }
+        Assertion::HeaderEquals { name, expected } => {
+            if response
+                .headers
+                .iter()
+                .any(|header| header.key.eq_ignore_ascii_case(name) && header.value == *expected)
+            {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected response header {name} to equal {expected}"
+                ))
+            }
+        }
+        Assertion::BodyContains { value } => {
+            if response.body_text().contains(value) {
+                Ok(())
+            } else {
+                Err(format!("expected response body to contain {value:?}"))
+            }
+        }
+        Assertion::JsonPointerEquals { pointer, expected } => {
+            let body = serde_json::from_slice::<serde_json::Value>(&response.body)
+                .map_err(|error| format!("response body is not JSON: {error}"))?;
+            let actual = body
+                .pointer(pointer)
+                .ok_or_else(|| format!("JSON Pointer {pointer:?} was not found"))?;
+            if actual == expected {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected JSON Pointer {pointer:?} to equal {expected}, received {actual}"
+                ))
+            }
+        }
+    }
+}
+
+fn evaluate_assertions(assertions: &[Assertion], response: &HttpResponse) -> Vec<String> {
+    assertions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, assertion)| {
+            evaluate_assertion(assertion, response)
+                .err()
+                .map(|error| format!("assertion {}: {error}", index + 1))
+        })
+        .collect()
+}
+
 impl RunnerSummary {
     pub fn succeeded(&self) -> bool {
         !self.cancelled && self.failed == 0
@@ -185,6 +257,14 @@ pub async fn run_requests(
             let item = match result {
                 Ok(response) => {
                     let mut error = None;
+                    assertions = request_to_run.assertions.len();
+                    assertion_failures = evaluate_assertions(&request_to_run.assertions, &response);
+                    if !assertion_failures.is_empty() {
+                        error = Some(format!(
+                            "{} explicit assertion(s) failed",
+                            assertion_failures.len()
+                        ));
+                    }
                     if options.scripts {
                         if let Some(script) = request_to_run.test_script.clone() {
                             match run_script_async(
@@ -196,26 +276,32 @@ pub async fn run_requests(
                             .await
                             {
                                 Ok(script_result) => {
-                                    assertions = script_result.tests.len();
-                                    assertion_failures = script_result
-                                        .failed_tests()
-                                        .map(|test| {
-                                            format!(
-                                                "{}: {}",
-                                                test.name,
-                                                test.error.as_deref().unwrap_or("assertion failed")
-                                            )
-                                        })
-                                        .collect();
+                                    assertions += script_result.tests.len();
+                                    assertion_failures.extend(
+                                        script_result
+                                            .failed_tests()
+                                            .map(|test| {
+                                                format!(
+                                                    "{}: {}",
+                                                    test.name,
+                                                    test.error
+                                                        .as_deref()
+                                                        .unwrap_or("assertion failed")
+                                                )
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    );
                                     if let Err(script_error) = script_result
                                         .apply(&mut request_to_run, &mut request_context)
                                     {
                                         error = Some(script_error.to_string());
                                     } else if !assertion_failures.is_empty() {
-                                        error = Some(format!(
-                                            "{} script assertion(s) failed",
-                                            assertion_failures.len()
-                                        ));
+                                        if error.is_none() {
+                                            error = Some(format!(
+                                                "{} assertion(s) failed",
+                                                assertion_failures.len()
+                                            ));
+                                        }
                                     }
                                 }
                                 Err(script_error) => error = Some(script_error),
@@ -332,6 +418,54 @@ mod tests {
         assert_eq!(summary.iterations, 2);
         assert_eq!(summary.requests, 0);
         assert!(summary.succeeded());
+    }
+
+    #[tokio::test]
+    async fn runs_explicit_response_assertions_without_node() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("connection");
+            use tokio::io::AsyncWriteExt;
+            let body = r#"{"ok":true,"count":3}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-request-id: local\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(), body
+            );
+            socket.write_all(response.as_bytes()).await.expect("write");
+        });
+        let mut request =
+            Request::new("Asserted health", "GET", format!("http://{address}/health"));
+        request.assertions = vec![
+            Assertion::Status { expected: 200 },
+            Assertion::HeaderEquals {
+                name: "content-type".to_owned(),
+                expected: "application/json".to_owned(),
+            },
+            Assertion::BodyContains {
+                value: "\"ok\":true".to_owned(),
+            },
+            Assertion::JsonPointerEquals {
+                pointer: "/count".to_owned(),
+                expected: serde_json::json!(3),
+            },
+        ];
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let summary = run_requests(
+            &engine,
+            &[(PathBuf::from("asserted.postly.toml"), request)],
+            &VariableContext::default(),
+            &RunnerOptions::default(),
+        )
+        .await;
+        server.await.expect("server");
+
+        assert!(summary.succeeded());
+        assert_eq!(summary.assertions, 4);
+        assert_eq!(summary.assertion_failures, 0);
+        assert_eq!(summary.results[0].assertions, 4);
     }
 
     #[tokio::test]

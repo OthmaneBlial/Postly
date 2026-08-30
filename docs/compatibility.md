@@ -12,6 +12,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | Postman environment export | working slice | export serialization fixture |
 | Postman scripts | opt-in basic execution | Node bridge tests and migration docs |
 | Postman pm.* runtime | partial tested subset, including common response matchers | compatibility matrix and script tests |
+| Explicit response assertions | working core/runner slice | status/header/body/JSON Pointer runner integration test |
 | collection runner | sequential HTTP slice | CLI run |
 | cURL import | common request slice | curl parser tests and CLI round-trip |
 | OpenAPI 3.0/3.1 import | JSON/YAML operation and local `$ref` slice | OpenAPI fixtures and importer tests |

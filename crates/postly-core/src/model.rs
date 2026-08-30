@@ -129,6 +129,8 @@ pub struct Request {
     pub test_script: Option<String>,
     #[serde(default)]
     pub examples: Vec<ResponseExample>,
+    #[serde(default)]
+    pub assertions: Vec<Assertion>,
 }
 
 impl Request {
@@ -148,8 +150,31 @@ impl Request {
             pre_request_script: None,
             test_script: None,
             examples: Vec::new(),
+            assertions: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Assertion {
+    Status {
+        expected: u16,
+    },
+    HeaderPresent {
+        name: String,
+    },
+    HeaderEquals {
+        name: String,
+        expected: String,
+    },
+    BodyContains {
+        value: String,
+    },
+    JsonPointerEquals {
+        pointer: String,
+        expected: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
