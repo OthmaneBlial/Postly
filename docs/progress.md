@@ -90,6 +90,9 @@ Implemented:
 - Native GUI environment editing creates, updates and renames local environment
   files, preserves disabled flags, masks existing keychain-backed values and
   sends newly entered secret values through the OS credential store.
+- Workspace TOML writes now replace canonical files through same-directory
+  temporary files, with coverage that no temporary destination remains after a
+  replacement.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:

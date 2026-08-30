@@ -21,6 +21,27 @@ const HISTORY_FILE: &str = ".postly/history.jsonl";
 const MAX_HISTORY_ENTRIES: usize = 1_000;
 const MAX_HISTORY_BYTES: usize = 1_048_576;
 
+fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?
+        .to_string_lossy();
+    let temporary = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
+    if let Err(error) = fs::write(&temporary, contents) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Error)]
 pub enum WorkspaceError {
     #[error("filesystem error at {path}: {source}")]
@@ -518,7 +539,7 @@ impl Workspace {
             compacted.push_str(&line);
             compacted.push('\n');
         }
-        fs::write(path, compacted).map_err(|source| WorkspaceError::Io {
+        atomic_write(path, compacted.as_bytes()).map_err(|source| WorkspaceError::Io {
             path: path.to_path_buf(),
             source,
         })
@@ -534,7 +555,7 @@ impl Workspace {
                 path: path.to_path_buf(),
                 source,
             })?;
-        fs::write(path, format!("{text}\n")).map_err(|source| WorkspaceError::Io {
+        atomic_write(path, format!("{text}\n").as_bytes()).map_err(|source| WorkspaceError::Io {
             path: path.to_path_buf(),
             source,
         })
@@ -671,6 +692,25 @@ mod tests {
         assert_eq!(updated.name, "List all users");
         assert!(relocated.to_string_lossy().contains("users/write"));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn canonical_file_writes_leave_only_the_committed_destination() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("request.postly.toml");
+        atomic_write(&path, b"name = \"first\"\n").expect("first write");
+        atomic_write(&path, b"name = \"second\"\n").expect("replacement write");
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("destination"),
+            "name = \"second\"\n"
+        );
+        let entries = std::fs::read_dir(directory.path())
+            .expect("directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].file_name(), "request.postly.toml");
     }
 
     #[test]
