@@ -111,6 +111,9 @@ Implemented:
 - `postly mock` serves saved response examples through a deterministic local HTTP
   server, with method/path routing, response headers and bodies, status codes,
   bounded request-header parsing, optional per-example delay and `--once` mode.
+- `postly docs` generates deterministic local Markdown for collections while
+  omitting header/auth values and response bodies by default; example bodies
+  require an explicit opt-in.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:

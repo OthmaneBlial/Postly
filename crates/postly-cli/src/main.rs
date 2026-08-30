@@ -11,13 +11,13 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
     export_postman_collection, export_postman_environment_with_store, generate_code_snippet,
-    import_curl_command, import_dotenv, import_environment, import_postman_collection,
-    message_from_json, message_to_json, parse_graphql_response, parse_graphql_schema,
-    parse_variables_json, run_requests, schema_introspection_query, Auth, Collection,
-    EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, GrpcSchema, HeaderEntry,
-    HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody, ResponseExample,
-    RunnerOptions, ScriptResult, ScriptTestResult, SecretStore, SnippetLanguage, SseParser,
-    VariableContext, Workspace,
+    generate_markdown_docs, import_curl_command, import_dotenv, import_environment,
+    import_postman_collection, message_from_json, message_to_json, parse_graphql_response,
+    parse_graphql_schema, parse_variables_json, run_requests, schema_introspection_query, Auth,
+    Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, GrpcSchema,
+    HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody,
+    ResponseExample, RunnerOptions, ScriptResult, ScriptTestResult, SecretStore, SnippetLanguage,
+    SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -671,6 +671,20 @@ enum Command {
         #[arg(long)]
         output_json: bool,
     },
+    /// Generate deterministic local Markdown documentation from saved requests.
+    Docs {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long, help = "Document one collection; defaults to every collection")]
+        collection: Option<String>,
+        #[arg(short, long, help = "Write Markdown to a file instead of stdout")]
+        output: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Include response-example bodies; review the generated file before sharing"
+        )]
+        include_example_bodies: bool,
+    },
     /// Show recent metadata-only executions from the local workspace.
     History {
         #[arg(default_value = ".")]
@@ -1228,6 +1242,17 @@ async fn main() -> Result<()> {
             workspace,
             output_json,
         } => search_workspace(&workspace, &query, output_json),
+        Command::Docs {
+            path,
+            collection,
+            output,
+            include_example_bodies,
+        } => generate_docs(
+            &path,
+            collection.as_deref(),
+            output.as_deref(),
+            include_example_bodies,
+        ),
         Command::History {
             path,
             limit,
@@ -1319,6 +1344,33 @@ fn print_snippet(path: &Path, language: SnippetLanguage, output_json: bool) -> R
             eprintln!("warning: {warning}");
         }
         println!("{}", snippet.code);
+    }
+    Ok(())
+}
+
+fn generate_docs(
+    path: &Path,
+    collection_name: Option<&str>,
+    output: Option<&Path>,
+    include_example_bodies: bool,
+) -> Result<()> {
+    let workspace = Workspace::open(path)?;
+    if let Some(name) = collection_name {
+        let exists = workspace.collections()?.iter().any(|collection| {
+            collection.collection.name == name
+                || collection.collection.name.eq_ignore_ascii_case(name)
+        });
+        if !exists {
+            bail!("collection not found: {name}");
+        }
+    }
+    let markdown = generate_markdown_docs(&workspace, collection_name, include_example_bodies)?;
+    if let Some(output) = output {
+        fs::write(output, markdown)
+            .with_context(|| format!("could not write generated docs {}", output.display()))?;
+        println!("Generated local API documentation at {}", output.display());
+    } else {
+        print!("{markdown}");
     }
     Ok(())
 }

@@ -147,6 +147,22 @@ are reported in the JSON migration report. Keys not listed with `--secret`
 remain plaintext in the ignored local environment file so the security choice
 is explicit and reviewable.
 
+## Generate local API documentation
+
+Generate deterministic Markdown from saved collections. The output includes
+descriptions, navigational request metadata, parameter/header names and
+response-example status metadata:
+
+~~~bash
+postly docs ./my-api --output ./my-api/API.md
+postly docs ./my-api --collection Payments
+postly docs ./my-api --include-example-bodies --output /tmp/payments-api.md
+~~~
+
+Header values and authentication material are never copied. Response-example
+bodies are omitted by default; including them is an explicit choice and the
+generated file should be reviewed before sharing.
+
 Saved requests can use OAuth 2.0 Client Credentials without an account or
 cloud service. Configure the auth block in the native request file or through
 the GUI, then run it normally:

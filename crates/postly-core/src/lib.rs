@@ -6,6 +6,7 @@
 
 pub mod codegen;
 pub mod curl;
+pub mod documentation;
 pub mod export;
 pub mod graphql;
 pub mod grpc;
@@ -26,6 +27,7 @@ pub use curl::{
     export_curl_command, import_curl_command, parse_curl_command, CurlExportResult,
     CurlImportResult, CurlParseError,
 };
+pub use documentation::generate_markdown_docs;
 pub use export::{
     export_postman_collection, export_postman_environment, export_postman_environment_with_store,
     ExportError, ExportReport,

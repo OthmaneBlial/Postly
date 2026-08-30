@@ -30,6 +30,7 @@ and manual-review cases remain visible in the report.
 | Explicit response assertions | working core/runner and native GUI editor slice | status/header/body/JSON Pointer runner integration test and GUI editor round-trip |
 | Native response viewer | working GUI slice with JSON and well-formed XML pretty formatting | virtualized line rows, search, copy, local save and wrapping |
 | collection runner | sequential HTTP slice with iteration data, reporters and folder selection | CLI run |
+| Local API documentation | deterministic Markdown generator with default redaction | core documentation tests and CLI command |
 | cURL interoperability | common import plus native GUI paste and shell-quoted export | parser/exporter tests, GUI draft test and CLI round-trip |
 | OpenAPI 3.0/3.1 import | JSON/YAML operations plus same-source-directory local `$ref` resolution | OpenAPI fixtures and importer tests |
 | GraphQL | structured core/CLI/GUI request editing and HTTP slice; CLI and GUI schema introspection explorer | GraphQL model, schema parser, GUI validation and local HTTP integration tests |

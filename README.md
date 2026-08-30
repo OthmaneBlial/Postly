@@ -76,6 +76,8 @@ This repository contains working vertical slices, not a static interface mockup.
 - **Migration:** Postman Collection v2.1 and environment import/export, explicit
   `.env` import with opt-in keychain storage, OpenAPI 3.0/3.1 JSON/YAML import
   with guarded local references, and cURL paste/copy.
+- **API documentation:** generate deterministic local Markdown from collections,
+  request descriptions, parameters, headers and response-example metadata.
 - **Code snippets:** generate reviewable cURL, JavaScript fetch, Python
   requests, Rust reqwest, Go, Java, C# and PHP from the same saved request
   model.
@@ -350,6 +352,7 @@ guarantees as a substitute for product evidence.
 - [WebSockets](docs/websocket.md)
 - [gRPC](docs/grpc.md)
 - [OpenAPI](docs/openapi.md)
+- [Local API documentation](docs/api-documentation.md)
 - [Code generation](docs/code-generation.md)
 - [Local mock server](docs/mock-server.md)
 - [Postman migration](docs/migration-from-postman.md)
