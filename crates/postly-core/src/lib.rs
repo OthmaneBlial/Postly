@@ -4,6 +4,7 @@
 //! filesystem storage, Postman migration, and HTTP execution. UI clients and
 //! the CLI can therefore share the same behavior without a cloud service.
 
+pub mod curl;
 pub mod http;
 pub mod import;
 pub mod model;
@@ -11,6 +12,7 @@ pub mod runner;
 pub mod storage;
 pub mod variables;
 
+pub use curl::{import_curl_command, parse_curl_command, CurlImportResult, CurlParseError};
 pub use http::{EngineOptions, HttpEngine, HttpError, HttpResponse, ResponseView};
 pub use import::{import_environment, import_postman_collection, ImportReport};
 pub use model::*;

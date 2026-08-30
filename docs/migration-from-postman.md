@@ -26,3 +26,11 @@ Current limitations:
 The current compatibility matrix is machine-readable in compat/postman-script-compatibility.json. Every entry is marked planned until an actual runtime and regression fixture prove it.
 
 Treat the report as part of the migration artifact. A successful JSON parse is not proof that a collection is behaviorally compatible.
+
+For individual requests, cURL can be imported without executing a shell:
+
+~~~bash
+postly import curl "curl -X POST https://api.example.test/users -H 'Content-Type: application/json' --data-raw '{\"name\":\"Ada\"}'" --output ./project
+~~~
+
+The current parser covers common method, URL, headers, JSON/raw data, cookies, Basic Auth and GET data options. Unsupported flags produce a warning or an explicit parse error.

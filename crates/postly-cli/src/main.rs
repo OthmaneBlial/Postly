@@ -8,9 +8,9 @@ use std::{
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use postly_core::{
-    import_environment, import_postman_collection, run_requests, Auth, Collection, EngineOptions,
-    Environment, EnvironmentVariable, HeaderEntry, HttpEngine, Request, RequestBody, RunnerOptions,
-    VariableContext, Workspace,
+    import_curl_command, import_environment, import_postman_collection, run_requests, Auth,
+    Collection, EngineOptions, Environment, EnvironmentVariable, HeaderEntry, HttpEngine, Request,
+    RequestBody, RunnerOptions, VariableContext, Workspace,
 };
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
@@ -206,6 +206,15 @@ enum ImportKind {
         input: PathBuf,
         #[arg(short, long, default_value = ".")]
         output: PathBuf,
+    },
+    Curl {
+        command: String,
+        #[arg(short, long, default_value = ".")]
+        output: PathBuf,
+        #[arg(long, default_value = "Imported cURL")]
+        collection: String,
+        #[arg(long, default_value = "Imported cURL request")]
+        name: String,
     },
 }
 
@@ -413,6 +422,16 @@ fn import_command(kind: ImportKind) -> Result<()> {
     let report = match kind {
         ImportKind::Collection { input, output } => import_postman_collection(input, output)?,
         ImportKind::Environment { input, output } => import_environment(input, output)?,
+        ImportKind::Curl {
+            command,
+            output,
+            collection,
+            name,
+        } => {
+            let result = import_curl_command(&command, output, &collection, &name)?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
+        }
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())

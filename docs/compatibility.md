@@ -11,6 +11,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | Postman scripts | preserved, not executed | migration report and docs |
 | Postman pm.* runtime | planned | no runtime claimed |
 | collection runner | sequential HTTP slice | CLI run |
+| cURL import | common request slice | curl parser tests and CLI round-trip |
 | Postman behavioral parity | not measured | no percentage claimed |
 
 Any future score must count semantic cases, exclude placeholders and retain failing fixtures as regressions.

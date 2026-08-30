@@ -20,6 +20,7 @@ Implemented:
 - init, request, send, import, list and sequential run CLI commands.
 - new request creates and persists a saved request without editing files by hand.
 - env set creates local environments and saved requests resolve enabled environment variables.
+- common cURL commands can be parsed and imported without shell execution.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
 - runner iteration data from JSON objects/arrays plus pretty, JSON and JUnit reporters.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
@@ -35,7 +36,7 @@ Not yet implemented:
 
 ## Verification
 
-cargo xtask check passed during this milestone with format, strict Clippy and 10 tests. The CLI was exercised against a deterministic local HTTP server: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, and an environment created with env set resolved two variables into a saved request. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts.
+cargo xtask check passed during this milestone with format, strict Clippy and 12 tests. The CLI was exercised against a deterministic local HTTP server: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, an environment created with env set resolved two variables into a saved request, and a cURL command was imported and sent with HTTP 201. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts.
 
 ## Next highest-value work
 

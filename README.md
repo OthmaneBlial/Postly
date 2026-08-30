@@ -34,6 +34,7 @@ Import an existing Postman export:
 ~~~bash
 cargo run -- import collection ./collection.json --output ./my-api
 cargo run -- import environment ./environment.json --output ./my-api
+cargo run -- import curl "curl -H 'Accept: application/json' https://example.com/health" --output ./my-api
 cargo run -- list ./my-api
 ~~~
 
