@@ -950,9 +950,9 @@ async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
     let method = schema
         .find_method(&options.method)
         .with_context(|| format!("gRPC method not found: {}", options.method))?;
-    if method.is_client_streaming() || method.is_server_streaming() {
+    if method.is_client_streaming() {
         bail!(
-            "streaming gRPC methods are discovered but not callable in this unary slice: {}",
+            "client-streaming gRPC methods are discovered but not callable in this slice: {}",
             method.full_name()
         );
     }
@@ -1034,13 +1034,41 @@ async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
         (None, None, None) => {}
     }
 
-    let path = http::uri::PathAndQuery::try_from(format!(
-        "/{}/{}",
-        method.parent_service().full_name(),
-        method.name()
-    ))?;
+    let method_path = format!("/{}/{}", method.parent_service().full_name(), method.name());
+    let path = http::uri::PathAndQuery::try_from(method_path.clone())?;
     let mut grpc = tonic::client::Grpc::new(channel);
     grpc.ready().await?;
+    if method.is_server_streaming() {
+        let response = grpc
+            .server_streaming(
+                request,
+                path,
+                DynamicGrpcCodec {
+                    output: method.output(),
+                },
+            )
+            .await?;
+        let mut stream = response.into_inner();
+        let mut index = 0_u64;
+        while let Some(message) = stream.message().await? {
+            let message = message_to_json(&message)?;
+            if options.output_json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "method": method_path,
+                        "stream_index": index,
+                        "response": message,
+                    }))?
+                );
+            } else {
+                println!("gRPC {method_path} · message {index}");
+                println!("{}", serde_json::to_string_pretty(&message)?);
+            }
+            index = index.saturating_add(1);
+        }
+        return Ok(());
+    }
     let response = grpc
         .unary(
             request,
@@ -1055,18 +1083,14 @@ async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
-                "method": format!("/{}/{}", method.parent_service().full_name(), method.name()),
+                "method": method_path,
                 "input": method.input().full_name(),
                 "output": method.output().full_name(),
                 "response": response_message,
             }))?
         );
     } else {
-        println!(
-            "gRPC /{}/{}",
-            method.parent_service().full_name(),
-            method.name()
-        );
+        println!("gRPC {method_path}");
         println!("{}", serde_json::to_string_pretty(&response_message)?);
     }
     Ok(())
@@ -1918,6 +1942,7 @@ mod tests {
     use super::*;
     use std::{
         convert::Infallible,
+        pin::Pin,
         task::{Context, Poll},
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1964,6 +1989,40 @@ mod tests {
     }
 
     #[derive(Clone, Default)]
+    struct TestGrpcStreamingService;
+
+    impl tonic::server::ServerStreamingService<EchoRequest> for TestGrpcStreamingService {
+        type Response = EchoResponse;
+        type ResponseStream =
+            Pin<Box<dyn futures_util::Stream<Item = Result<EchoResponse, tonic::Status>> + Send>>;
+        type Future =
+            tonic::codegen::BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+
+        fn call(&mut self, request: tonic::Request<EchoRequest>) -> Self::Future {
+            assert_eq!(
+                request
+                    .metadata()
+                    .get("x-test")
+                    .and_then(|value| value.to_str().ok()),
+                Some("local")
+            );
+            let message = request.into_inner().message;
+            Box::pin(async move {
+                let messages = vec![
+                    Ok(EchoResponse {
+                        message: format!("{message}:1"),
+                    }),
+                    Ok(EchoResponse {
+                        message: format!("{message}:2"),
+                    }),
+                ];
+                let stream: Self::ResponseStream = Box::pin(futures_util::stream::iter(messages));
+                Ok(tonic::Response::new(stream))
+            })
+        }
+    }
+
+    #[derive(Clone, Default)]
     struct TestGrpcServer;
 
     impl tonic::server::NamedService for TestGrpcServer {
@@ -1984,6 +2043,13 @@ mod tests {
                 Box::pin(async move {
                     let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
                     Ok(grpc.unary(TestGrpcService, request).await)
+                })
+            } else if request.uri().path() == "/demo.Echo/EchoStream" {
+                Box::pin(async move {
+                    let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
+                    Ok(grpc
+                        .server_streaming(TestGrpcStreamingService, request)
+                        .await)
                 })
             } else {
                 Box::pin(async move {
@@ -2006,7 +2072,10 @@ mod tests {
                 package demo;
                 message EchoRequest { string message = 1; }
                 message EchoResponse { string message = 1; }
-                service Echo { rpc Echo(EchoRequest) returns (EchoResponse); }
+                service Echo {
+                    rpc Echo(EchoRequest) returns (EchoResponse);
+                    rpc EchoStream(EchoRequest) returns (stream EchoResponse);
+                }
             "#,
         )
         .expect("proto");
@@ -2045,6 +2114,23 @@ mod tests {
         })
         .await
         .expect("gRPC command");
+
+        call_grpc(GrpcCallOptions {
+            endpoint: format!("http://{address}"),
+            proto: directory.path().join("echo.proto"),
+            includes: Vec::new(),
+            method: "/demo.Echo/EchoStream".to_owned(),
+            message: Some(r#"{"message":"hello"}"#.to_owned()),
+            message_file: None,
+            metadata: vec!["x-test=local".to_owned()],
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            output_json: true,
+        })
+        .await
+        .expect("gRPC server-streaming command");
 
         shutdown_tx.send(()).expect("shutdown");
         server.await.expect("server task");
