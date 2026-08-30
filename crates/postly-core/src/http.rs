@@ -9,6 +9,7 @@ use std::{
 };
 
 use cookie_store::{CookieStore as StoredCookieStore, RawCookie};
+use quick_xml::{events::Event, Reader, Writer};
 use reqwest::{
     cookie::CookieStore,
     header::{HeaderName, HeaderValue, SET_COOKIE},
@@ -347,8 +348,32 @@ impl HttpResponse {
                 }
             }
         }
+        let looks_like_xml = self
+            .content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("xml"))
+            || text.trim_start().starts_with("<?xml");
+        if looks_like_xml {
+            if let Some(formatted) = format_xml(&text) {
+                return formatted;
+            }
+        }
         text
     }
+}
+
+fn format_xml(text: &str) -> Option<String> {
+    let mut reader = Reader::from_str(text);
+    reader.config_mut().trim_text(true);
+    let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Eof) => break,
+            Ok(event) => writer.write_event(event.into_owned()).ok()?,
+            Err(_) => return None,
+        }
+    }
+    String::from_utf8(writer.into_inner()).ok()
 }
 
 impl HttpEngine {
@@ -1346,6 +1371,25 @@ mod tests {
             "{\n  \"ok\": true,\n  \"source\": \"local\"\n}"
         );
         assert!(response.duration_ms < 5_000);
+    }
+
+    #[test]
+    fn formats_well_formed_xml_in_pretty_view() {
+        let response = HttpResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: Vec::new(),
+            cookies: Vec::new(),
+            body: br#"<root><item id="1">one</item><item>two</item></root>"#.to_vec(),
+            content_type: Some("application/xml".to_owned()),
+            protocol: "HTTP/1.1".to_owned(),
+            url: "http://example.test".to_owned(),
+            duration_ms: 1,
+        };
+        assert_eq!(
+            response.formatted_body(ResponseView::Pretty),
+            "<root>\n  <item id=\"1\">one</item>\n  <item>two</item>\n</root>"
+        );
     }
 
     #[tokio::test]

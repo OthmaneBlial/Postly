@@ -41,7 +41,8 @@ Implemented:
 - native `postly-gui` request workspace with async send, editor tabs and response views.
 - native saved-request duplication and guarded deletion with storage/UI regression tests.
 - saved request rename/folder changes relocate the canonical file while preserving request identity.
-- response Pretty/Raw views now provide case-insensitive local search with occurrence counts and line snippets.
+- response Pretty/Raw views now provide JSON and well-formed XML formatting,
+  case-insensitive local search with occurrence counts and line snippets.
 - response Pretty/Raw views now use virtualized line rows with optional wrapping, clipboard copy and workspace-local response snapshots.
 - OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components and same-source-directory external refs, parameters, JSON bodies and auth placeholders.
 - OpenAPI import accepts local files or explicit HTTP(S) URLs with a bounded download and source-preserving report.

@@ -62,9 +62,9 @@ This repository contains working vertical slices, not a static interface mockup.
 - **Transport controls:** explicit insecure-TLS opt-in for supported HTTP flows,
   verified HTTPS, custom PEM CAs, combined PEM client identities and HTTP(S)
   proxy routing, with actionable diagnostics.
-- **Response inspection:** Pretty/Raw views, status/headers/cookies/protocol/
-  duration, local search, wrapping, clipboard copy, virtualized rendering and
-  ignored local response snapshots.
+- **Response inspection:** Pretty/Raw views with JSON and well-formed XML
+  formatting, status/headers/cookies/protocol/duration, local search, wrapping,
+  clipboard copy, virtualized rendering and ignored local response snapshots.
 - **Collections:** local TOML projects, nested folders, deterministic discovery,
   stable request identity, duplicate/delete/rename flows, metadata-only history
   and workspace-wide request search.

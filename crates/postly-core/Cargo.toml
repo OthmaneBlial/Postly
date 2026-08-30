@@ -16,6 +16,7 @@ http.workspace = true
 keyring.workspace = true
 prost-reflect.workspace = true
 protox.workspace = true
+quick-xml.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
