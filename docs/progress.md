@@ -93,6 +93,8 @@ Implemented:
 - Workspace TOML writes now replace canonical files through same-directory
   temporary files, with coverage that no temporary destination remains after a
   replacement.
+- Native GUI saved-request tabs support dirty indicators, activation,
+  close-others, reordering and restoration from ignored local path-only state.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:

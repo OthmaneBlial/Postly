@@ -24,6 +24,11 @@ environments/<environment>.postly-env.toml
 
 Request files carry stable UUIDs, readable names and all supported request semantics. Filesystem paths currently provide deterministic ordering; explicit ordering metadata can be added later if the UI needs drag-and-drop ordering. Canonical TOML writes use a same-directory temporary file followed by replacement, so a process interrupted during serialization does not leave a half-written destination on macOS. The optional `.postly/history.jsonl` file is machine-local metadata and must never become a prerequisite for opening a project. The native GUI's optional `.postly/recovery.json` is a bounded, private draft snapshot; it is restored as a new unsaved request and is never canonical workspace data.
 
+The native GUI keeps saved request-tab paths and the active tab in the ignored
+`.postly/gui-tabs.json` preference file. Tabs are presentation state only: a
+tab points to a canonical request file, while an unsaved draft remains in
+memory and is covered by the separate recovery snapshot.
+
 ## Runtime flow
 
 ~~~text

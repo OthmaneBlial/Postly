@@ -69,7 +69,9 @@ This repository contains working vertical slices, not a static interface mockup.
   clipboard copy, virtualized rendering and ignored local response snapshots.
 - **Collections:** local TOML projects, nested folders, deterministic discovery,
   stable request identity, duplicate/delete/rename flows, metadata-only history
-  and workspace-wide request search.
+  and workspace-wide request search. The native GUI supports multiple saved
+  request tabs, dirty indicators, close-others, reordering and local tab
+  restoration.
 - **Migration:** Postman Collection v2.1 and environment import/export, OpenAPI
   3.0/3.1 JSON/YAML import with guarded local references, and cURL paste/copy.
 - **Testing and automation:** response assertions, an opt-in Node.js script

@@ -332,6 +332,7 @@ impl AuthKind {
 }
 
 const GUI_SETTINGS_FILE: &str = ".postly/gui-settings.json";
+const GUI_TABS_FILE: &str = ".postly/gui-tabs.json";
 const RECOVERY_FILE: &str = ".postly/recovery.json";
 const RECOVERY_VERSION: u8 = 1;
 const MAX_RECOVERY_BYTES: usize = 4 * 1024 * 1024;
@@ -407,6 +408,21 @@ struct EnvironmentVariableDraft {
     secret_ref: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+struct TabsSettings {
+    paths: Vec<PathBuf>,
+    active_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct RequestTab {
+    collection_index: usize,
+    request_path: Option<PathBuf>,
+    request: Request,
+    dirty: bool,
+}
+
 fn recovery_path(root: &Path) -> PathBuf {
     root.join(RECOVERY_FILE)
 }
@@ -475,6 +491,8 @@ pub struct PostlyApp {
     engine: HttpEngine,
     collections: Vec<CollectionFiles>,
     environments: Vec<(PathBuf, Environment)>,
+    open_tabs: Vec<RequestTab>,
+    active_tab: usize,
     history: Vec<HistoryEntry>,
     history_search: String,
     workspace_search: String,
@@ -554,6 +572,7 @@ pub struct PostlyApp {
     environment_editor_name: String,
     environment_editor_variables: Vec<EnvironmentVariableDraft>,
     environment_editor_error: Option<String>,
+    tabs_settings_dirty: bool,
     dirty: bool,
     recovery_restored: bool,
     recovery_last_saved: Option<Instant>,
@@ -587,6 +606,8 @@ impl PostlyApp {
             engine,
             collections,
             environments,
+            open_tabs: Vec::new(),
+            active_tab: 0,
             history,
             history_search: String::new(),
             workspace_search: String::new(),
@@ -666,12 +687,14 @@ impl PostlyApp {
             environment_editor_name: String::new(),
             environment_editor_variables: Vec::new(),
             environment_editor_error: None,
+            tabs_settings_dirty: false,
             dirty: false,
             recovery_restored: false,
             recovery_last_saved: None,
             status_message,
         };
         app.refresh_requests(None)?;
+        app.restore_tabs();
         match read_recovery_snapshot(app.workspace.root()) {
             Ok(Some(snapshot)) => app.restore_recovery(snapshot)?,
             Ok(None) => {}
@@ -752,6 +775,14 @@ impl PostlyApp {
         self.recovery_restored = false;
         self.recovery_last_saved = None;
         self.reset_new_request();
+        let current_tab = self.current_tab();
+        if self.open_tabs.is_empty() {
+            self.open_tabs.push(current_tab);
+            self.active_tab = 0;
+        } else if let Some(tab) = self.open_tabs.get_mut(self.active_tab) {
+            *tab = current_tab;
+        }
+        self.tabs_settings_dirty = true;
         self.status_message = "Recovered draft discarded".to_owned();
     }
 
@@ -883,6 +914,227 @@ impl PostlyApp {
         Ok(())
     }
 
+    fn sync_active_tab(&mut self) -> Result<(), String> {
+        if self.open_tabs.is_empty() {
+            return Ok(());
+        }
+        let request = self.edited_request()?;
+        if let Some(tab) = self.open_tabs.get_mut(self.active_tab) {
+            if self
+                .request_path
+                .as_ref()
+                .is_some_and(|path| self.requests.iter().any(|(candidate, _)| candidate == path))
+            {
+                tab.collection_index = self.selected_collection;
+            }
+            tab.request_path = self.request_path.clone();
+            tab.request = request;
+            tab.dirty = self.dirty;
+        }
+        Ok(())
+    }
+
+    fn current_tab(&self) -> RequestTab {
+        RequestTab {
+            collection_index: self.selected_collection,
+            request_path: self.request_path.clone(),
+            request: self.request.clone(),
+            dirty: self.dirty,
+        }
+    }
+
+    fn install_tab(&mut self, index: usize) {
+        let Some(tab) = self.open_tabs.get(index).cloned() else {
+            return;
+        };
+        self.active_tab = index;
+        self.selected_collection = tab
+            .collection_index
+            .min(self.collections.len().saturating_sub(1));
+        self.selected_request = tab.request_path.as_ref().and_then(|path| {
+            self.requests
+                .iter()
+                .position(|(candidate, _)| candidate == path)
+        });
+        self.request_path = tab.request_path;
+        self.request = tab.request;
+        self.load_request_editors();
+        self.clear_response();
+        self.dirty = tab.dirty;
+        self.recovery_restored = false;
+    }
+
+    fn restore_tabs(&mut self) {
+        let path = self.workspace.root().join(GUI_TABS_FILE);
+        let Ok(contents) = fs::read_to_string(&path) else {
+            return;
+        };
+        let Ok(settings) = serde_json::from_str::<TabsSettings>(&contents) else {
+            self.status_message = "Saved GUI tabs could not be restored".to_owned();
+            return;
+        };
+        let root = self.workspace.root().to_path_buf();
+        let mut restored = Vec::new();
+        for relative in settings.paths {
+            let full_path = root.join(&relative);
+            if full_path.strip_prefix(&root).is_err() || !full_path.is_file() {
+                continue;
+            }
+            let Some(collection_index) = self.collections.iter().position(|collection| {
+                full_path.starts_with(collection.directory.join("requests"))
+            }) else {
+                continue;
+            };
+            let Ok(request) = self.workspace.load_request(&full_path) else {
+                continue;
+            };
+            restored.push(RequestTab {
+                collection_index,
+                request_path: Some(full_path),
+                request,
+                dirty: false,
+            });
+        }
+        if restored.is_empty() {
+            return;
+        }
+        self.open_tabs = restored;
+        self.active_tab = settings
+            .active_path
+            .and_then(|active_path| {
+                let active_path = root.join(active_path);
+                self.open_tabs
+                    .iter()
+                    .position(|tab| tab.request_path.as_ref() == Some(&active_path))
+            })
+            .unwrap_or(0);
+        self.load_requests_for_tab(self.active_tab);
+        self.install_tab(self.active_tab);
+        self.tabs_settings_dirty = false;
+    }
+
+    fn load_requests_for_tab(&mut self, index: usize) {
+        let Some(collection) = self
+            .open_tabs
+            .get(index)
+            .and_then(|tab| self.collections.get(tab.collection_index))
+            .cloned()
+        else {
+            return;
+        };
+        if let Ok(requests) = self.workspace.requests(&collection) {
+            self.requests = requests;
+        }
+    }
+
+    fn save_tabs_settings(&mut self) -> Result<(), String> {
+        if !self.tabs_settings_dirty {
+            return Ok(());
+        }
+        self.sync_active_tab()?;
+        let root = self.workspace.root();
+        let paths = self
+            .open_tabs
+            .iter()
+            .filter_map(|tab| tab.request_path.as_ref())
+            .filter_map(|path| path.strip_prefix(root).ok().map(PathBuf::from))
+            .collect::<Vec<_>>();
+        let active_path = self
+            .open_tabs
+            .get(self.active_tab)
+            .and_then(|tab| tab.request_path.as_ref())
+            .and_then(|path| path.strip_prefix(root).ok())
+            .map(PathBuf::from);
+        let settings = TabsSettings { paths, active_path };
+        let path = root.join(GUI_TABS_FILE);
+        if settings.paths.is_empty() {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            let contents =
+                serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
+            fs::write(path, contents).map_err(|error| error.to_string())?;
+        }
+        self.tabs_settings_dirty = false;
+        Ok(())
+    }
+
+    fn switch_to_tab(&mut self, index: usize) {
+        if index >= self.open_tabs.len() || index == self.active_tab {
+            return;
+        }
+        if let Err(error) = self.sync_active_tab() {
+            self.status_message = format!("Cannot switch tab: {error}");
+            return;
+        }
+        self.load_requests_for_tab(index);
+        self.install_tab(index);
+        self.tabs_settings_dirty = true;
+        self.status_message = "Request tab activated".to_owned();
+    }
+
+    fn close_tab(&mut self, index: usize) {
+        if index >= self.open_tabs.len() {
+            return;
+        }
+        if self.open_tabs[index].dirty {
+            self.status_message = "Save the request before closing its tab".to_owned();
+            return;
+        }
+        self.open_tabs.remove(index);
+        if self.open_tabs.is_empty() {
+            self.active_tab = 0;
+            self.reset_new_request();
+            self.open_tabs.push(self.current_tab());
+        } else {
+            if index < self.active_tab {
+                self.active_tab -= 1;
+            } else if self.active_tab >= self.open_tabs.len() {
+                self.active_tab = self.open_tabs.len() - 1;
+            }
+            self.load_requests_for_tab(self.active_tab);
+            self.install_tab(self.active_tab);
+        }
+        self.tabs_settings_dirty = true;
+    }
+
+    fn close_other_tabs(&mut self) {
+        if self
+            .open_tabs
+            .iter()
+            .enumerate()
+            .any(|(index, tab)| index != self.active_tab && tab.dirty)
+        {
+            self.status_message = "Save other dirty tabs before closing them".to_owned();
+            return;
+        }
+        if self.open_tabs.len() <= 1 {
+            return;
+        }
+        let active = self.open_tabs[self.active_tab].clone();
+        self.open_tabs = vec![active];
+        self.active_tab = 0;
+        self.tabs_settings_dirty = true;
+    }
+
+    fn move_active_tab(&mut self, direction: isize) {
+        let Some(target) = self.active_tab.checked_add_signed(direction) else {
+            return;
+        };
+        if target >= self.open_tabs.len() {
+            return;
+        }
+        self.open_tabs.swap(self.active_tab, target);
+        self.active_tab = target;
+        self.tabs_settings_dirty = true;
+    }
+
     fn refresh_workspace_search(&mut self) {
         if self.workspace_search.trim().is_empty() {
             self.workspace_search_results.clear();
@@ -919,13 +1171,27 @@ impl PostlyApp {
         if self.dirty {
             let _ = self.persist_recovery();
         }
+        if let Err(error) = self.sync_active_tab() {
+            self.status_message = format!("Cannot switch request: {error}");
+            return;
+        }
+        let tab_index = self
+            .open_tabs
+            .iter()
+            .position(|tab| tab.request_path.as_ref() == Some(&path));
+        let tab_index = tab_index.unwrap_or_else(|| {
+            self.open_tabs.push(RequestTab {
+                collection_index: self.selected_collection,
+                request_path: Some(path.clone()),
+                request,
+                dirty: false,
+            });
+            self.tabs_settings_dirty = true;
+            self.open_tabs.len() - 1
+        });
+        self.load_requests_for_tab(tab_index);
+        self.install_tab(tab_index);
         self.selected_request = Some(index);
-        self.request_path = Some(path);
-        self.request = request;
-        self.load_request_editors();
-        self.clear_response();
-        self.dirty = false;
-        self.recovery_restored = false;
         self.status_message = "Request loaded".to_owned();
     }
 
@@ -933,7 +1199,11 @@ impl PostlyApp {
         if self.dirty {
             let _ = self.persist_recovery();
         }
+        let _ = self.sync_active_tab();
         self.reset_new_request();
+        self.open_tabs.push(self.current_tab());
+        self.active_tab = self.open_tabs.len() - 1;
+        self.tabs_settings_dirty = true;
         self.status_message = "Draft request".to_owned();
     }
 
@@ -952,6 +1222,7 @@ impl PostlyApp {
         if self.dirty {
             let _ = self.persist_recovery();
         }
+        let _ = self.sync_active_tab();
         self.selected_request = None;
         self.request_path = None;
         self.request = Request::new("New gRPC request", "POST", "http://127.0.0.1:50051");
@@ -961,6 +1232,9 @@ impl PostlyApp {
         self.clear_response();
         self.dirty = true;
         self.recovery_restored = false;
+        self.open_tabs.push(self.current_tab());
+        self.active_tab = self.open_tabs.len() - 1;
+        self.tabs_settings_dirty = true;
         self.status_message = "gRPC draft request".to_owned();
     }
 
@@ -1607,6 +1881,8 @@ impl PostlyApp {
         self.dirty = false;
         self.recovery_restored = false;
         self.recovery_last_saved = None;
+        self.sync_active_tab()?;
+        self.tabs_settings_dirty = true;
         remove_recovery_snapshot(self.workspace.root())?;
         self.refresh_requests(Some(&path))?;
         self.refresh_workspace_search();
@@ -1629,6 +1905,8 @@ impl PostlyApp {
         self.dirty = false;
         self.recovery_restored = false;
         self.recovery_last_saved = None;
+        self.sync_active_tab()?;
+        self.tabs_settings_dirty = true;
         remove_recovery_snapshot(self.workspace.root())?;
         self.status_message = format!("Duplicated locally — {}", path.display());
         Ok(())
@@ -1642,12 +1920,26 @@ impl PostlyApp {
         self.workspace
             .delete_request(&path)
             .map_err(|error| error.to_string())?;
+        if let Some(index) = self
+            .open_tabs
+            .iter()
+            .position(|tab| tab.request_path.as_ref() == Some(&path))
+        {
+            self.open_tabs.remove(index);
+            if index < self.active_tab {
+                self.active_tab -= 1;
+            }
+            if self.active_tab >= self.open_tabs.len() {
+                self.active_tab = self.open_tabs.len().saturating_sub(1);
+            }
+        }
         self.selected_request = None;
         self.request_path = None;
         self.refresh_requests(None)?;
         self.refresh_workspace_search();
         self.recovery_restored = false;
         self.recovery_last_saved = None;
+        self.tabs_settings_dirty = true;
         remove_recovery_snapshot(self.workspace.root())?;
         self.status_message = "Request deleted locally".to_owned();
         Ok(())
@@ -2926,11 +3218,81 @@ impl PostlyApp {
         }
     }
 
+    fn draw_request_tabs(&mut self, ui: &mut egui::Ui) {
+        if self.open_tabs.is_empty() {
+            return;
+        }
+        let mut switch = None;
+        let mut close = None;
+        let mut close_others = false;
+        let mut move_left = false;
+        let mut move_right = false;
+        ui.horizontal_wrapped(|ui| {
+            for (index, tab) in self.open_tabs.iter().enumerate() {
+                let title = format!("{} {}", if tab.dirty { "•" } else { "" }, tab.request.name);
+                ui.push_id(index, |ui| {
+                    if ui
+                        .selectable_label(index == self.active_tab, title)
+                        .clicked()
+                    {
+                        switch = Some(index);
+                    }
+                    if ui
+                        .add_enabled(!tab.dirty, egui::Button::new("×"))
+                        .on_hover_text("Close tab after saving it")
+                        .clicked()
+                    {
+                        close = Some(index);
+                    }
+                });
+            }
+            if self.open_tabs.len() > 1 {
+                ui.separator();
+                if ui.button("Close others").clicked() {
+                    close_others = true;
+                }
+                if ui
+                    .add_enabled(self.active_tab > 0, egui::Button::new("←"))
+                    .on_hover_text("Move active tab left")
+                    .clicked()
+                {
+                    move_left = true;
+                }
+                if ui
+                    .add_enabled(
+                        self.active_tab + 1 < self.open_tabs.len(),
+                        egui::Button::new("→"),
+                    )
+                    .on_hover_text("Move active tab right")
+                    .clicked()
+                {
+                    move_right = true;
+                }
+            }
+        });
+        if let Some(index) = switch {
+            self.switch_to_tab(index);
+        }
+        if let Some(index) = close {
+            self.close_tab(index);
+        }
+        if close_others {
+            self.close_other_tabs();
+        }
+        if move_left {
+            self.move_active_tab(-1);
+        }
+        if move_right {
+            self.move_active_tab(1);
+        }
+    }
+
     fn draw_request_header(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("request-header")
             .frame(egui::Frame::default().fill(SURFACE))
             .show(ui, |ui| {
                 ui.add_space(8.0);
+                self.draw_request_tabs(ui);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("REQUEST").strong().color(MUTED));
                     ui.label(
@@ -5097,6 +5459,12 @@ impl eframe::App for PostlyApp {
         self.draw_command_palette(&ctx);
         self.draw_curl_import_dialog(&ctx);
         self.draw_environment_editor(&ctx);
+        if let Err(error) = self.sync_active_tab() {
+            self.status_message = format!("Draft not retained in tab state: {error}");
+        }
+        if let Err(error) = self.save_tabs_settings() {
+            self.status_message = format!("Tab state could not be saved: {error}");
+        }
         self.persist_recovery_if_due();
         if pending {
             ctx.request_repaint_after(Duration::from_millis(80));
@@ -5107,6 +5475,7 @@ impl eframe::App for PostlyApp {
         if self.dirty {
             let _ = self.persist_recovery();
         }
+        let _ = self.save_tabs_settings();
     }
 }
 
@@ -5493,6 +5862,50 @@ mod tests {
             .environments
             .iter()
             .any(|(_, environment)| environment.name == "production"));
+    }
+
+    #[test]
+    fn saved_request_tabs_reorder_and_restore_from_local_gui_state() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "First request".to_owned();
+        app.save_current().expect("save first request");
+        app.new_request();
+        app.request.name = "Second request".to_owned();
+        app.save_current().expect("save second request");
+        assert_eq!(app.open_tabs.len(), 2);
+
+        let first_path = app
+            .open_tabs
+            .iter()
+            .find_map(|tab| (tab.request.name == "First request").then(|| tab.request_path.clone()))
+            .flatten()
+            .expect("first tab path");
+        let first_index = app
+            .requests
+            .iter()
+            .position(|(_, request)| request.name == "First request")
+            .expect("first request");
+        app.select_request(first_index);
+        assert_eq!(app.request.name, "First request");
+        app.move_active_tab(1);
+        assert_eq!(app.open_tabs[app.active_tab].request.name, "First request");
+        app.close_other_tabs();
+        assert_eq!(app.open_tabs.len(), 1);
+        assert_eq!(app.open_tabs[0].request.name, "First request");
+
+        app.tabs_settings_dirty = true;
+        app.save_tabs_settings().expect("save tab state");
+        let settings =
+            std::fs::read_to_string(directory.path().join(GUI_TABS_FILE)).expect("tab settings");
+        let relative = first_path
+            .strip_prefix(directory.path())
+            .expect("relative first path");
+        assert!(settings.contains(relative.to_string_lossy().as_ref()));
+
+        let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
+        assert_eq!(reopened.open_tabs.len(), 1);
+        assert_eq!(reopened.request.name, "First request");
     }
 
     #[test]
