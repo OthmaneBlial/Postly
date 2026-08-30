@@ -25,4 +25,7 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+rustls.workspace = true
+rustls-pemfile.workspace = true
 tempfile.workspace = true
+tokio-rustls.workspace = true

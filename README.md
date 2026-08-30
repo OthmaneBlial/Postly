@@ -13,6 +13,7 @@ Postly is an open-source, Rust-first API development workspace designed around l
 - Query parameters, duplicate headers, cookies, raw/JSON/form/multipart/file bodies.
 - Bearer, Basic and API-key authentication.
 - Timeouts, redirects, compressed responses and explicit insecure-TLS opt-in.
+- Custom PEM CA bundles and combined PEM client identities for HTTPS CLI workflows, with local HTTPS/mTLS coverage.
 - Explicit HTTP(S) proxy routing for CLI requests, streams and collection runs.
 - Local, human-readable TOML projects with one request per file.
 - Environment variables and Postman-style {{variable}} interpolation with precedence diagnostics.
@@ -86,7 +87,7 @@ Use CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 on 
 
 The long-term target is a credible local-first Postman replacement: a professional request workspace, Git-native collections, environments, scripting and tests, runner/CLI parity, Postman migration, OpenAPI, GraphQL, WebSockets, SSE and gRPC. Features are only documented as supported once executable behavior and tests exist.
 
-See docs/progress.md, docs/architecture.md, docs/migration-from-postman.md, docs/openapi.md, docs/grpc.md, docs/scripting.md, docs/history.md, docs/proxy.md and docs/compatibility.md.
+See docs/progress.md, docs/architecture.md, docs/migration-from-postman.md, docs/openapi.md, docs/grpc.md, docs/scripting.md, docs/history.md, docs/proxy.md, docs/certificates.md and docs/compatibility.md.
 
 ## Privacy
 

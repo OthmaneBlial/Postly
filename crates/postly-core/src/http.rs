@@ -1,4 +1,9 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use reqwest::{
     cookie::{CookieStore, Jar},
@@ -19,6 +24,10 @@ pub struct EngineOptions {
     pub accept_invalid_certs: bool,
     pub max_redirects: usize,
     pub proxy: Option<String>,
+    /// An additional PEM-encoded trust anchor for HTTPS connections.
+    pub ca_cert: Option<PathBuf>,
+    /// A PEM bundle containing the client certificate chain and private key.
+    pub client_identity: Option<PathBuf>,
 }
 
 impl Default for EngineOptions {
@@ -28,6 +37,8 @@ impl Default for EngineOptions {
             accept_invalid_certs: false,
             max_redirects: 10,
             proxy: None,
+            ca_cert: None,
+            client_identity: None,
         }
     }
 }
@@ -59,6 +70,28 @@ pub enum HttpError {
     Client(#[source] reqwest::Error),
     #[error("invalid HTTP proxy configuration: {0}")]
     Proxy(#[source] reqwest::Error),
+    #[error("could not read CA certificate {path}: {source}")]
+    CaCertificateFile {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("invalid CA certificate {path}: {source}")]
+    CaCertificate {
+        path: String,
+        source: reqwest::Error,
+    },
+    #[error("CA certificate bundle {path} contains no certificates")]
+    CaCertificateEmpty { path: String },
+    #[error("could not read client identity {path}: {source}")]
+    ClientIdentityFile {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("invalid client identity {path}: {source}")]
+    ClientIdentity {
+        path: String,
+        source: reqwest::Error,
+    },
     #[error("HTTP request failed: {0}")]
     Request(#[source] reqwest::Error),
     #[error("variable resolution failed")]
@@ -155,6 +188,10 @@ impl HttpResponse {
 impl HttpEngine {
     pub fn new(options: &EngineOptions) -> Result<Self, HttpError> {
         let cookie_jar = Arc::new(Jar::default());
+        let ca_cert_path = options
+            .ca_cert
+            .as_deref()
+            .map(|path| path.display().to_string());
         let mut builder = Client::builder()
             .timeout(options.timeout)
             .danger_accept_invalid_certs(options.accept_invalid_certs)
@@ -163,7 +200,42 @@ impl HttpEngine {
         if let Some(proxy) = options.proxy.as_deref() {
             builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(HttpError::Proxy)?);
         }
-        let client = builder.build().map_err(HttpError::Client)?;
+        if let Some(path) = options.ca_cert.as_deref() {
+            let path_display = path.display().to_string();
+            let pem = fs::read(path).map_err(|source| HttpError::CaCertificateFile {
+                path: path_display.clone(),
+                source,
+            })?;
+            let certificates = reqwest::Certificate::from_pem_bundle(&pem).map_err(|source| {
+                HttpError::CaCertificate {
+                    path: path_display.clone(),
+                    source,
+                }
+            })?;
+            if certificates.is_empty() {
+                return Err(HttpError::CaCertificateEmpty { path: path_display });
+            }
+            for certificate in certificates {
+                builder = builder.add_root_certificate(certificate);
+            }
+        }
+        if let Some(path) = options.client_identity.as_deref() {
+            let path_display = path.display().to_string();
+            let pem = fs::read(path).map_err(|source| HttpError::ClientIdentityFile {
+                path: path_display.clone(),
+                source,
+            })?;
+            let identity =
+                reqwest::Identity::from_pem(&pem).map_err(|source| HttpError::ClientIdentity {
+                    path: path_display,
+                    source,
+                })?;
+            builder = builder.identity(identity);
+        }
+        let client = builder.build().map_err(|source| match ca_cert_path {
+            Some(path) => HttpError::CaCertificate { path, source },
+            None => HttpError::Client(source),
+        })?;
         Ok(Self { client, cookie_jar })
     }
 
@@ -642,10 +714,202 @@ fn resolve_json_diagnostics(
 mod tests {
     use super::*;
     use crate::model::KeyValue;
+    use std::{
+        io::{Cursor, Write},
+        sync::Arc,
+    };
     use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
+        io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+    use tokio_rustls::{
+        rustls::{
+            pki_types::{CertificateDer, PrivateKeyDer},
+            server::WebPkiClientVerifier,
+            RootCertStore, ServerConfig,
+        },
+        TlsAcceptor,
+    };
+
+    const TEST_CA_PEM: &str = include_str!("../testdata/tls/ca.pem");
+    const TEST_SERVER_CERT_PEM: &str = include_str!("../testdata/tls/server.pem");
+    const TEST_SERVER_KEY_PEM: &str = include_str!("../testdata/tls/server-key.pem");
+    const TEST_CLIENT_CERT_PEM: &str = include_str!("../testdata/tls/client.pem");
+    const TEST_CLIENT_KEY_PEM: &str = include_str!("../testdata/tls/client-key.pem");
+
+    fn pem_certificates(pem: &str) -> Vec<CertificateDer<'static>> {
+        rustls_pemfile::certs(&mut Cursor::new(pem.as_bytes()))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("valid test certificate")
+    }
+
+    fn pem_private_key(pem: &str) -> PrivateKeyDer<'static> {
+        rustls_pemfile::private_key(&mut Cursor::new(pem.as_bytes()))
+            .expect("valid test private key")
+            .expect("test private key")
+    }
+
+    fn test_tls_server_config(require_client: bool) -> ServerConfig {
+        let certificate_chain = pem_certificates(TEST_SERVER_CERT_PEM);
+        let private_key = pem_private_key(TEST_SERVER_KEY_PEM);
+        if require_client {
+            let mut roots = RootCertStore::empty();
+            for certificate in pem_certificates(TEST_CA_PEM) {
+                roots.add(certificate).expect("test CA");
+            }
+            let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+                .build()
+                .expect("client verifier");
+            ServerConfig::builder()
+                .with_client_cert_verifier(verifier)
+                .with_single_cert(certificate_chain, private_key)
+                .expect("TLS server config")
+        } else {
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(certificate_chain, private_key)
+                .expect("TLS server config")
+        }
+    }
+
+    fn write_test_pem(file: &mut tempfile::NamedTempFile, pem: &str) {
+        file.write_all(pem.as_bytes()).expect("test PEM");
+        file.flush().expect("flush test PEM");
+    }
+
+    #[test]
+    fn reports_a_missing_ca_certificate_path() {
+        let path = PathBuf::from("/definitely-not-a-postly-test-ca.pem");
+        let error = HttpEngine::new(&EngineOptions {
+            ca_cert: Some(path.clone()),
+            ..EngineOptions::default()
+        })
+        .expect_err("missing CA must fail");
+        assert!(matches!(error, HttpError::CaCertificateFile { .. }));
+        assert!(error.to_string().contains(&path.display().to_string()));
+    }
+
+    #[test]
+    fn rejects_invalid_certificate_material_without_building_a_client() {
+        let mut ca_file = tempfile::NamedTempFile::new().expect("CA file");
+        write_test_pem(
+            &mut ca_file,
+            "-----BEGIN CERTIFICATE-----\nnot a certificate\n-----END CERTIFICATE-----\n",
+        );
+        let ca_error = HttpEngine::new(&EngineOptions {
+            ca_cert: Some(ca_file.path().to_path_buf()),
+            ..EngineOptions::default()
+        })
+        .expect_err("invalid CA must fail");
+        assert!(matches!(
+            ca_error,
+            HttpError::CaCertificate { .. } | HttpError::CaCertificateEmpty { .. }
+        ));
+
+        let mut identity_file = tempfile::NamedTempFile::new().expect("identity file");
+        write_test_pem(
+            &mut identity_file,
+            "-----BEGIN PRIVATE KEY-----\nnot a client identity\n-----END PRIVATE KEY-----\n",
+        );
+        let identity_error = HttpEngine::new(&EngineOptions {
+            client_identity: Some(identity_file.path().to_path_buf()),
+            ..EngineOptions::default()
+        })
+        .expect_err("invalid identity must fail");
+        assert!(matches!(identity_error, HttpError::ClientIdentity { .. }));
+    }
+
+    #[tokio::test]
+    async fn sends_an_https_request_with_a_custom_ca() {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("TLS listener");
+        let address = listener.local_addr().expect("TLS address");
+        let acceptor = TlsAcceptor::from(Arc::new(test_tls_server_config(false)));
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("TLS connection");
+            let mut socket = acceptor.accept(socket).await.expect("TLS handshake");
+            let request = read_request_headers(&mut socket).await;
+            assert!(request.contains("GET /secure HTTP/1.1"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 6\r\nconnection: close\r\n\r\ntls-ok",
+                )
+                .await
+                .expect("TLS response");
+            socket.shutdown().await.expect("TLS shutdown");
+        });
+
+        let mut ca_file = tempfile::NamedTempFile::new().expect("CA file");
+        write_test_pem(&mut ca_file, TEST_CA_PEM);
+        let engine = HttpEngine::new(&EngineOptions {
+            ca_cert: Some(ca_file.path().to_path_buf()),
+            ..EngineOptions::default()
+        })
+        .expect("HTTP engine with custom CA");
+        let request = Request::new(
+            "TLS request",
+            "GET",
+            format!("https://127.0.0.1:{}/secure", address.port()),
+        );
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("HTTPS response");
+
+        server.await.expect("TLS server");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "tls-ok");
+    }
+
+    #[tokio::test]
+    async fn sends_a_client_identity_to_a_mutual_tls_server() {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("mTLS listener");
+        let address = listener.local_addr().expect("mTLS address");
+        let acceptor = TlsAcceptor::from(Arc::new(test_tls_server_config(true)));
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("mTLS connection");
+            let mut socket = acceptor.accept(socket).await.expect("mTLS handshake");
+            let request = read_request_headers(&mut socket).await;
+            assert!(request.contains("GET /identity HTTP/1.1"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 7\r\nconnection: close\r\n\r\nmtls-ok",
+                )
+                .await
+                .expect("mTLS response");
+            socket.shutdown().await.expect("mTLS shutdown");
+        });
+
+        let mut ca_file = tempfile::NamedTempFile::new().expect("CA file");
+        write_test_pem(&mut ca_file, TEST_CA_PEM);
+        let mut identity_file = tempfile::NamedTempFile::new().expect("identity file");
+        write_test_pem(
+            &mut identity_file,
+            &format!("{TEST_CLIENT_CERT_PEM}{TEST_CLIENT_KEY_PEM}"),
+        );
+        let engine = HttpEngine::new(&EngineOptions {
+            ca_cert: Some(ca_file.path().to_path_buf()),
+            client_identity: Some(identity_file.path().to_path_buf()),
+            ..EngineOptions::default()
+        })
+        .expect("HTTP engine with client identity");
+        let request = Request::new(
+            "mTLS request",
+            "GET",
+            format!("https://127.0.0.1:{}/identity", address.port()),
+        );
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("mTLS response");
+
+        server.await.expect("mTLS server");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "mtls-ok");
+    }
 
     #[tokio::test]
     async fn executes_a_real_local_request_and_formats_json() {
@@ -859,7 +1123,10 @@ mod tests {
         }
     }
 
-    async fn read_request_headers(socket: &mut tokio::net::TcpStream) -> String {
+    async fn read_request_headers<R>(socket: &mut R) -> String
+    where
+        R: AsyncRead + Unpin,
+    {
         let mut bytes = Vec::new();
         let mut buffer = [0_u8; 1024];
         while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {

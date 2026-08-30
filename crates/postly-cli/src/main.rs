@@ -53,6 +53,8 @@ struct ImmediateRequestOptions {
     basic_password: Option<String>,
     timeout: u64,
     proxy: Option<String>,
+    ca_cert: Option<PathBuf>,
+    client_identity: Option<PathBuf>,
     insecure: bool,
     output_json: bool,
 }
@@ -70,6 +72,8 @@ struct GraphqlOptions {
     basic_password: Option<String>,
     timeout: u64,
     proxy: Option<String>,
+    ca_cert: Option<PathBuf>,
+    client_identity: Option<PathBuf>,
     insecure: bool,
     output_json: bool,
 }
@@ -229,6 +233,8 @@ struct SseOptions {
     timeout: u64,
     reconnect: u32,
     proxy: Option<String>,
+    ca_cert: Option<PathBuf>,
+    client_identity: Option<PathBuf>,
     insecure: bool,
     output_json: bool,
 }
@@ -252,8 +258,22 @@ struct RunOptions<'a> {
     scripts: bool,
     timeout: u64,
     proxy: Option<&'a str>,
+    ca_cert: Option<&'a Path>,
+    client_identity: Option<&'a Path>,
     reporter: Reporter,
     data_file: Option<&'a Path>,
+}
+
+struct SendOptions<'a> {
+    file: &'a Path,
+    environment_name: Option<&'a str>,
+    scripts: bool,
+    timeout: u64,
+    proxy: Option<&'a str>,
+    ca_cert: Option<&'a Path>,
+    client_identity: Option<&'a Path>,
+    insecure: bool,
+    output_json: bool,
 }
 
 struct NewRequestOptions {
@@ -330,6 +350,18 @@ enum Command {
             help = "Route the request through an HTTP(S) proxy"
         )]
         proxy: Option<String>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Trust an additional PEM-encoded CA certificate"
+        )]
+        ca_cert: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Use a PEM client certificate and private-key identity"
+        )]
+        client_identity: Option<PathBuf>,
         #[arg(long)]
         insecure: bool,
         #[arg(long)]
@@ -364,6 +396,18 @@ enum Command {
             help = "Route the request through an HTTP(S) proxy"
         )]
         proxy: Option<String>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Trust an additional PEM-encoded CA certificate"
+        )]
+        ca_cert: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Use a PEM client certificate and private-key identity"
+        )]
+        client_identity: Option<PathBuf>,
         #[arg(long)]
         insecure: bool,
         #[arg(long)]
@@ -395,6 +439,18 @@ enum Command {
             help = "Route the stream through an HTTP(S) proxy"
         )]
         proxy: Option<String>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Trust an additional PEM-encoded CA certificate"
+        )]
+        ca_cert: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Use a PEM client certificate and private-key identity"
+        )]
+        client_identity: Option<PathBuf>,
         #[arg(long)]
         insecure: bool,
         #[arg(long)]
@@ -441,6 +497,18 @@ enum Command {
             help = "Route the request through an HTTP(S) proxy"
         )]
         proxy: Option<String>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Trust an additional PEM-encoded CA certificate"
+        )]
+        ca_cert: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Use a PEM client certificate and private-key identity"
+        )]
+        client_identity: Option<PathBuf>,
         #[arg(long)]
         insecure: bool,
     },
@@ -504,6 +572,18 @@ enum Command {
             help = "Route collection requests through an HTTP(S) proxy"
         )]
         proxy: Option<String>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Trust an additional PEM-encoded CA certificate"
+        )]
+        ca_cert: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Use a PEM client certificate and private-key identity"
+        )]
+        client_identity: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = Reporter::Pretty)]
         reporter: Reporter,
         #[arg(long)]
@@ -704,6 +784,8 @@ async fn main() -> Result<()> {
             basic_password,
             timeout,
             proxy,
+            ca_cert,
+            client_identity,
             insecure,
             output_json,
         } => {
@@ -719,6 +801,8 @@ async fn main() -> Result<()> {
                 basic_password,
                 timeout,
                 proxy,
+                ca_cert,
+                client_identity,
                 insecure,
                 output_json,
             })
@@ -737,6 +821,8 @@ async fn main() -> Result<()> {
             basic_password,
             timeout,
             proxy,
+            ca_cert,
+            client_identity,
             insecure,
             output_json,
         } => {
@@ -753,6 +839,8 @@ async fn main() -> Result<()> {
                 basic_password,
                 timeout,
                 proxy,
+                ca_cert,
+                client_identity,
                 insecure,
                 output_json,
             })
@@ -804,6 +892,8 @@ async fn main() -> Result<()> {
             timeout,
             reconnect,
             proxy,
+            ca_cert,
+            client_identity,
             insecure,
             output_json,
         } => {
@@ -816,6 +906,8 @@ async fn main() -> Result<()> {
                 timeout,
                 reconnect,
                 proxy,
+                ca_cert,
+                client_identity,
                 insecure,
                 output_json,
             })
@@ -852,17 +944,21 @@ async fn main() -> Result<()> {
             output_json,
             timeout,
             proxy,
+            ca_cert,
+            client_identity,
             insecure,
         } => {
-            send_saved_request(
-                &file,
-                environment.as_deref(),
+            send_saved_request(SendOptions {
+                file: &file,
+                environment_name: environment.as_deref(),
                 scripts,
                 timeout,
-                proxy.as_deref(),
+                proxy: proxy.as_deref(),
+                ca_cert: ca_cert.as_deref(),
+                client_identity: client_identity.as_deref(),
                 insecure,
                 output_json,
-            )
+            })
             .await
         }
         Command::Import { kind } => import_command(kind),
@@ -904,6 +1000,8 @@ async fn main() -> Result<()> {
             scripts,
             timeout,
             proxy,
+            ca_cert,
+            client_identity,
             reporter,
             data_file,
             output_json,
@@ -915,6 +1013,8 @@ async fn main() -> Result<()> {
                 scripts,
                 timeout,
                 proxy: proxy.as_deref(),
+                ca_cert: ca_cert.as_deref(),
+                client_identity: client_identity.as_deref(),
                 reporter: if output_json {
                     Reporter::Json
                 } else {
@@ -973,6 +1073,8 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
         VariableContext::default(),
         options.timeout,
         options.proxy.as_deref(),
+        options.ca_cert.as_deref(),
+        options.client_identity.as_deref(),
         options.insecure,
     )
     .await?;
@@ -1004,6 +1106,8 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
         VariableContext::default(),
         options.timeout,
         options.proxy.as_deref(),
+        options.ca_cert.as_deref(),
+        options.client_identity.as_deref(),
         options.insecure,
     )
     .await?;
@@ -1275,6 +1379,8 @@ async fn stream_sse(options: SseOptions) -> Result<()> {
         timeout: Duration::from_secs(options.timeout),
         accept_invalid_certs: options.insecure,
         proxy: options.proxy.clone(),
+        ca_cert: options.ca_cert.clone(),
+        client_identity: options.client_identity.clone(),
         ..EngineOptions::default()
     })?;
     let mut reconnects_used = 0;
@@ -1562,27 +1668,19 @@ fn parse_graphql_variables(
     Ok(serde_json::Value::Object(values))
 }
 
-async fn send_saved_request(
-    file: &Path,
-    environment_name: Option<&str>,
-    scripts: bool,
-    timeout: u64,
-    proxy: Option<&str>,
-    insecure: bool,
-    output_json: bool,
-) -> Result<()> {
-    let workspace = find_workspace(file)?;
-    let mut request = workspace.load_request(file)?;
+async fn send_saved_request(options: SendOptions<'_>) -> Result<()> {
+    let workspace = find_workspace(options.file)?;
+    let mut request = workspace.load_request(options.file)?;
     let collections = workspace.collections()?;
     let collection = collections
         .iter()
-        .find(|collection| file.starts_with(&collection.directory));
+        .find(|collection| options.file.starts_with(&collection.directory));
     let mut context = context_for_collection(
         &workspace,
         collection.map(|collection| &collection.collection),
-        environment_name,
+        options.environment_name,
     )?;
-    if scripts {
+    if options.scripts {
         if let Some(script) = request.pre_request_script.clone() {
             let script_result =
                 run_script_async(script, request.clone(), None, context.clone()).await?;
@@ -1590,7 +1688,16 @@ async fn send_saved_request(
         }
     }
     let started = Instant::now();
-    let result = execute(&request, context.clone(), timeout, proxy, insecure).await;
+    let result = execute(
+        &request,
+        context.clone(),
+        options.timeout,
+        options.proxy,
+        options.ca_cert,
+        options.client_identity,
+        options.insecure,
+    )
+    .await;
     let history_entry = match &result {
         Ok(response) => HistoryEntry::from_response(&request, response),
         Err(_) => HistoryEntry::from_error(&request, started.elapsed().as_millis() as u64),
@@ -1599,7 +1706,7 @@ async fn send_saved_request(
         tracing::warn!(error = %error, "could not write local request history");
     }
     let response = result?;
-    let post_script = if scripts {
+    let post_script = if options.scripts {
         if let Some(script) = request.test_script.clone() {
             Some(
                 run_script_async(
@@ -1621,7 +1728,7 @@ async fn send_saved_request(
     }
     print_response_with_tests(
         &response,
-        output_json,
+        options.output_json,
         post_script.as_ref().map(|script| script.tests.as_slice()),
     )?;
     if post_script
@@ -1828,6 +1935,8 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
     let engine = HttpEngine::new(&EngineOptions {
         timeout: Duration::from_secs(options.timeout),
         proxy: options.proxy.map(ToOwned::to_owned),
+        ca_cert: options.ca_cert.map(Path::to_path_buf),
+        client_identity: options.client_identity.map(Path::to_path_buf),
         ..EngineOptions::default()
     })?;
     let iterations = load_iteration_data(options.data_file)?;
@@ -1972,12 +2081,16 @@ async fn execute(
     context: VariableContext,
     timeout: u64,
     proxy: Option<&str>,
+    ca_cert: Option<&Path>,
+    client_identity: Option<&Path>,
     insecure: bool,
 ) -> Result<postly_core::HttpResponse> {
     let engine = HttpEngine::new(&EngineOptions {
         timeout: Duration::from_secs(timeout),
         accept_invalid_certs: insecure,
         proxy: proxy.map(ToOwned::to_owned),
+        ca_cert: ca_cert.map(Path::to_path_buf),
+        client_identity: client_identity.map(Path::to_path_buf),
         ..EngineOptions::default()
     })?;
     Ok(engine.execute(request, &context).await?)
@@ -2507,6 +2620,8 @@ mod tests {
             basic_password: None,
             timeout: 10,
             proxy: None,
+            ca_cert: None,
+            client_identity: None,
             insecure: false,
             output_json: true,
         })
@@ -2549,6 +2664,8 @@ mod tests {
             timeout: 10,
             reconnect: 0,
             proxy: None,
+            ca_cert: None,
+            client_identity: None,
             insecure: false,
             output_json: true,
         })
@@ -2598,6 +2715,8 @@ mod tests {
             timeout: 10,
             reconnect: 1,
             proxy: None,
+            ca_cert: None,
+            client_identity: None,
             insecure: false,
             output_json: true,
         })
