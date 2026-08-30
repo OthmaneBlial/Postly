@@ -18,6 +18,11 @@ my-api/
 
 Request files are independent merge units. The collection file stores metadata and collection-scoped variables; request files store method, URL, parameters, headers, body, auth, scripts and examples.
 
+The native workspace can duplicate a saved request with a new stable UUID and a
+`copy` name, or delete a request file after validating that it is a request
+under the current workspace's `collections/` tree. Draft requests are not
+deleted, and storage guards reject paths outside the project.
+
 Environment files may contain secrets. Postly ignores runtime environment files by default; keep local values there and commit a separate redacted template when sharing a project:
 
 ~~~text

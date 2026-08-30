@@ -357,6 +357,37 @@ impl PostlyApp {
         Ok(())
     }
 
+    fn duplicate_current(&mut self) -> Result<(), String> {
+        let request = self.edited_request()?;
+        let collection = self
+            .collections
+            .get(self.selected_collection)
+            .ok_or_else(|| "no collection selected".to_owned())?;
+        let path = self
+            .workspace
+            .duplicate_request(collection, &request)
+            .map_err(|error| error.to_string())?;
+        self.refresh_requests(Some(&path))?;
+        self.dirty = false;
+        self.status_message = format!("Duplicated locally — {}", path.display());
+        Ok(())
+    }
+
+    fn delete_current(&mut self) -> Result<(), String> {
+        let path = self
+            .request_path
+            .clone()
+            .ok_or_else(|| "draft requests cannot be deleted".to_owned())?;
+        self.workspace
+            .delete_request(&path)
+            .map_err(|error| error.to_string())?;
+        self.selected_request = None;
+        self.request_path = None;
+        self.refresh_requests(None)?;
+        self.status_message = "Request deleted locally".to_owned();
+        Ok(())
+    }
+
     fn context(&self) -> VariableContext {
         let mut context = VariableContext::default();
         if let Some(collection) = self.collections.get(self.selected_collection) {
@@ -652,6 +683,8 @@ impl PostlyApp {
                 ui.add_space(7.0);
                 let mut send_clicked = false;
                 let mut save_clicked = false;
+                let mut duplicate_clicked = false;
+                let mut delete_clicked = false;
                 ui.horizontal(|ui| {
                     if ui
                         .add(
@@ -709,6 +742,18 @@ impl PostlyApp {
                     if ui.button("Save").clicked() {
                         save_clicked = true;
                     }
+                    if ui
+                        .add_enabled(self.request_path.is_some(), egui::Button::new("Duplicate"))
+                        .clicked()
+                    {
+                        duplicate_clicked = true;
+                    }
+                    if ui
+                        .add_enabled(self.request_path.is_some(), egui::Button::new("Delete"))
+                        .clicked()
+                    {
+                        delete_clicked = true;
+                    }
                     if ui.input(|input| {
                         input.key_pressed(egui::Key::Enter) && input.modifiers.command
                     }) {
@@ -733,6 +778,16 @@ impl PostlyApp {
                 if save_clicked {
                     if let Err(error) = self.save_current() {
                         self.status_message = format!("Save failed: {error}");
+                    }
+                }
+                if duplicate_clicked {
+                    if let Err(error) = self.duplicate_current() {
+                        self.status_message = format!("Duplicate failed: {error}");
+                    }
+                }
+                if delete_clicked {
+                    if let Err(error) = self.delete_current() {
+                        self.status_message = format!("Delete failed: {error}");
                     }
                 }
                 if send_clicked {
@@ -1239,6 +1294,21 @@ mod tests {
 
         let error = app.edited_request().expect_err("invalid JSON must fail");
         assert!(error.contains("JSON body is invalid"));
+    }
+
+    #[test]
+    fn saved_requests_can_be_duplicated_and_deleted_from_the_workspace() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "List users".to_owned();
+        app.save_current().expect("save request");
+        app.duplicate_current().expect("duplicate request");
+        assert_eq!(app.request.name, "List users copy");
+        assert_eq!(app.requests.len(), 2);
+
+        app.delete_current().expect("delete duplicate");
+        assert_eq!(app.requests.len(), 1);
+        assert_eq!(app.requests[0].1.name, "List users");
     }
 
     #[test]

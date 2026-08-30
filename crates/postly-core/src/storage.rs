@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     fs::{self, File, OpenOptions},
     io::{self, BufRead, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use thiserror::Error;
@@ -205,6 +205,42 @@ impl Workspace {
         request: &Request,
     ) -> Result<(), WorkspaceError> {
         self.write_toml(path.as_ref(), request)
+    }
+
+    pub fn duplicate_request(
+        &self,
+        collection: &CollectionFiles,
+        request: &Request,
+    ) -> Result<PathBuf, WorkspaceError> {
+        let mut duplicate = request.clone();
+        duplicate.id = uuid::Uuid::new_v4();
+        duplicate.name = format!("{} copy", request.name);
+        self.save_request(collection, &duplicate)
+    }
+
+    pub fn delete_request(&self, path: impl AsRef<Path>) -> Result<(), WorkspaceError> {
+        let path = path.as_ref();
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| WorkspaceError::InvalidName(path.display().to_string()))?;
+        let has_parent = relative
+            .components()
+            .any(|component| component == Component::ParentDir);
+        let is_request_file = relative
+            .components()
+            .next()
+            .is_some_and(|component| component.as_os_str() == "collections")
+            && !has_parent
+            && path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with(REQUEST_SUFFIX));
+        if !is_request_file {
+            return Err(WorkspaceError::InvalidName(path.display().to_string()));
+        }
+        fs::remove_file(path).map_err(|source| WorkspaceError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
     }
 
     pub fn load_request(&self, path: impl AsRef<Path>) -> Result<Request, WorkspaceError> {
@@ -517,6 +553,41 @@ mod tests {
             .expect("update request");
         let updated = reopened.load_request(&path).expect("updated request");
         assert_eq!(updated.name, "List all users");
+    }
+
+    #[test]
+    fn duplicates_and_deletes_only_request_files_inside_the_workspace() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = Workspace::init(directory.path(), "Demo API").expect("init");
+        let collection = workspace
+            .create_collection(&Collection::new("Users"))
+            .expect("collection");
+        let request = Request::new("List users", "GET", "https://example.com/users");
+        let original_path = workspace
+            .save_request(&collection, &request)
+            .expect("request");
+        let duplicate_path = workspace
+            .duplicate_request(&collection, &request)
+            .expect("duplicate");
+
+        let requests = workspace.requests(&collection).expect("requests");
+        assert_eq!(requests.len(), 2);
+        assert!(requests
+            .iter()
+            .any(|(_, request)| request.name == "List users copy"));
+        assert_ne!(requests[0].1.id, requests[1].1.id);
+
+        workspace
+            .delete_request(&duplicate_path)
+            .expect("delete duplicate");
+        assert_eq!(workspace.requests(&collection).expect("remaining").len(), 1);
+        assert!(workspace
+            .delete_request(directory.path().join("postly.toml"))
+            .is_err());
+        assert!(workspace
+            .delete_request(directory.path().join("collections/../postly.toml"))
+            .is_err());
+        assert!(original_path.is_file());
     }
 
     #[test]
