@@ -98,6 +98,7 @@ pub fn import_postman_collection(
         collection_name: Some(name),
         ..ImportReport::default()
     };
+    collection_files.collection.auth = parse_auth(document.get("auth"));
     let collection_scripts = parse_event_scripts(&document, "Collection", &mut report);
     collection_files.collection.pre_request_script = (!collection_scripts.pre_request.is_empty())
         .then(|| collection_scripts.pre_request.join("\n\n"));
@@ -136,6 +137,7 @@ pub fn import_postman_collection(
                 item,
                 None,
                 &collection_scripts,
+                &collection_files.collection.auth,
                 &mut report,
             )?;
         }
@@ -209,6 +211,7 @@ fn import_item(
     item: &Value,
     folder: Option<String>,
     inherited_scripts: &ScriptSet,
+    inherited_auth: &Auth,
     report: &mut ImportReport,
 ) -> Result<(), ImportError> {
     let name = item
@@ -218,6 +221,11 @@ fn import_item(
     if let Some(children) = item.get("item").and_then(Value::as_array) {
         let mut next_scripts = inherited_scripts.clone();
         next_scripts.extend(parse_event_scripts(item, name, report));
+        let next_auth = if item.get("auth").is_some() {
+            parse_auth(item.get("auth"))
+        } else {
+            inherited_auth.clone()
+        };
         let next_folder = Some(match folder {
             Some(folder) => format!("{folder}/{name}"),
             None => name.to_owned(),
@@ -229,6 +237,7 @@ fn import_item(
                 child,
                 next_folder.clone(),
                 &next_scripts,
+                &next_auth,
                 report,
             )?;
         }
@@ -242,6 +251,9 @@ fn import_item(
         return Ok(());
     };
     let mut request = parse_request(name, request_value, folder, report);
+    if request_value.get("auth").is_none() {
+        request.auth = inherited_auth.clone();
+    }
     let mut scripts = inherited_scripts.clone();
     scripts.extend(parse_event_scripts(item, name, report));
     scripts.apply_to_request(&mut request);
@@ -646,6 +658,7 @@ mod tests {
             Some(&"https://api.example.test".to_owned())
         );
         assert!(collection.collection.pre_request_script.is_some());
+        assert!(matches!(collection.collection.auth, Auth::Bearer { .. }));
         let requests = workspace.requests(&collection).expect("requests");
         let list = requests
             .iter()

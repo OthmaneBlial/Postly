@@ -11,7 +11,7 @@ export a Postman Collection v2.1
   -> postly send <request>.postly.toml
 ~~~
 
-The importer preserves collection metadata, folders, request URLs, query parameters, headers, descriptions, raw/JSON/urlencoded/form-data/file bodies, common auth types, examples, variables and request-level scripts. Unsupported or review-worthy fields are reported rather than silently discarded.
+The importer preserves collection metadata, folders, request URLs, query parameters, headers, descriptions, raw/JSON/urlencoded/form-data/file bodies, common auth types, examples, variables and request-level scripts. Collection and folder auth is materialized into requests that do not override it, so the imported files retain the effective behavior without depending on a hidden runtime tree. Unsupported or review-worthy fields are reported rather than silently discarded.
 
 Collection and folder pre-request/test events are preserved into the native collection/request files in execution order. They remain source-only until a script runtime is selected and tested.
 

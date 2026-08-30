@@ -16,6 +16,7 @@ Implemented:
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
 - collection/folder/request script source preservation and a truthful pm.* compatibility matrix.
+- collection and folder authentication inheritance is materialized into imported request files.
 - init, request, send, import, list and sequential run CLI commands.
 - new request creates and persists a saved request without editing files by hand.
 - env set creates local environments and saved requests resolve enabled environment variables.

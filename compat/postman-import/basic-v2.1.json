@@ -16,6 +16,10 @@
       "script": { "type": "text/javascript", "exec": ["console.log(\"collection pre-request\");"] }
     }
   ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
   "item": [
     {
       "name": "Users",
