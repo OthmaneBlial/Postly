@@ -11,11 +11,14 @@ use clap::{Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
     export_postman_collection, export_postman_environment, import_curl_command, import_environment,
-    import_postman_collection, parse_graphql_response, parse_variables_json, run_requests, Auth,
-    Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, HeaderEntry,
-    HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions,
-    ScriptResult, ScriptTestResult, SseParser, VariableContext, Workspace,
+    import_postman_collection, message_from_json, message_to_json, parse_graphql_response,
+    parse_variables_json, run_requests, Auth, Collection, EngineOptions, Environment,
+    EnvironmentVariable, GraphqlRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter,
+    HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions, ScriptResult,
+    ScriptTestResult, SseParser, VariableContext, Workspace,
 };
+use prost::Message as ProstMessage;
+use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde_json::json;
 use tokio_tungstenite::{
     connect_async,
@@ -67,6 +70,80 @@ struct GraphqlOptions {
     timeout: u64,
     insecure: bool,
     output_json: bool,
+}
+
+struct GrpcCallOptions {
+    endpoint: String,
+    proto: PathBuf,
+    includes: Vec<PathBuf>,
+    method: String,
+    message: Option<String>,
+    message_file: Option<PathBuf>,
+    metadata: Vec<String>,
+    bearer: Option<String>,
+    basic_user: Option<String>,
+    basic_password: Option<String>,
+    timeout: u64,
+    output_json: bool,
+}
+
+#[derive(Clone)]
+struct DynamicGrpcCodec {
+    output: MessageDescriptor,
+}
+
+struct DynamicGrpcEncoder;
+
+struct DynamicGrpcDecoder {
+    output: MessageDescriptor,
+}
+
+impl tonic::codec::Codec for DynamicGrpcCodec {
+    type Encode = DynamicMessage;
+    type Decode = DynamicMessage;
+    type Encoder = DynamicGrpcEncoder;
+    type Decoder = DynamicGrpcDecoder;
+
+    fn encoder(&mut self) -> Self::Encoder {
+        DynamicGrpcEncoder
+    }
+
+    fn decoder(&mut self) -> Self::Decoder {
+        DynamicGrpcDecoder {
+            output: self.output.clone(),
+        }
+    }
+}
+
+impl tonic::codec::Encoder for DynamicGrpcEncoder {
+    type Item = DynamicMessage;
+    type Error = tonic::Status;
+
+    fn encode(
+        &mut self,
+        item: Self::Item,
+        dst: &mut tonic::codec::EncodeBuf<'_>,
+    ) -> Result<(), Self::Error> {
+        ProstMessage::encode(&item, dst).map_err(|error| {
+            tonic::Status::internal(format!("could not encode protobuf message: {error}"))
+        })
+    }
+}
+
+impl tonic::codec::Decoder for DynamicGrpcDecoder {
+    type Item = DynamicMessage;
+    type Error = tonic::Status;
+
+    fn decode(
+        &mut self,
+        src: &mut tonic::codec::DecodeBuf<'_>,
+    ) -> Result<Option<Self::Item>, Self::Error> {
+        DynamicMessage::decode(self.output.clone(), src)
+            .map(Some)
+            .map_err(|error| {
+                tonic::Status::internal(format!("could not decode protobuf message: {error}"))
+            })
+    }
 }
 
 struct SseOptions {
@@ -192,6 +269,11 @@ enum Command {
         insecure: bool,
         #[arg(long)]
         output_json: bool,
+    },
+    /// Inspect local protobuf services or call a unary gRPC method.
+    Grpc {
+        #[command(subcommand)]
+        kind: GrpcKind,
     },
     /// Subscribe to a Server-Sent Events endpoint until it closes.
     Sse {
@@ -340,6 +422,44 @@ enum NewKind {
         basic_user: Option<String>,
         #[arg(long)]
         basic_password: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum GrpcKind {
+    /// Compile a local .proto file and list its services and methods.
+    Describe {
+        proto: PathBuf,
+        #[arg(long = "include")]
+        includes: Vec<PathBuf>,
+        #[arg(long)]
+        output_json: bool,
+    },
+    /// Call a unary gRPC method using a protobuf JSON request object.
+    Call {
+        endpoint: String,
+        #[arg(long)]
+        proto: PathBuf,
+        #[arg(long)]
+        method: String,
+        #[arg(long, conflicts_with = "message_file")]
+        message: Option<String>,
+        #[arg(long, conflicts_with = "message")]
+        message_file: Option<PathBuf>,
+        #[arg(long = "include")]
+        includes: Vec<PathBuf>,
+        #[arg(short = 'H', long = "metadata")]
+        metadata: Vec<String>,
+        #[arg(long)]
+        bearer: Option<String>,
+        #[arg(long)]
+        basic_user: Option<String>,
+        #[arg(long)]
+        basic_password: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+        #[arg(long)]
+        output_json: bool,
     },
 }
 
@@ -515,6 +635,43 @@ async fn main() -> Result<()> {
             })
             .await
         }
+        Command::Grpc { kind } => match kind {
+            GrpcKind::Describe {
+                proto,
+                includes,
+                output_json,
+            } => describe_grpc(&proto, &includes, output_json),
+            GrpcKind::Call {
+                endpoint,
+                proto,
+                method,
+                message,
+                message_file,
+                includes,
+                metadata,
+                bearer,
+                basic_user,
+                basic_password,
+                timeout,
+                output_json,
+            } => {
+                call_grpc(GrpcCallOptions {
+                    endpoint,
+                    proto,
+                    includes,
+                    method,
+                    message,
+                    message_file,
+                    metadata,
+                    bearer,
+                    basic_user,
+                    basic_password,
+                    timeout,
+                    output_json,
+                })
+                .await
+            }
+        },
         Command::Sse {
             endpoint,
             headers,
@@ -744,6 +901,173 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
             messages.join("; ")
         };
         bail!("GraphQL response contains errors: {detail}");
+    }
+    Ok(())
+}
+
+fn describe_grpc(proto: &Path, includes: &[PathBuf], output_json: bool) -> Result<()> {
+    let schema = GrpcSchema::from_proto(proto, includes)
+        .with_context(|| format!("could not load protobuf schema {}", proto.display()))?;
+    let services = schema.services();
+    if output_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "source": schema.source(),
+                "files": schema.files(),
+                "services": services,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!("gRPC schema: {}", schema.source().display());
+    if services.is_empty() {
+        println!("No services found.");
+        return Ok(());
+    }
+    for service in services {
+        println!("{}", service.full_name);
+        for method in service.methods {
+            let streaming = match (method.client_streaming, method.server_streaming) {
+                (false, false) => "unary",
+                (false, true) => "server-streaming",
+                (true, false) => "client-streaming",
+                (true, true) => "bidi-streaming",
+            };
+            println!(
+                "  {}  [{}]  {} -> {}",
+                method.path, streaming, method.input, method.output
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
+    let schema = GrpcSchema::from_proto(&options.proto, &options.includes)
+        .with_context(|| format!("could not load protobuf schema {}", options.proto.display()))?;
+    let method = schema
+        .find_method(&options.method)
+        .with_context(|| format!("gRPC method not found: {}", options.method))?;
+    if method.is_client_streaming() || method.is_server_streaming() {
+        bail!(
+            "streaming gRPC methods are discovered but not callable in this unary slice: {}",
+            method.full_name()
+        );
+    }
+
+    let message = match (options.message, options.message_file) {
+        (Some(message), None) => message,
+        (None, Some(path)) => fs::read_to_string(&path)
+            .with_context(|| format!("could not read protobuf JSON file {}", path.display()))?,
+        (None, None) => "{}".to_owned(),
+        (Some(_), Some(_)) => bail!("choose either --message or --message-file"),
+    };
+    let request_message = message_from_json(method.input(), &message)?;
+
+    let endpoint_url = url::Url::parse(&options.endpoint)
+        .with_context(|| format!("invalid gRPC endpoint: {}", options.endpoint))?;
+    let mut endpoint = tonic::transport::Endpoint::from_shared(options.endpoint.clone())?
+        .timeout(Duration::from_secs(options.timeout));
+    match endpoint_url.scheme() {
+        "http" => {}
+        "https" => {
+            let domain = endpoint_url
+                .host_str()
+                .context("HTTPS gRPC endpoint has no hostname")?;
+            endpoint = endpoint.tls_config(
+                tonic::transport::ClientTlsConfig::new()
+                    .domain_name(domain)
+                    .with_webpki_roots(),
+            )?;
+        }
+        scheme => bail!("gRPC endpoint must use http:// or https://, got {scheme}://"),
+    }
+
+    let channel = endpoint
+        .connect()
+        .await
+        .with_context(|| format!("could not connect to gRPC endpoint {}", options.endpoint))?;
+    let mut request = tonic::Request::new(request_message);
+    for raw in options.metadata {
+        let (key, value) = raw
+            .split_once('=')
+            .with_context(|| format!("metadata must use key=value syntax: {raw}"))?;
+        let key = key.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            bail!("metadata key cannot be empty");
+        }
+        let key: tonic::metadata::MetadataKey<tonic::metadata::Ascii> = key
+            .parse()
+            .with_context(|| format!("invalid gRPC metadata key: {key}"))?;
+        let value: tonic::metadata::MetadataValue<tonic::metadata::Ascii> = value
+            .parse()
+            .with_context(|| format!("invalid ASCII gRPC metadata value for {key}"))?;
+        request.metadata_mut().insert(key, value);
+    }
+    match (options.bearer, options.basic_user, options.basic_password) {
+        (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
+            bail!("choose either --bearer or basic authentication")
+        }
+        (Some(token), None, None) => {
+            request.metadata_mut().insert(
+                "authorization",
+                format!("Bearer {token}")
+                    .parse()
+                    .context("invalid bearer token")?,
+            );
+        }
+        (None, Some(user), Some(password)) => {
+            let credentials =
+                base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));
+            request.metadata_mut().insert(
+                "authorization",
+                format!("Basic {credentials}")
+                    .parse()
+                    .context("invalid basic credentials")?,
+            );
+        }
+        (None, Some(_), None) | (None, None, Some(_)) => {
+            bail!("basic authentication requires --basic-user and --basic-password")
+        }
+        (None, None, None) => {}
+    }
+
+    let path = http::uri::PathAndQuery::try_from(format!(
+        "/{}/{}",
+        method.parent_service().full_name(),
+        method.name()
+    ))?;
+    let mut grpc = tonic::client::Grpc::new(channel);
+    grpc.ready().await?;
+    let response = grpc
+        .unary(
+            request,
+            path,
+            DynamicGrpcCodec {
+                output: method.output(),
+            },
+        )
+        .await?;
+    let response_message = message_to_json(&response.into_inner())?;
+    if options.output_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "method": format!("/{}/{}", method.parent_service().full_name(), method.name()),
+                "input": method.input().full_name(),
+                "output": method.output().full_name(),
+                "response": response_message,
+            }))?
+        );
+    } else {
+        println!(
+            "gRPC /{}/{}",
+            method.parent_service().full_name(),
+            method.name()
+        );
+        println!("{}", serde_json::to_string_pretty(&response_message)?);
     }
     Ok(())
 }
@@ -1592,7 +1916,139 @@ fn find_workspace(path: &Path) -> Result<Workspace> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        convert::Infallible,
+        task::{Context, Poll},
+    };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct EchoRequest {
+        #[prost(string, tag = "1")]
+        message: String,
+    }
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct EchoResponse {
+        #[prost(string, tag = "1")]
+        message: String,
+    }
+
+    #[derive(Clone, Default)]
+    struct TestGrpcService;
+
+    impl tonic::codegen::Service<tonic::Request<EchoRequest>> for TestGrpcService {
+        type Response = tonic::Response<EchoResponse>;
+        type Error = tonic::Status;
+        type Future = tonic::codegen::BoxFuture<Self::Response, Self::Error>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, request: tonic::Request<EchoRequest>) -> Self::Future {
+            assert_eq!(
+                request
+                    .metadata()
+                    .get("x-test")
+                    .and_then(|value| value.to_str().ok()),
+                Some("local")
+            );
+            let message = request.into_inner().message;
+            Box::pin(async move {
+                Ok(tonic::Response::new(EchoResponse {
+                    message: format!("echo:{message}"),
+                }))
+            })
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct TestGrpcServer;
+
+    impl tonic::server::NamedService for TestGrpcServer {
+        const NAME: &'static str = "demo.Echo";
+    }
+
+    impl tonic::codegen::Service<http::Request<tonic::body::Body>> for TestGrpcServer {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = Infallible;
+        type Future = tonic::codegen::BoxFuture<Self::Response, Self::Error>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, request: http::Request<tonic::body::Body>) -> Self::Future {
+            if request.uri().path() == "/demo.Echo/Echo" {
+                Box::pin(async move {
+                    let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
+                    Ok(grpc.unary(TestGrpcService, request).await)
+                })
+            } else {
+                Box::pin(async move {
+                    let mut response = http::Response::new(tonic::body::Body::empty());
+                    *response.status_mut() = http::StatusCode::NOT_FOUND;
+                    Ok(response)
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn grpc_command_calls_a_dynamic_unary_method() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let proto = directory.path().join("echo.proto");
+        std::fs::write(
+            &proto,
+            r#"
+                syntax = "proto3";
+                package demo;
+                message EchoRequest { string message = 1; }
+                message EchoResponse { string message = 1; }
+                service Echo { rpc Echo(EchoRequest) returns (EchoResponse); }
+            "#,
+        )
+        .expect("proto");
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(TestGrpcServer)
+                .serve_with_incoming_shutdown(
+                    tonic::transport::server::TcpIncoming::from(listener),
+                    async {
+                        let _ = shutdown_rx.await;
+                    },
+                )
+                .await
+                .expect("gRPC server");
+        });
+
+        call_grpc(GrpcCallOptions {
+            endpoint: format!("http://{address}"),
+            proto,
+            includes: Vec::new(),
+            method: "/demo.Echo/Echo".to_owned(),
+            message: Some(r#"{"message":"hello"}"#.to_owned()),
+            message_file: None,
+            metadata: vec!["x-test=local".to_owned()],
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            output_json: true,
+        })
+        .await
+        .expect("gRPC command");
+
+        shutdown_tx.send(()).expect("shutdown");
+        server.await.expect("server task");
+    }
 
     #[tokio::test]
     async fn graphql_command_sends_a_query_and_accepts_data_response() {

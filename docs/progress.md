@@ -33,6 +33,7 @@ Implemented:
 - Structured GraphQL core/CLI/GUI request model with variables, operation names, partial-data/error parsing, validated GUI editing and local HTTP integration coverage.
 - SSE parser and progressive CLI subscription with chunk-safe event decoding, JSON-lines output and local streaming integration coverage.
 - WebSocket CLI client for `ws://` and `wss://` with headers/auth, text sends, binary/pong output, ping replies, bounded reconnects and local integration coverage.
+- Dynamic gRPC `.proto` compilation with service/method discovery and unary CLI calls using protobuf JSON, metadata and HTTPS webpki roots.
 - Persistable response assertions for status, headers, body text and JSON Pointer values, evaluated by the runner without Node.js.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
 - Common response assertions now cover headers, cookies, status health, numeric/type/regex and negated expectations.
@@ -47,7 +48,7 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility.
 - Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.
 - OS keychain storage, persistent/manual cookie management and crash recovery.
-- OpenAPI external/cyclic references, GraphQL schema explorer, SSE reconnection/GUI console, WebSocket GUI/interactive console and gRPC.
+- OpenAPI external/cyclic references, GraphQL schema explorer, SSE reconnection/GUI console, WebSocket GUI/interactive console, gRPC reflection/streaming and gRPC GUI.
 - Local deterministic protocol test servers, fuzzing, benchmarks and packaging.
 
 ## Verification
