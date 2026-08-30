@@ -216,6 +216,11 @@ enum ImportKind {
         #[arg(short, long, default_value = ".")]
         output: PathBuf,
     },
+    Openapi {
+        input: PathBuf,
+        #[arg(short, long, default_value = ".")]
+        output: PathBuf,
+    },
     Curl {
         command: String,
         #[arg(short, long, default_value = ".")]
@@ -445,6 +450,11 @@ fn import_command(kind: ImportKind) -> Result<()> {
     let report = match kind {
         ImportKind::Collection { input, output } => import_postman_collection(input, output)?,
         ImportKind::Environment { input, output } => import_environment(input, output)?,
+        ImportKind::Openapi { input, output } => {
+            let report = postly_core::import_openapi(input, output)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            return Ok(());
+        }
         ImportKind::Curl {
             command,
             output,

@@ -1,0 +1,41 @@
+openapi: 3.0.3
+info:
+  title: Example API
+  version: 1.0.0
+servers:
+  - url: https://api.example.test/{version}
+    variables:
+      version:
+        default: v1
+paths:
+  /users:
+    get:
+      operationId: listUsers
+      summary: List users
+      tags:
+        - Users
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            example: 10
+    post:
+      operationId: createUser
+      tags:
+        - Users
+      security:
+        - token: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                name: Ada
+components:
+  securitySchemes:
+    token:
+      type: http
+      scheme: bearer

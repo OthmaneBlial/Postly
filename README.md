@@ -16,6 +16,7 @@ Postly is an open-source, Rust-first API development workspace designed around l
 - Local, human-readable TOML projects with one request per file.
 - Environment variables and Postman-style {{variable}} interpolation with precedence diagnostics.
 - Postman Collection v2.1 and environment import with a migration report.
+- OpenAPI 3 JSON/YAML import with generated requests and explicit warnings.
 - Headless commands for immediate requests, saved requests and sequential collection runs.
 - Metadata-only local history for saved request executions (`postly history`).
 - A native Rust desktop request workspace (`postly-gui`) using the same core.
@@ -38,6 +39,7 @@ Import an existing Postman export:
 ~~~bash
 cargo run -- import collection ./collection.json --output ./my-api
 cargo run -- import environment ./environment.json --output ./my-api
+cargo run -- import openapi ./openapi.yaml --output ./my-api
 cargo run -- import curl "curl -H 'Accept: application/json' https://example.com/health" --output ./my-api
 cargo run -- list ./my-api
 ~~~
@@ -66,7 +68,7 @@ Use CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 on 
 
 The long-term target is a credible local-first Postman replacement: a professional request workspace, Git-native collections, environments, scripting and tests, runner/CLI parity, Postman migration, OpenAPI, GraphQL, WebSockets, SSE and gRPC. Features are only documented as supported once executable behavior and tests exist.
 
-See docs/progress.md, docs/architecture.md, docs/migration-from-postman.md and docs/compatibility.md.
+See docs/progress.md, docs/architecture.md, docs/migration-from-postman.md, docs/openapi.md and docs/compatibility.md.
 
 ## Privacy
 

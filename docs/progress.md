@@ -23,6 +23,7 @@ Implemented:
 - common cURL commands can be parsed and imported without shell execution.
 - saved-request executions can be recorded and listed as ignored metadata-only local history.
 - native `postly-gui` request workspace with async send, editor tabs and response views.
+- OpenAPI 3 JSON/YAML import for common operations, parameters, JSON bodies and auth placeholders.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
 - runner iteration data from JSON objects/arrays plus pretty, JSON and JUnit reporters.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
@@ -33,7 +34,7 @@ Not yet implemented:
 - Script runtime and pm.* compatibility.
 - Postman tests/assertions and richer collection-runner semantics.
 - OS keychain storage, crash recovery and richer history controls.
-- OpenAPI, GraphQL, WebSockets, SSE and gRPC.
+- OpenAPI reference resolution, GraphQL, WebSockets, SSE and gRPC.
 - Local deterministic protocol test servers, fuzzing, benchmarks and packaging.
 
 ## Verification
@@ -44,5 +45,5 @@ cargo xtask check is the required validation command for this milestone. The CLI
 
 1. Add importer fixtures for more Postman body/auth/URL variants.
 2. Add script runtime research and an ADR before claiming any script compatibility.
-3. Add OpenAPI import and a safe, explicit test/assertion model.
+3. Add a safe, explicit test/assertion model.
 4. Add large-response handling, search and desktop accessibility QA.
