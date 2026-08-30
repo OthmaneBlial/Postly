@@ -10,7 +10,8 @@ use crate::{http::HttpResponse, model::Request};
 /// History deliberately excludes query parameters, headers, cookies, body,
 /// authentication and response content. The URL is reduced to its path and
 /// redacts credentials so the local convenience feature does not become a
-/// second secret store.
+/// second secret store. The optional request UUID permits a GUI to reopen the
+/// canonical saved file without embedding a request snapshot in history.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HistoryEntry {
     pub timestamp_unix_ms: u64,

@@ -438,6 +438,7 @@ impl PostlyApp {
                 }
                 self.status_message = "Request failed".to_owned();
                 self.response_error = Some(error);
+                self.refresh_history();
             }
         }
         false
