@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use postly_core::{
     import_curl_command, import_environment, import_postman_collection, run_requests, Auth,
     Collection, EngineOptions, Environment, EnvironmentVariable, HeaderEntry, HistoryEntry,
-    HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions, ScriptResult,
+    HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions, ScriptResult,
     ScriptTestResult, VariableContext, Workspace,
 };
 use serde_json::json;
@@ -56,6 +56,16 @@ struct NewRequestOptions {
     bearer: Option<String>,
     basic_user: Option<String>,
     basic_password: Option<String>,
+}
+
+struct HistoryOptions {
+    limit: usize,
+    search: Option<String>,
+    method: Option<String>,
+    status: Option<u16>,
+    errors_only: bool,
+    clear: bool,
+    output_json: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -143,6 +153,16 @@ enum Command {
         path: PathBuf,
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
+        #[arg(long, help = "Search request name, method or sanitized URL")]
+        search: Option<String>,
+        #[arg(long)]
+        method: Option<String>,
+        #[arg(long)]
+        status: Option<u16>,
+        #[arg(long)]
+        errors_only: bool,
+        #[arg(long, help = "Clear local metadata-only history")]
+        clear: bool,
         #[arg(long)]
         output_json: bool,
     },
@@ -347,8 +367,24 @@ async fn main() -> Result<()> {
         Command::History {
             path,
             limit,
+            search,
+            method,
+            status,
+            errors_only,
+            clear,
             output_json,
-        } => list_history(&path, limit, output_json),
+        } => list_history(
+            &path,
+            HistoryOptions {
+                limit,
+                search,
+                method,
+                status,
+                errors_only,
+                clear,
+                output_json,
+            },
+        ),
         Command::Run {
             path,
             environment,
@@ -588,10 +624,27 @@ fn list_workspace(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn list_history(path: &Path, limit: usize, output_json: bool) -> Result<()> {
+fn list_history(path: &Path, options: HistoryOptions) -> Result<()> {
     let workspace = Workspace::open(path)?;
-    let entries = workspace.history(limit)?;
-    if output_json {
+    if options.clear {
+        workspace.clear_history()?;
+        if options.output_json {
+            println!("{{\"cleared\":true}}");
+        } else {
+            println!("Cleared local request history.");
+        }
+        return Ok(());
+    }
+    let entries = workspace.history_filtered(
+        options.limit,
+        &HistoryFilter {
+            search: options.search,
+            method: options.method,
+            status: options.status,
+            errors_only: options.errors_only,
+        },
+    )?;
+    if options.output_json {
         println!("{}", serde_json::to_string_pretty(&entries)?);
         return Ok(());
     }

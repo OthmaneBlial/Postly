@@ -1,14 +1,14 @@
 use std::{
-    fs,
-    fs::OpenOptions,
-    io::{self, Write},
+    collections::VecDeque,
+    fs::{self, File, OpenOptions},
+    io::{self, BufRead, Write},
     path::{Path, PathBuf},
 };
 
 use thiserror::Error;
 
 use crate::{
-    history::HistoryEntry,
+    history::{HistoryEntry, HistoryFilter},
     model::{Collection, Environment, ProjectManifest, Request},
 };
 
@@ -17,6 +17,8 @@ const COLLECTION_FILE: &str = "postly.collection.toml";
 const ENVIRONMENT_SUFFIX: &str = ".postly-env.toml";
 const REQUEST_SUFFIX: &str = ".postly.toml";
 const HISTORY_FILE: &str = ".postly/history.jsonl";
+const MAX_HISTORY_ENTRIES: usize = 1_000;
+const MAX_HISTORY_BYTES: usize = 1_048_576;
 
 #[derive(Debug, Error)]
 pub enum WorkspaceError {
@@ -286,10 +288,19 @@ impl Workspace {
             path: path.clone(),
             source,
         })?;
+        self.compact_history(&path)?;
         Ok(path)
     }
 
     pub fn history(&self, limit: usize) -> Result<Vec<HistoryEntry>, WorkspaceError> {
+        self.history_filtered(limit, &HistoryFilter::default())
+    }
+
+    pub fn history_filtered(
+        &self,
+        limit: usize,
+        filter: &HistoryFilter,
+    ) -> Result<Vec<HistoryEntry>, WorkspaceError> {
         let path = self.history_path();
         if !path.is_file() || limit == 0 {
             return Ok(Vec::new());
@@ -309,12 +320,74 @@ impl Workspace {
             })
             .collect::<Result<Vec<_>, _>>()?;
         entries.reverse();
-        entries.truncate(limit);
-        Ok(entries)
+        Ok(entries
+            .into_iter()
+            .filter(|entry| filter.matches(entry))
+            .take(limit)
+            .collect())
+    }
+
+    pub fn clear_history(&self) -> Result<(), WorkspaceError> {
+        let path = self.history_path();
+        if !path.is_file() {
+            return Ok(());
+        }
+        OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .map_err(|source| WorkspaceError::Io { path, source })?;
+        Ok(())
     }
 
     fn manifest_path(&self) -> PathBuf {
         self.root.join(MANIFEST_FILE)
+    }
+
+    fn compact_history(&self, path: &Path) -> Result<(), WorkspaceError> {
+        let metadata = fs::metadata(path).map_err(|source| WorkspaceError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let file = File::open(path).map_err(|source| WorkspaceError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let mut retained = VecDeque::new();
+        let mut total_entries = 0_usize;
+        let mut retained_bytes = 0_usize;
+        for line in io::BufReader::new(file).lines() {
+            let line = line.map_err(|source| WorkspaceError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            total_entries += 1;
+            retained_bytes = retained_bytes.saturating_add(line.len() + 1);
+            retained.push_back(line);
+            while retained.len() > MAX_HISTORY_ENTRIES
+                || (retained_bytes > MAX_HISTORY_BYTES && retained.len() > 1)
+            {
+                if let Some(oldest) = retained.pop_front() {
+                    retained_bytes = retained_bytes.saturating_sub(oldest.len() + 1);
+                }
+            }
+        }
+        if metadata.len() <= MAX_HISTORY_BYTES as u64 && total_entries <= MAX_HISTORY_ENTRIES {
+            return Ok(());
+        }
+
+        let mut compacted = String::new();
+        for line in retained {
+            compacted.push_str(&line);
+            compacted.push('\n');
+        }
+        fs::write(path, compacted).map_err(|source| WorkspaceError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
     }
 
     fn write_toml<T: serde::Serialize>(
@@ -411,7 +484,10 @@ fn slugify(value: &str) -> Result<String, WorkspaceError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{history::HistoryEntry, model::Request};
+    use crate::{
+        history::{HistoryEntry, HistoryFilter},
+        model::Request,
+    };
 
     #[test]
     fn writes_and_reopens_git_friendly_request_files() {
@@ -460,5 +536,71 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].url, "https://[redacted]example.com/users");
         assert_eq!(entries[0].outcome, crate::HistoryOutcome::Error);
+    }
+
+    #[test]
+    fn filters_and_clears_local_history() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = Workspace::init(directory.path(), "Demo API").expect("init");
+        let success = Request::new("List users", "GET", "https://example.com/users");
+        let failure = Request::new("Create user", "POST", "https://example.com/users");
+        workspace
+            .record_history(&HistoryEntry::from_response(
+                &success,
+                &crate::HttpResponse {
+                    status: 200,
+                    status_text: "OK".to_owned(),
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                    content_type: None,
+                    duration_ms: 8,
+                    protocol: "HTTP/1.1".to_owned(),
+                    url: "https://example.com/users".to_owned(),
+                    cookies: Vec::new(),
+                },
+            ))
+            .expect("success history");
+        workspace
+            .record_history(&HistoryEntry::from_error(&failure, 13))
+            .expect("failure history");
+
+        let entries = workspace
+            .history_filtered(
+                10,
+                &HistoryFilter {
+                    method: Some("get".to_owned()),
+                    status: Some(200),
+                    ..HistoryFilter::default()
+                },
+            )
+            .expect("filtered history");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].request_name, "List users");
+
+        workspace.clear_history().expect("clear history");
+        assert!(workspace.history(10).expect("empty history").is_empty());
+    }
+
+    #[test]
+    fn bounds_history_to_the_newest_entries() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = Workspace::init(directory.path(), "Demo API").expect("init");
+        for index in 0..(MAX_HISTORY_ENTRIES + 5) {
+            let request = Request::new(
+                format!("Request {index}"),
+                "GET",
+                "https://example.com/health",
+            );
+            workspace
+                .record_history(&HistoryEntry::from_error(&request, index as u64))
+                .expect("history");
+        }
+
+        let entries = workspace.history(usize::MAX).expect("bounded history");
+        assert_eq!(entries.len(), MAX_HISTORY_ENTRIES);
+        assert_eq!(entries[0].request_name, "Request 1004");
+        assert!(!entries
+            .iter()
+            .any(|entry| entry.request_name == "Request 0"));
     }
 }

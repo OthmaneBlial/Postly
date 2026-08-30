@@ -22,6 +22,47 @@ pub struct HistoryEntry {
     pub outcome: HistoryOutcome,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HistoryFilter {
+    pub search: Option<String>,
+    pub method: Option<String>,
+    pub status: Option<u16>,
+    pub errors_only: bool,
+}
+
+impl HistoryFilter {
+    pub fn matches(&self, entry: &HistoryEntry) -> bool {
+        if let Some(method) = self.method.as_deref().filter(|method| !method.is_empty()) {
+            if !entry.method.eq_ignore_ascii_case(method) {
+                return false;
+            }
+        }
+        if let Some(status) = self.status {
+            if entry.status != Some(status) {
+                return false;
+            }
+        }
+        if self.errors_only && entry.outcome != HistoryOutcome::Error {
+            return false;
+        }
+        if let Some(search) = self.search.as_deref().filter(|search| !search.is_empty()) {
+            let search = search.to_ascii_lowercase();
+            let fields = [
+                entry.request_name.as_str(),
+                entry.method.as_str(),
+                entry.url.as_str(),
+            ];
+            if !fields
+                .iter()
+                .any(|field| field.to_ascii_lowercase().contains(&search))
+            {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryOutcome {
@@ -98,5 +139,45 @@ mod tests {
             sanitize_url("{{baseUrl}}/health?token=secret"),
             "{{baseUrl}}/health"
         );
+    }
+
+    #[test]
+    fn filters_history_by_search_method_status_and_error_state() {
+        let success = HistoryEntry {
+            timestamp_unix_ms: 2,
+            request_name: "List users".to_owned(),
+            method: "GET".to_owned(),
+            url: "https://example.com/users".to_owned(),
+            status: Some(200),
+            duration_ms: 12,
+            outcome: HistoryOutcome::Completed,
+        };
+        let failure = HistoryEntry {
+            timestamp_unix_ms: 1,
+            request_name: "Create user".to_owned(),
+            method: "POST".to_owned(),
+            url: "https://example.com/users".to_owned(),
+            status: None,
+            duration_ms: 7,
+            outcome: HistoryOutcome::Error,
+        };
+
+        assert!(HistoryFilter {
+            search: Some("LIST".to_owned()),
+            method: Some("get".to_owned()),
+            status: Some(200),
+            ..HistoryFilter::default()
+        }
+        .matches(&success));
+        assert!(!HistoryFilter {
+            search: Some("LIST".to_owned()),
+            ..HistoryFilter::default()
+        }
+        .matches(&failure));
+        assert!(HistoryFilter {
+            errors_only: true,
+            ..HistoryFilter::default()
+        }
+        .matches(&failure));
     }
 }
