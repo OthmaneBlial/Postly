@@ -15,6 +15,7 @@ Build requests. Inspect real responses. Commit the workflow with your code.
 
 <p>
   <a href="#quick-start">Try it in 60 seconds</a> ·
+  <a href="website/index.html">Open the project site</a> ·
   <a href="docs/migration-from-postman.md">Migrate from Postman</a> ·
   <a href="docs/compatibility.md">See compatibility</a> ·
   <a href="docs/progress.md">Read the evidence</a>
@@ -78,6 +79,8 @@ This repository contains working vertical slices, not a static interface mockup.
   with guarded local references, and cURL paste/copy.
 - **API documentation:** generate deterministic local Markdown from collections,
   request descriptions, parameters, headers and response-example metadata.
+- **Project site:** a responsive, dependency-free static showcase with SEO
+  metadata, JSON-LD, reduced-motion support and source-backed navigation.
 - **Code snippets:** generate reviewable cURL, JavaScript fetch, Python
   requests, Rust reqwest, Go, Java, C# and PHP from the same saved request
   model.
@@ -94,6 +97,19 @@ This repository contains working vertical slices, not a static interface mockup.
 
 The [living progress log](docs/progress.md) records what is implemented, what was
 verified locally and which release gates still require external validation.
+
+## Project site
+
+The repository includes a dependency-free static showcase in [`website/`](website/)
+with responsive layout, accessible navigation, protocol highlights and honest
+links back to the source documentation. Preview it locally with:
+
+```bash
+python3 -m http.server 4173 --directory website
+```
+
+The site is source-ready but not presented as a deployed public URL until a
+separate hosting and live-QA pass is completed.
 
 ## Quick start
 

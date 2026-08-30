@@ -114,6 +114,9 @@ Implemented:
 - `postly docs` generates deterministic local Markdown for collections while
   omitting header/auth values and response bodies by default; example bodies
   require an explicit opt-in.
+- The dependency-free `website/` showcase has responsive navigation, SEO
+  metadata, JSON-LD and source-backed documentation links; local browser QA
+  covers 390px and 1440px layouts, mobile menu state and response-tab switching.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:

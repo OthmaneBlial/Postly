@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101315">
+    <meta name="description" content="Postly is an open-source, local-first Postman alternative without an account. Build, test and document REST, GraphQL, SSE, WebSocket and gRPC workflows with a native Rust core.">
+    <meta property="og:title" content="Postly — The Postman alternative without an account">
+    <meta property="og:description" content="A native, local-first API workspace for developers who want their requests and collections under control.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://github.com/OthmaneBlial/Postly">
+    <meta name="twitter:card" content="summary">
+    <link rel="canonical" href="https://github.com/OthmaneBlial/Postly">
+    <link rel="stylesheet" href="styles.css">
+    <title>Postly — Open-source Postman alternative without an account</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Postly",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS, Linux, Windows",
+        "description": "An open-source, local-first API client and testing workspace powered by Rust.",
+        "isAccessibleForFree": true,
+        "license": "https://opensource.org/license/mit",
+        "codeRepository": "https://github.com/OthmaneBlial/Postly",
+        "url": "https://github.com/OthmaneBlial/Postly"
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <div class="noise" aria-hidden="true"></div>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="Postly home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>postly</span>
+          <small>API WORKSPACE</small>
+        </a>
+        <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle navigation</span>
+        </button>
+        <nav id="site-nav" class="site-nav" aria-label="Primary navigation">
+          <a href="#why">Why Postly</a>
+          <a href="#workflow">Workflow</a>
+          <a href="#protocols">Protocols</a>
+          <a href="https://github.com/OthmaneBlial/Postly/blob/main/docs/migration-from-postman.md">Migration</a>
+          <a href="https://github.com/OthmaneBlial/Postly/blob/main/docs/compatibility.md">Evidence</a>
+        </nav>
+        <a class="nav-cta" href="https://github.com/OthmaneBlial/Postly">
+          View source <span aria-hidden="true">↗</span>
+        </a>
+      </header>
+
+      <main id="main-content">
+        <section id="top" class="hero section">
+          <div class="hero-copy reveal">
+            <p class="eyebrow"><span class="pulse"></span> LOCAL-FIRST API DEVELOPMENT</p>
+            <h1>Ship the API.<br><em>Keep the<br class="mobile-break"> workspace.</em></h1>
+            <p class="hero-lede">
+              Postly is the open-source Postman alternative without an account:
+              a native Rust core, Git-friendly collections and a desktop/CLI
+              workflow that stays close to your code.
+            </p>
+            <div class="hero-actions">
+              <button class="command-button" type="button" data-copy="cargo run -- init ./my-api --name &quot;My API&quot;">
+                <span class="prompt" aria-hidden="true">$</span>
+                <code>cargo run -- init ./my-api</code>
+                <span class="copy-label">Copy</span>
+              </button>
+              <a class="text-link" href="https://github.com/OthmaneBlial/Postly#readme">Read the README <span aria-hidden="true">↗</span></a>
+            </div>
+            <p class="copy-status" aria-live="polite"></p>
+            <div class="hero-signals" aria-label="Product principles">
+              <span>NO ACCOUNT</span>
+              <span>LOCAL FILES</span>
+              <span>RUST CORE</span>
+            </div>
+          </div>
+
+          <div class="hero-visual reveal reveal-delay" aria-label="Illustration of the Postly API workspace">
+            <div class="visual-label label-top">POSTLY / WORKSPACE <b>01</b></div>
+            <div class="app-window">
+              <div class="window-bar">
+                <span class="window-dots"><i></i><i></i><i></i></span>
+                <span class="window-title">my-api <b>/</b> users.postly.toml</span>
+                <span class="window-status"><i></i> local</span>
+              </div>
+              <div class="window-body">
+                <aside class="mini-sidebar">
+                  <div class="mini-logo">P<span>·</span></div>
+                  <span class="side-line active"></span>
+                  <span class="side-line"></span>
+                  <span class="side-line short"></span>
+                  <span class="side-divider"></span>
+                  <span class="side-line"></span>
+                  <span class="side-line short"></span>
+                </aside>
+                <div class="workspace-preview">
+                  <div class="preview-tabs">
+                    <span class="preview-tab active-tab">List users <b>×</b></span>
+                    <span class="preview-tab">Create user <b>×</b></span>
+                    <span class="preview-add">+</span>
+                  </div>
+                  <div class="request-line">
+                    <span class="method-pill">GET</span>
+                    <span class="request-url">{{baseUrl}}/users</span>
+                    <span class="send-pill">SEND <b>⌘↵</b></span>
+                  </div>
+                  <div class="editor-tabs">
+                    <span class="editor-tab active-editor">Params</span>
+                    <span class="editor-tab">Headers <b>2</b></span>
+                    <span class="editor-tab">Body</span>
+                    <span class="editor-tab">Tests</span>
+                  </div>
+                  <div class="editor-grid">
+                    <span class="grid-heading">KEY</span><span class="grid-heading">VALUE</span>
+                    <span class="grid-value">limit</span><span class="grid-value accent-text">20</span>
+                    <span class="grid-value">cursor</span><span class="grid-value muted-text">{{next}}</span>
+                  </div>
+                  <div class="response-card">
+                    <div class="response-head">
+                      <button class="response-switch active-response" type="button" data-preview-tab="response">Response</button>
+                      <button class="response-switch" type="button" data-preview-tab="headers">Headers</button>
+                      <span class="response-meta"><i></i> 200 OK <b>·</b> 84 ms</span>
+                    </div>
+                    <div class="response-panel active-panel" data-preview-panel="response">
+                      <span class="json-line"><b>{</b></span>
+                      <span class="json-line indent"><em>"data"</em>: <b>[</b></span>
+                      <span class="json-line double-indent"><em>"id"</em>: <strong>42</strong>, <em>"name"</em>: <strong>"Ada"</strong></span>
+                      <span class="json-line indent"><b>]</b></span>
+                      <span class="json-line"><b>}</b></span>
+                    </div>
+                    <div class="response-panel" data-preview-panel="headers">
+                      <span class="header-line"><em>content-type</em><strong>application/json</strong></span>
+                      <span class="header-line"><em>cache-control</em><strong>no-store</strong></span>
+                      <span class="header-line"><em>x-request-id</em><strong>local-42</strong></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="visual-label label-bottom">TOML / GIT-NATIVE <b>↘</b></div>
+            <span class="orbit orbit-one" aria-hidden="true"></span>
+            <span class="orbit orbit-two" aria-hidden="true"></span>
+          </div>
+        </section>
+
+        <section class="evidence-strip" aria-label="Postly product principles">
+          <div><span class="evidence-number">01</span><strong>One request</strong><small>to first response</small></div>
+          <div><span class="evidence-number">02</span><strong>One folder</strong><small>per workflow</small></div>
+          <div><span class="evidence-number">03</span><strong>One repo</strong><small>for the project</small></div>
+          <p>Built for the moment<br>after “it works”.</p>
+        </section>
+
+        <section id="why" class="feature-section section">
+          <div class="section-intro reveal">
+            <p class="eyebrow">WHY POSTLY <span>/ 02</span></p>
+            <h2>Your API work<br>should be <em>portable.</em></h2>
+            <p>Keep the useful parts of an API client in the same place as the
+              API itself: inspectable files, explicit environments and a
+              repeatable command line.</p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature-card feature-card-dark reveal">
+              <span class="card-index">A / OWNERSHIP</span>
+              <div class="card-icon icon-lock" aria-hidden="true">⌁</div>
+              <h3>No account<br>required.</h3>
+              <p>Start locally. No signup wall, hosted workspace or mandatory
+                telemetry stands between you and the first request.</p>
+              <span class="card-foot">LOCAL BY DEFAULT <b>↗</b></span>
+            </article>
+            <article class="feature-card feature-card-lime reveal reveal-delay-short">
+              <span class="card-index">B / COLLABORATION</span>
+              <div class="card-icon icon-branch" aria-hidden="true">⑂</div>
+              <h3>Git is the<br>workspace.</h3>
+              <p>Human-readable TOML, one request per file and deterministic
+                layouts make API workflows reviewable with ordinary diffs.</p>
+              <span class="card-foot">COMMIT THE CONTEXT <b>↗</b></span>
+            </article>
+            <article class="feature-card feature-card-paper reveal reveal-delay">
+              <span class="card-index">C / LEVERAGE</span>
+              <div class="card-icon icon-terminal" aria-hidden="true">&gt;_</div>
+              <h3>Desktop when<br>you look. CLI when<br>you ship.</h3>
+              <p>Both surfaces share the same Rust request model, runner,
+                environments and evidence-driven behavior.</p>
+              <span class="card-foot">ONE CORE / TWO MODES <b>↗</b></span>
+            </article>
+          </div>
+        </section>
+
+        <section id="workflow" class="workflow-section section">
+          <div class="workflow-rail reveal">
+            <p class="eyebrow">THE WORKFLOW <span>/ 03</span></p>
+            <span class="rail-number">03</span>
+            <p class="rail-note">A calm surface for<br>high-context work.</p>
+          </div>
+          <div class="workflow-content">
+            <div class="workflow-copy reveal">
+              <h2>From first call<br>to <em>repeatable proof.</em></h2>
+              <p>Postly is shaped around the whole API-development loop, not
+                only the send button.</p>
+            </div>
+            <div class="steps">
+              <article class="step reveal">
+                <span class="step-number">01</span>
+                <div><h3>Compose</h3><p>Params, headers, bodies, cookies,
+                  common auth and variables in a durable request model.</p></div>
+                <span class="step-arrow" aria-hidden="true">↗</span>
+              </article>
+              <article class="step reveal reveal-delay-short">
+                <span class="step-number">02</span>
+                <div><h3>Inspect</h3><p>Pretty or raw responses, headers,
+                  cookies, timing, search and bounded local snapshots.</p></div>
+                <span class="step-arrow" aria-hidden="true">↗</span>
+              </article>
+              <article class="step reveal reveal-delay">
+                <span class="step-number">03</span>
+                <div><h3>Prove</h3><p>Assertions, scripts, iteration data,
+                  folder runs, JSON/JUnit reports and a local mock server.</p></div>
+                <span class="step-arrow" aria-hidden="true">↗</span>
+              </article>
+              <article class="step reveal reveal-delay-long">
+                <span class="step-number">04</span>
+                <div><h3>Commit</h3><p>Keep the collection beside the code,
+                  review it in Git and reopen the same project tomorrow.</p></div>
+                <span class="step-arrow" aria-hidden="true">↗</span>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section id="protocols" class="protocol-section section">
+          <div class="protocol-header reveal">
+            <p class="eyebrow">ONE LOCAL SURFACE <span>/ 04</span></p>
+            <h2>Meet the API<br>where it <em>actually lives.</em></h2>
+          </div>
+          <div class="protocol-list">
+            <a class="protocol-row reveal" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/collections.md">
+              <span class="protocol-num">01</span><strong>REST / HTTP</strong>
+              <span class="protocol-desc">Bodies, auth, cookies, redirects, TLS, proxy and response evidence.</span><b>↗</b>
+            </a>
+            <a class="protocol-row reveal reveal-delay-short" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/graphql.md">
+              <span class="protocol-num">02</span><strong>GRAPHQL</strong>
+              <span class="protocol-desc">Structured queries, variables, operation names and schema introspection.</span><b>↗</b>
+            </a>
+            <a class="protocol-row reveal reveal-delay" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/sse.md">
+              <span class="protocol-num">03</span><strong>STREAMING</strong>
+              <span class="protocol-desc">SSE events and WebSocket messages with bounded history and cancellation.</span><b>↗</b>
+            </a>
+            <a class="protocol-row reveal reveal-delay-long" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/grpc.md">
+              <span class="protocol-num">04</span><strong>gRPC</strong>
+              <span class="protocol-desc">Local proto discovery, reflection, metadata and finite streaming calls.</span><b>↗</b>
+            </a>
+          </div>
+          <div class="protocol-note reveal">
+            <span class="note-mark">P</span>
+            <p>Postly is early and ambitious. Compatibility is published as
+              executable evidence, not a “100% compatible” badge.</p>
+              <a href="https://github.com/OthmaneBlial/Postly/blob/main/docs/compatibility.md">See the matrix <span aria-hidden="true">↗</span></a>
+          </div>
+        </section>
+
+        <section id="install" class="install-section section">
+          <div class="install-panel reveal">
+            <div class="install-copy">
+              <p class="eyebrow">START LOCAL <span>/ 05</span></p>
+              <h2>There is no<br>account <em>step.</em></h2>
+              <p>Build from source today, initialize a project and make the
+                first request. The repository documents the current release
+                gates instead of pretending an unpublished package exists.</p>
+              <a class="button button-dark" href="https://github.com/OthmaneBlial/Postly#quick-start">Follow the quick start <span aria-hidden="true">↗</span></a>
+            </div>
+            <div class="terminal">
+              <div class="terminal-top"><span><i></i><i></i><i></i></span><small>postly / local shell</small></div>
+              <pre><code><span class="terminal-muted"># clone the workspace</span>
+<span class="terminal-command">git clone</span> https://github.com/OthmaneBlial/Postly.git
+<span class="terminal-command">cd</span> Postly
+
+<span class="terminal-muted"># create your local API project</span>
+<span class="terminal-command">cargo run -- init</span> ./my-api --name <span class="terminal-string">"My API"</span>
+
+<span class="terminal-muted"># send something real</span>
+<span class="terminal-command">cargo run -- request</span> https://api.example.test/health</code></pre>
+              <span class="terminal-stamp">NO CLOUD<br>REQUIRED</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="closing-section section">
+          <div class="closing-mark reveal" aria-hidden="true">P<span>·</span></div>
+          <p class="eyebrow reveal">POSTLY / OPEN SOURCE / LOCAL FIRST</p>
+          <h2 class="reveal">Your API deserves<br>a <em>home you own.</em></h2>
+          <div class="closing-actions reveal">
+            <a class="button button-lime" href="https://github.com/OthmaneBlial/Postly">Explore the repository <span aria-hidden="true">↗</span></a>
+            <a class="button button-outline" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/migration-from-postman.md">Migrate from Postman <span aria-hidden="true">↗</span></a>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="footer-brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>postly</span></div>
+        <p>Open-source API development without the account wall.</p>
+        <div class="footer-links">
+          <a href="https://github.com/OthmaneBlial/Postly">GitHub ↗</a>
+          <a href="https://github.com/OthmaneBlial/Postly/blob/main/docs/privacy.md">Privacy</a>
+          <a href="https://github.com/OthmaneBlial/Postly/blob/main/LICENSE">MIT License</a>
+        </div>
+        <small>© 2026 Postly / built in public</small>
+      </footer>
+    </div>
+    <script src="script.js" defer></script>
+  </body>
+</html>
