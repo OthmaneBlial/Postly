@@ -31,6 +31,9 @@ Implemented:
 - postly env set --secret stores new environment secrets in the OS credential
   store and persists only workspace-scoped opaque references; CLI and GUI
   resolution share the same backend, while secure Postman export is explicit.
+- `postly env set --secret-stdin KEY` accepts secret values without command-line
+  arguments, and `postly env migrate --key/--all` migrates legacy plaintext
+  values into the OS credential store while preserving enabled flags.
 - common cURL commands can be parsed and imported without shell execution.
 - Native GUI cURL paste import creates an unsaved draft, and the current request can be copied as a shell-quoted cURL command with explicit warnings for non-materialized auth.
 - saved-request executions can be recorded, searched, filtered, cleared and retained as bounded ignored metadata-only local history.
@@ -84,8 +87,7 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.
-- secret migration from legacy plaintext environments, stdin-safe secret entry
-  and crash recovery.
+- crash recovery and transactional workspace restore.
 - Authorization Code/PKCE, Device Code and refresh-token OAuth flows; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in the CLI.
 - OpenAPI cyclic/remote references and deeper protocol-specific GUI tooling.
 - Local deterministic protocol test server tooling, cross-client/memory

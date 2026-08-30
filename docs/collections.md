@@ -50,6 +50,25 @@ postly env set --workspace ./my-api --name Local \
   --secret API_TOKEN="$API_TOKEN"
 ~~~
 
+For a secret that must not appear in shell history or process arguments, pipe
+one value per `--secret-stdin` key:
+
+~~~bash
+printf '%s\n' "$API_TOKEN" | postly env set --workspace ./my-api --name Local \
+  --secret-stdin API_TOKEN
+~~~
+
+To migrate an imported or legacy plaintext value in place, name it explicitly:
+
+~~~bash
+postly env migrate --workspace ./my-api --name Local --key API_TOKEN
+~~~
+
+`postly env migrate --all` migrates only variables marked `secret` by an import;
+it does not guess that ordinary values such as `baseUrl` are credentials. The
+command preserves each variable's enabled flag and writes the environment file
+only after the value has been stored successfully.
+
 The keychain namespace is derived from the canonical workspace path. Moving or
 copying a workspace therefore requires setting its secrets again; a reference
 from another workspace is rejected. Older environment files without a

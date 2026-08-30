@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{self, IsTerminal, Read, Write},
+    io::{self, BufRead, BufReader, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -811,6 +811,30 @@ enum EnvKind {
         values: Vec<String>,
         #[arg(long = "secret")]
         secrets: Vec<String>,
+        #[arg(
+            long = "secret-stdin",
+            value_name = "KEY",
+            help = "Read one secret value per key from stdin; the value is never a command-line argument"
+        )]
+        secret_stdin: Vec<String>,
+    },
+    /// Migrate legacy plaintext environment values into the OS credential store.
+    Migrate {
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(
+            long = "key",
+            value_name = "KEY",
+            help = "Migrate this plaintext variable; repeat for multiple keys"
+        )]
+        keys: Vec<String>,
+        #[arg(
+            long,
+            help = "Migrate every enabled or disabled variable marked as secret"
+        )]
+        all: bool,
     },
 }
 
@@ -1127,7 +1151,14 @@ async fn main() -> Result<()> {
                 name,
                 values,
                 secrets,
-            } => set_environment(&workspace, &name, &values, &secrets),
+                secret_stdin,
+            } => set_environment(&workspace, &name, &values, &secrets, &secret_stdin),
+            EnvKind::Migrate {
+                workspace,
+                name,
+                keys,
+                all,
+            } => migrate_environment_secrets(&workspace, &name, &keys, all),
         },
         Command::List { path } => list_workspace(&path),
         Command::Search {
@@ -2190,7 +2221,9 @@ fn set_environment(
     name: &str,
     values: &[String],
     secrets: &[String],
+    secret_stdin: &[String],
 ) -> Result<()> {
+    let stdin_secrets = read_secret_stdin(secret_stdin)?;
     let workspace = Workspace::open_or_init(workspace_path, "Postly workspace")?;
     let secret_store = SecretStore::for_workspace(workspace.root());
     let mut environment = workspace
@@ -2215,6 +2248,14 @@ fn set_environment(
             EnvironmentVariable::keychain(reference.into_string()),
         );
     }
+    for (key, value) in stdin_secrets {
+        let reference = secret_store
+            .set_environment_secret(name, &key, &value)
+            .with_context(|| format!("could not store secret variable {key} in the OS keychain"))?;
+        environment
+            .variables
+            .insert(key, EnvironmentVariable::keychain(reference.into_string()));
+    }
     let path = workspace.save_environment(&environment)?;
     println!(
         "Saved environment {} with {} variables at {}",
@@ -2222,6 +2263,108 @@ fn set_environment(
         environment.variables.len(),
         path.display()
     );
+    Ok(())
+}
+
+fn read_secret_stdin(keys: &[String]) -> Result<Vec<(String, String)>> {
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let stdin = io::stdin();
+    let mut reader = BufReader::new(stdin.lock());
+    read_secret_lines(&mut reader, keys)
+}
+
+fn read_secret_lines<R: BufRead>(reader: &mut R, keys: &[String]) -> Result<Vec<(String, String)>> {
+    const MAX_SECRET_BYTES: usize = 1024 * 1024;
+    let mut assignments = Vec::with_capacity(keys.len());
+    for raw_key in keys {
+        let key = parse_secret_key(raw_key)?.to_owned();
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 {
+            bail!("stdin ended before a value was provided for secret variable {key}");
+        }
+        if line.len() > MAX_SECRET_BYTES {
+            bail!("stdin secret value for {key} exceeds {MAX_SECRET_BYTES} bytes");
+        }
+        let value = line.strip_suffix('\n').unwrap_or(&line);
+        let value = value.strip_suffix('\r').unwrap_or(value).to_owned();
+        assignments.push((key, value));
+    }
+    Ok(assignments)
+}
+
+fn migrate_environment_secrets(
+    workspace_path: &Path,
+    name: &str,
+    keys: &[String],
+    all: bool,
+) -> Result<()> {
+    if all && !keys.is_empty() {
+        bail!("choose either --all or one or more --key values, not both");
+    }
+    if !all && keys.is_empty() {
+        bail!("environment secret migration requires --key KEY or --all");
+    }
+
+    let workspace = Workspace::open(workspace_path)?;
+    let (_, mut environment) = workspace
+        .environments()?
+        .into_iter()
+        .find(|(_, environment)| {
+            environment.name == name || environment.name.eq_ignore_ascii_case(name)
+        })
+        .with_context(|| format!("environment not found: {name}"))?;
+    let secret_store = SecretStore::for_workspace(workspace.root());
+    let requested = if all {
+        environment
+            .variables
+            .iter()
+            .filter(|(_, variable)| {
+                variable.secret && variable.secret_ref.is_none() && !variable.value.is_empty()
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>()
+    } else {
+        keys.iter()
+            .map(|key| parse_secret_key(key).map(str::to_owned))
+            .collect::<Result<Vec<_>>>()?
+    };
+
+    let mut migrated = 0usize;
+    let mut already_secure = 0usize;
+    for key in requested {
+        let variable = environment
+            .variables
+            .get_mut(&key)
+            .with_context(|| format!("environment variable not found: {key}"))?;
+        if variable.secret_ref.is_some() {
+            already_secure += 1;
+            continue;
+        }
+        if variable.value.is_empty() {
+            bail!("environment variable {key} has no plaintext value to migrate");
+        }
+        let enabled = variable.enabled;
+        let value = variable.value.clone();
+        let reference = secret_store
+            .set_environment_secret(&environment.name, &key, &value)
+            .with_context(|| format!("could not store secret variable {key} in the OS keychain"))?;
+        *variable = EnvironmentVariable::keychain(reference.into_string());
+        variable.enabled = enabled;
+        migrated += 1;
+    }
+
+    if migrated > 0 {
+        workspace.save_environment(&environment)?;
+    }
+    println!(
+        "Migrated {migrated} secret variable(s) in environment {}.",
+        environment.name
+    );
+    if already_secure > 0 {
+        println!("Skipped {already_secure} variable(s) already backed by the OS credential store.");
+    }
     Ok(())
 }
 
@@ -2606,6 +2749,17 @@ fn parse_assignment(value: &str) -> Result<(&str, &str)> {
     Ok((key.trim(), value))
 }
 
+fn parse_secret_key(value: &str) -> Result<&str> {
+    let key = value.trim();
+    if key.is_empty() {
+        bail!("environment variable key cannot be empty");
+    }
+    if key.contains('=') {
+        bail!("--secret-stdin and --key expect a variable name, not KEY=VALUE");
+    }
+    Ok(key)
+}
+
 fn parse_auth_flags(
     bearer: Option<String>,
     basic_user: Option<String>,
@@ -2794,6 +2948,32 @@ mod tests {
         )
         .expect_err("incomplete OAuth flags");
         assert!(error.to_string().contains("--oauth-client-secret"));
+    }
+
+    #[test]
+    fn reads_secret_values_from_stdin_without_assignment_syntax() {
+        let mut reader = io::Cursor::new("first-value\r\nsecond-value\n");
+        let keys = vec!["TOKEN".to_owned(), "CLIENT_SECRET".to_owned()];
+        assert_eq!(
+            read_secret_lines(&mut reader, &keys).expect("stdin secrets"),
+            vec![
+                ("TOKEN".to_owned(), "first-value".to_owned()),
+                ("CLIENT_SECRET".to_owned(), "second-value".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_secret_stdin_key_assignment_and_missing_values() {
+        let mut reader = io::Cursor::new("");
+        let error = read_secret_lines(&mut reader, &["TOKEN=leaked".to_owned()])
+            .expect_err("assignment syntax should fail");
+        assert!(error.to_string().contains("variable name"));
+
+        let mut reader = io::Cursor::new("");
+        let error = read_secret_lines(&mut reader, &["TOKEN".to_owned()])
+            .expect_err("missing stdin value should fail");
+        assert!(error.to_string().contains("stdin ended"));
     }
 
     #[derive(Clone, PartialEq, prost::Message)]

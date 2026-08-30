@@ -89,6 +89,14 @@ postly env set --workspace ./my-api --name Local \
   --set baseUrl=https://api.example.com \
   --secret token="$API_TOKEN"
 
+# Keep the secret out of shell history and process arguments.
+printf '%s\n' "$API_TOKEN" | postly env set --workspace ./my-api --name Local \
+  --secret-stdin token
+
+# Migrate an imported legacy secret explicitly.
+postly env migrate --workspace ./my-api --name Local --key token
+postly env migrate --workspace ./my-api --name Local --all
+
 postly run ./my-api --environment Local \
   --proxy http://127.0.0.1:8080 \
   --ca-cert ./certs/company-ca.pem \
@@ -100,7 +108,10 @@ are written to the OS credential store and the file stores only an opaque
 workspace-scoped reference; Postly fails rather than silently falling back to a
 new plaintext secret when the store is unavailable. The value can still be
 exposed by shell history or process arguments, so use a controlled shell for
-high-risk credentials. Certificate options
+high-risk credentials; prefer `--secret-stdin KEY` for non-interactive safe
+entry. `env migrate --key KEY` moves an existing plaintext value to the OS
+credential store without printing it, while `--all` migrates only imported
+variables marked as secrets. Certificate options
 read PEM files from disk; private-key contents are never command-line output
 or history data. Request, GraphQL, SSE, send and run accept the same
 HTTP proxy and certificate flags where the transport applies.

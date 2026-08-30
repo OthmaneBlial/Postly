@@ -57,7 +57,8 @@ This repository contains working vertical slices, not a static interface mockup.
   including variable resolution and local expiry-aware token caching.
 - **Privacy-aware environments:** plain values stay in ignored local files;
   `postly env set --secret` stores new values in the OS credential store and keeps
-  only an opaque workspace-scoped reference in the project.
+  only an opaque workspace-scoped reference in the project; `--secret-stdin` and
+  explicit legacy-secret migration avoid putting values in shell arguments.
 - **Transport controls:** explicit insecure-TLS opt-in for supported HTTP flows,
   verified HTTPS, custom PEM CAs, combined PEM client identities and HTTP(S)
   proxy routing, with actionable diagnostics.
