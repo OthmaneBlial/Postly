@@ -15,12 +15,13 @@ use postly_core::{
     parse_graphql_response, parse_graphql_schema, parse_variables_json, run_requests,
     schema_introspection_query, Auth, Collection, EngineOptions, Environment, EnvironmentVariable,
     GraphqlRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome,
-    HttpEngine, Request, RequestBody, RunnerOptions, ScriptResult, ScriptTestResult, SecretStore,
-    SseParser, VariableContext, Workspace,
+    HttpEngine, Request, RequestBody, ResponseExample, RunnerOptions, ScriptResult,
+    ScriptTestResult, SecretStore, SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{
@@ -661,6 +662,17 @@ enum Command {
         #[arg(long)]
         output_json: bool,
     },
+    /// Serve saved response examples as a deterministic local HTTP mock.
+    Mock {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        #[arg(long, default_value_t = 3000)]
+        port: u16,
+        #[arg(long, help = "Serve one request, then exit; useful for local tests")]
+        once: bool,
+    },
     /// Execute every saved request in a collection, sequentially.
     Run {
         #[arg(default_value = ".")]
@@ -1187,6 +1199,12 @@ async fn main() -> Result<()> {
                 output_json,
             },
         ),
+        Command::Mock {
+            path,
+            host,
+            port,
+            once,
+        } => run_mock_server(&path, &host, port, once).await,
         Command::Run {
             path,
             environment,
@@ -1233,6 +1251,261 @@ fn init_workspace(path: &Path, name: &str) -> Result<()> {
     println!("Created collection at {}", collection.directory.display());
     println!("No account or cloud service is required.");
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct MockRoute {
+    method: String,
+    path: String,
+    example: ResponseExample,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MockResponse {
+    status: u16,
+    status_text: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    delay_ms: u64,
+}
+
+fn mock_workspace_and_filter(path: &Path) -> Result<(Workspace, Option<PathBuf>)> {
+    if path.join("postly.toml").is_file() {
+        return Ok((Workspace::open(path)?, None));
+    }
+    if path.join("postly.collection.toml").is_file() {
+        let collection = path
+            .canonicalize()
+            .with_context(|| format!("could not resolve mock collection {}", path.display()))?;
+        let workspace_root = collection
+            .parent()
+            .and_then(Path::parent)
+            .context("mock collection is not inside a Postly workspace")?;
+        return Ok((Workspace::open(workspace_root)?, Some(collection)));
+    }
+    bail!(
+        "{} is neither a Postly workspace nor a collection directory",
+        path.display()
+    )
+}
+
+fn load_mock_routes(path: &Path) -> Result<Vec<MockRoute>> {
+    let (workspace, collection_filter) = mock_workspace_and_filter(path)?;
+    let mut routes = Vec::new();
+    for collection in workspace.collections()? {
+        if collection_filter.as_ref().is_some_and(|filter| {
+            filter
+                != &collection
+                    .directory
+                    .canonicalize()
+                    .unwrap_or_else(|_| collection.directory.clone())
+        }) {
+            continue;
+        }
+        for (_, request) in workspace.requests(&collection)? {
+            let Some(route_path) = mock_route_path(&request.url) else {
+                continue;
+            };
+            for example in request.examples {
+                routes.push(MockRoute {
+                    method: request.method.to_ascii_uppercase(),
+                    path: route_path.clone(),
+                    example,
+                });
+            }
+        }
+    }
+    if routes.is_empty() {
+        bail!(
+            "no saved response examples found under {}; import or save examples before starting the mock",
+            path.display()
+        );
+    }
+    Ok(routes)
+}
+
+fn mock_route_path(raw_url: &str) -> Option<String> {
+    if let Ok(url) = url::Url::parse(raw_url) {
+        return Some(if url.path().is_empty() {
+            "/".to_owned()
+        } else {
+            url.path().to_owned()
+        });
+    }
+    let template_end = raw_url.find("}}")? + 2;
+    let suffix = raw_url
+        .get(template_end..)?
+        .split('?')
+        .next()
+        .unwrap_or_default();
+    if suffix.is_empty() {
+        Some("/".to_owned())
+    } else if suffix.starts_with('/') {
+        Some(suffix.to_owned())
+    } else {
+        None
+    }
+}
+
+fn mock_response_for(routes: &[MockRoute], method: &str, target: &str) -> MockResponse {
+    let path = target.split('?').next().unwrap_or("/");
+    let method = method.to_ascii_uppercase();
+    let Some(route) = routes
+        .iter()
+        .find(|route| route.method == method && route.path == path)
+    else {
+        return MockResponse {
+            status: 404,
+            status_text: "Not Found".to_owned(),
+            headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+            body: br#"{"error":"No saved mock example matches this method and path"}"#.to_vec(),
+            delay_ms: 0,
+        };
+    };
+    let example = &route.example;
+    let mut headers = example
+        .headers
+        .iter()
+        .filter(|header| {
+            header.enabled
+                && !header.key.contains('\r')
+                && !header.key.contains('\n')
+                && !header.value.contains('\r')
+                && !header.value.contains('\n')
+        })
+        .map(|header| (header.key.clone(), header.value.clone()))
+        .collect::<Vec<_>>();
+    if !headers
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("content-type"))
+    {
+        headers.push((
+            "content-type".to_owned(),
+            "text/plain; charset=utf-8".to_owned(),
+        ));
+    }
+    MockResponse {
+        status: example.status.unwrap_or(200),
+        status_text: status_text(example.status.unwrap_or(200)).to_owned(),
+        headers,
+        body: example.body.clone().unwrap_or_default().into_bytes(),
+        delay_ms: example.delay_ms,
+    }
+}
+
+fn status_text(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        409 => "Conflict",
+        422 => "Unprocessable Entity",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        _ => "Postly Mock Response",
+    }
+}
+
+async fn read_mock_request(stream: &mut tokio::net::TcpStream) -> Result<(String, String)> {
+    const MAX_HEADER_BYTES: usize = 64 * 1024;
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let read = stream.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+        if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+        if bytes.len() > MAX_HEADER_BYTES {
+            bail!("mock request headers exceed {MAX_HEADER_BYTES} bytes");
+        }
+    }
+    let request_text = String::from_utf8_lossy(&bytes);
+    let first_line = request_text
+        .lines()
+        .next()
+        .context("mock request did not include an HTTP request line")?;
+    let mut fields = first_line.split_whitespace();
+    let method = fields.next().context("mock request method is missing")?;
+    let target = fields.next().context("mock request target is missing")?;
+    Ok((method.to_owned(), target.to_owned()))
+}
+
+async fn write_mock_response(
+    stream: &mut tokio::net::TcpStream,
+    response: &MockResponse,
+) -> Result<()> {
+    if response.delay_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(response.delay_ms)).await;
+    }
+    let mut output = format!("HTTP/1.1 {} {}\r\n", response.status, response.status_text);
+    for (key, value) in &response.headers {
+        output.push_str(key);
+        output.push_str(": ");
+        output.push_str(value);
+        output.push_str("\r\n");
+    }
+    output.push_str(&format!("Content-Length: {}\r\n", response.body.len()));
+    output.push_str("Connection: close\r\n\r\n");
+    stream.write_all(output.as_bytes()).await?;
+    stream.write_all(&response.body).await?;
+    Ok(())
+}
+
+async fn run_mock_server(path: &Path, host: &str, port: u16, once: bool) -> Result<()> {
+    let routes = load_mock_routes(path)?;
+    let listener = tokio::net::TcpListener::bind((host, port))
+        .await
+        .with_context(|| format!("could not bind mock server to {host}:{port}"))?;
+    let address = listener.local_addr()?;
+    println!(
+        "Postly mock listening on http://{}:{} ({} route example(s)); press Ctrl-C to stop",
+        address.ip(),
+        address.port(),
+        routes.len()
+    );
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (mut stream, _) = accepted?;
+                match read_mock_request(&mut stream).await {
+                    Ok((method, target)) => {
+                        let response = mock_response_for(&routes, &method, &target);
+                        write_mock_response(&mut stream, &response).await?;
+                    }
+                    Err(error) => {
+                        let response = MockResponse {
+                            status: 400,
+                            status_text: "Bad Request".to_owned(),
+                            headers: vec![("content-type".to_owned(), "text/plain".to_owned())],
+                            body: error.to_string().into_bytes(),
+                            delay_ms: 0,
+                        };
+                        write_mock_response(&mut stream, &response).await?;
+                    }
+                }
+                if once {
+                    return Ok(());
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("Postly mock stopped");
+                return Ok(());
+            }
+        }
+    }
 }
 
 fn create_request(options: NewRequestOptions) -> Result<()> {
@@ -2979,6 +3252,47 @@ mod tests {
         let error = read_secret_lines(&mut reader, &["TOKEN".to_owned()])
             .expect_err("missing stdin value should fail");
         assert!(error.to_string().contains("stdin ended"));
+    }
+
+    #[test]
+    fn mock_router_returns_saved_example_without_query_data() {
+        let routes = vec![MockRoute {
+            method: "GET".to_owned(),
+            path: "/health".to_owned(),
+            example: ResponseExample {
+                name: "Healthy".to_owned(),
+                status: Some(201),
+                headers: vec![HeaderEntry::enabled("content-type", "application/json")],
+                body: Some(r#"{"ok":true}"#.to_owned()),
+                delay_ms: 7,
+            },
+        }];
+
+        let response = mock_response_for(&routes, "get", "/health?token=secret");
+
+        assert_eq!(response.status, 201);
+        assert_eq!(response.status_text, "Created");
+        assert_eq!(response.body, br#"{"ok":true}"#);
+        assert_eq!(response.delay_ms, 7);
+        assert_eq!(response.headers.len(), 1);
+    }
+
+    #[test]
+    fn mock_route_path_accepts_variable_based_urls() {
+        assert_eq!(
+            mock_route_path("{{baseUrl}}/users?limit=10"),
+            Some("/users".to_owned())
+        );
+        assert_eq!(mock_route_path("{{baseUrl}}"), Some("/".to_owned()));
+    }
+
+    #[test]
+    fn mock_router_returns_generic_404_for_unknown_route() {
+        let response = mock_response_for(&[], "GET", "/missing?token=secret");
+
+        assert_eq!(response.status, 404);
+        assert_eq!(response.status_text, "Not Found");
+        assert!(!String::from_utf8_lossy(&response.body).contains("secret"));
     }
 
     #[derive(Clone, PartialEq, prost::Message)]

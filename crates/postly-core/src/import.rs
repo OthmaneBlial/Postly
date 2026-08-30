@@ -736,11 +736,16 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExampl
                                 .collect()
                         })
                         .unwrap_or_default();
+                    let delay_ms = example
+                        .get("x-postly-delay-ms")
+                        .and_then(Value::as_u64)
+                        .unwrap_or_default();
                     ResponseExample {
                         name,
                         status,
                         headers,
                         body,
+                        delay_ms,
                     }
                 })
                 .collect()

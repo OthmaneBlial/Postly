@@ -355,4 +355,8 @@ pub struct ResponseExample {
     pub headers: Vec<HeaderEntry>,
     #[serde(default)]
     pub body: Option<String>,
+    /// Optional local mock delay. Postly-native data only; Postman exports
+    /// preserve it under the `x-postly-delay-ms` extension.
+    #[serde(default)]
+    pub delay_ms: u64,
 }

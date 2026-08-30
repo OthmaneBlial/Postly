@@ -241,6 +241,7 @@ fn postman_item(request: &Request) -> Result<Value, ExportError> {
                         "code": example.status,
                         "header": headers(&example.headers),
                         "body": example.body,
+                        "x-postly-delay-ms": example.delay_ms,
                     })
                 })
                 .collect::<Vec<_>>()),
@@ -508,6 +509,7 @@ mod tests {
             status: Some(201),
             headers: vec![HeaderEntry::enabled("content-type", "application/json")],
             body: Some("{\"id\":1}".to_owned()),
+            delay_ms: 0,
         });
         workspace
             .save_request(&collection, &request)

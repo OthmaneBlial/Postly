@@ -141,6 +141,16 @@ postly grpc call https://api.example.com --proto ./api.proto \
   --method /demo.Echo/Echo --message '{"message":"hello"}'
 ~~~
 
+Serve saved response examples as a local HTTP fixture server:
+
+~~~bash
+postly mock ./my-api --port 3000
+postly mock ./my-api/collections/users --port 3001 --once
+~~~
+
+See [Local mock server](mock-server.md) for route matching, response examples,
+delays and the explicit fixture-server boundary.
+
 `grpc reflect` connects to a server reflection endpoint, tries protocol v1
 then v1alpha, and prints the discovered services and methods. `--host` sets the
 reflection host field; `--ca-cert` and `--client-identity` configure verified

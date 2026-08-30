@@ -29,6 +29,12 @@ The native GUI keeps saved request-tab paths and the active tab in the ignored
 tab points to a canonical request file, while an unsaved draft remains in
 memory and is covered by the separate recovery snapshot.
 
+The CLI mock server is a read-only runtime over the same canonical files. It
+loads saved response examples, derives routes from each request method and URL
+path, and never writes to the workspace while serving. Mock-only delay metadata
+is stored as a Postly-native extension and is preserved when exporting to
+Postman JSON.
+
 ## Runtime flow
 
 ~~~text

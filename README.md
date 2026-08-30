@@ -77,7 +77,8 @@ This repository contains working vertical slices, not a static interface mockup.
   3.0/3.1 JSON/YAML import with guarded local references, and cURL paste/copy.
 - **Testing and automation:** response assertions, an opt-in Node.js script
   bridge, tested `pm.*` behavior, collection runs, folder selection, iteration
-  data, fail-fast execution and pretty/JSON/JUnit reporters.
+  data, fail-fast execution, pretty/JSON/JUnit reporters and a deterministic
+  local HTTP mock server backed by saved response examples.
 - **Modern API protocols:** structured GraphQL with schema introspection, SSE
   subscriptions, WebSocket text/binary flows, and dynamic gRPC calls with local
   `.proto` discovery or CLI server reflection (v1 with v1alpha fallback).
@@ -187,6 +188,9 @@ postly run ./my-api --folder auth --environment Local --reporter junit > postly-
 
 # Search request metadata without indexing secrets or payloads
 postly search payments --workspace ./my-api --output-json
+
+# Serve saved response examples locally for offline development
+postly mock ./my-api --port 3000
 ```
 
 During development, `cargo run --` is equivalent to `postly`. Exit status is
@@ -216,7 +220,8 @@ postly grpc call https://api.example.com:443 \
 
 See the focused guides for streaming semantics, TLS boundaries and current
 limitations: [GraphQL](docs/graphql.md), [SSE](docs/sse.md),
-[WebSockets](docs/websocket.md) and [gRPC](docs/grpc.md).
+[WebSockets](docs/websocket.md), [gRPC](docs/grpc.md) and the
+[local mock server](docs/mock-server.md).
 
 ## A transparent security boundary
 
