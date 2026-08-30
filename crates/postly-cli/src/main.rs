@@ -1,11 +1,12 @@
 use std::{
+    fs,
     io::{self, IsTerminal, Read},
     path::{Path, PathBuf},
     time::Duration,
 };
 
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use postly_core::{
     import_environment, import_postman_collection, run_requests, Auth, Collection, EngineOptions,
     HeaderEntry, HttpEngine, Request, RequestBody, RunnerOptions, VariableContext, Workspace,
@@ -51,6 +52,13 @@ struct NewRequestOptions {
     bearer: Option<String>,
     basic_user: Option<String>,
     basic_password: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Reporter {
+    Pretty,
+    Json,
+    Junit,
 }
 
 #[derive(Debug, Subcommand)]
@@ -123,6 +131,10 @@ enum Command {
         fail_fast: bool,
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+        #[arg(long, value_enum, default_value_t = Reporter::Pretty)]
+        reporter: Reporter,
+        #[arg(long)]
+        data_file: Option<PathBuf>,
         #[arg(long)]
         output_json: bool,
     },
@@ -263,6 +275,8 @@ async fn main() -> Result<()> {
             environment,
             fail_fast,
             timeout,
+            reporter,
+            data_file,
             output_json,
         } => {
             run_workspace(
@@ -270,7 +284,12 @@ async fn main() -> Result<()> {
                 environment.as_deref(),
                 fail_fast,
                 timeout,
-                output_json,
+                if output_json {
+                    Reporter::Json
+                } else {
+                    reporter
+                },
+                data_file.as_deref(),
             )
             .await
         }
@@ -389,7 +408,8 @@ async fn run_workspace(
     environment_name: Option<&str>,
     fail_fast: bool,
     timeout: u64,
-    output_json: bool,
+    reporter: Reporter,
+    data_file: Option<&Path>,
 ) -> Result<()> {
     let workspace = if path.join("postly.toml").is_file() {
         Workspace::open(path)?
@@ -404,6 +424,7 @@ async fn run_workspace(
         timeout: Duration::from_secs(timeout),
         ..EngineOptions::default()
     })?;
+    let iterations = load_iteration_data(data_file)?;
     let mut summaries = Vec::new();
     for collection in collections {
         let requests = workspace.requests(&collection)?;
@@ -415,11 +436,12 @@ async fn run_workspace(
             &context,
             &RunnerOptions {
                 fail_fast,
+                iterations: iterations.clone(),
                 ..RunnerOptions::default()
             },
         )
         .await;
-        if !output_json {
+        if matches!(reporter, Reporter::Pretty) {
             for result in &summary.results {
                 if let Some(status) = result.status {
                     println!(
@@ -444,13 +466,94 @@ async fn run_workspace(
             break;
         }
     }
-    if output_json {
-        println!("{}", serde_json::to_string_pretty(&summaries)?);
+    match reporter {
+        Reporter::Pretty => {}
+        Reporter::Json => println!("{}", serde_json::to_string_pretty(&summaries)?),
+        Reporter::Junit => println!("{}", render_junit(&summaries)),
     }
     if summaries.iter().any(|summary| !summary.succeeded()) {
         bail!("collection run failed");
     }
     Ok(())
+}
+
+fn load_iteration_data(path: Option<&Path>) -> Result<Vec<postly_core::Variables>> {
+    let Some(path) = path else {
+        return Ok(Vec::new());
+    };
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("could not read iteration data file {}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .with_context(|| format!("iteration data file is not valid JSON: {}", path.display()))?;
+    let rows = match value {
+        serde_json::Value::Array(rows) => rows,
+        serde_json::Value::Object(_) => vec![value],
+        _ => bail!("iteration data must be a JSON object or array of objects"),
+    };
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let object = row
+                .as_object()
+                .with_context(|| format!("iteration {index} is not a JSON object"))?;
+            Ok(object
+                .iter()
+                .map(|(key, value)| (key.clone(), iteration_value(value)))
+                .collect())
+        })
+        .collect()
+}
+
+fn iteration_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Null => String::new(),
+        value => value.to_string(),
+    }
+}
+
+fn render_junit(summaries: &[postly_core::RunnerSummary]) -> String {
+    let results = summaries.iter().flat_map(|summary| summary.results.iter());
+    let tests = summaries
+        .iter()
+        .map(|summary| summary.requests)
+        .sum::<usize>();
+    let failures = summaries
+        .iter()
+        .map(|summary| summary.failed)
+        .sum::<usize>();
+    let skipped = summaries.iter().filter(|summary| summary.cancelled).count();
+    let mut output = format!(
+        "<testsuite name=\"postly\" tests=\"{tests}\" failures=\"{failures}\" skipped=\"{skipped}\">"
+    );
+    for result in results {
+        output.push_str(&format!(
+            "<testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">",
+            xml_escape(&result.method),
+            xml_escape(&format!("iteration {}: {}", result.iteration, result.name)),
+            result.duration_ms as f64 / 1000.0
+        ));
+        if !result.passed {
+            let message = result
+                .error
+                .as_deref()
+                .or_else(|| result.status.map(|_status| "HTTP status failure"))
+                .unwrap_or("request failed");
+            output.push_str(&format!("<failure message=\"{}\"/>", xml_escape(message)));
+        }
+        output.push_str("</testcase>");
+    }
+    output.push_str("</testsuite>");
+    output
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 async fn execute(

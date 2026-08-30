@@ -10,7 +10,11 @@ use std::{
 use serde::Serialize;
 use tokio::sync::Notify;
 
-use crate::{http::HttpEngine, model::Request, variables::VariableContext};
+use crate::{
+    http::HttpEngine,
+    model::{Request, Variables},
+    variables::VariableContext,
+};
 
 #[derive(Debug, Clone)]
 pub struct CancellationToken {
@@ -56,6 +60,7 @@ pub struct RunnerOptions {
     pub fail_fast: bool,
     pub delay: Duration,
     pub cancellation: CancellationToken,
+    pub iterations: Vec<Variables>,
 }
 
 impl Default for RunnerOptions {
@@ -64,6 +69,7 @@ impl Default for RunnerOptions {
             fail_fast: false,
             delay: Duration::ZERO,
             cancellation: CancellationToken::default(),
+            iterations: Vec::new(),
         }
     }
 }
@@ -71,6 +77,7 @@ impl Default for RunnerOptions {
 #[derive(Debug, Clone, Serialize)]
 pub struct RunnerItemResult {
     pub path: PathBuf,
+    pub iteration: usize,
     pub name: String,
     pub method: String,
     pub status: Option<u16>,
@@ -82,6 +89,7 @@ pub struct RunnerItemResult {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct RunnerSummary {
     pub requests: usize,
+    pub iterations: usize,
     pub passed: usize,
     pub failed: usize,
     pub cancelled: bool,
@@ -101,60 +109,72 @@ pub async fn run_requests(
     options: &RunnerOptions,
 ) -> RunnerSummary {
     let mut summary = RunnerSummary::default();
-    for (index, (path, request)) in requests.iter().enumerate() {
-        if options.cancellation.is_cancelled() {
-            summary.cancelled = true;
-            break;
-        }
-        if index > 0 && !options.delay.is_zero() {
-            tokio::select! {
+    let iterations = if options.iterations.is_empty() {
+        vec![Variables::new()]
+    } else {
+        options.iterations.clone()
+    };
+    summary.iterations = iterations.len();
+    'iterations: for (iteration_index, iteration_data) in iterations.into_iter().enumerate() {
+        let mut iteration_context = context.clone();
+        iteration_context.runtime.extend(iteration_data);
+        for (index, (path, request)) in requests.iter().enumerate() {
+            if options.cancellation.is_cancelled() {
+                summary.cancelled = true;
+                break 'iterations;
+            }
+            if index > 0 && !options.delay.is_zero() {
+                tokio::select! {
+                    _ = options.cancellation.cancelled() => {
+                        summary.cancelled = true;
+                        break 'iterations;
+                    }
+                    _ = tokio::time::sleep(options.delay) => {}
+                }
+            }
+
+            let started = Instant::now();
+            let result = tokio::select! {
                 _ = options.cancellation.cancelled() => {
                     summary.cancelled = true;
-                    break;
+                    break 'iterations;
                 }
-                _ = tokio::time::sleep(options.delay) => {}
+                response = engine.execute(request, &iteration_context) => response,
+            };
+            summary.requests += 1;
+            let duration_ms = started.elapsed().as_millis();
+            let item = match result {
+                Ok(response) => RunnerItemResult {
+                    path: path.clone(),
+                    iteration: iteration_index + 1,
+                    name: request.name.clone(),
+                    method: request.method.clone(),
+                    status: Some(response.status),
+                    duration_ms,
+                    error: None,
+                    passed: response.status < 400,
+                },
+                Err(error) => RunnerItemResult {
+                    path: path.clone(),
+                    iteration: iteration_index + 1,
+                    name: request.name.clone(),
+                    method: request.method.clone(),
+                    status: None,
+                    duration_ms,
+                    error: Some(error.to_string()),
+                    passed: false,
+                },
+            };
+            if item.passed {
+                summary.passed += 1;
+            } else {
+                summary.failed += 1;
             }
-        }
-
-        let started = Instant::now();
-        let result = tokio::select! {
-            _ = options.cancellation.cancelled() => {
-                summary.cancelled = true;
-                break;
+            let should_stop = !item.passed && options.fail_fast;
+            summary.results.push(item);
+            if should_stop {
+                break 'iterations;
             }
-            response = engine.execute(request, context) => response,
-        };
-        summary.requests += 1;
-        let duration_ms = started.elapsed().as_millis();
-        let item = match result {
-            Ok(response) => RunnerItemResult {
-                path: path.clone(),
-                name: request.name.clone(),
-                method: request.method.clone(),
-                status: Some(response.status),
-                duration_ms,
-                error: None,
-                passed: response.status < 400,
-            },
-            Err(error) => RunnerItemResult {
-                path: path.clone(),
-                name: request.name.clone(),
-                method: request.method.clone(),
-                status: None,
-                duration_ms,
-                error: Some(error.to_string()),
-                passed: false,
-            },
-        };
-        if item.passed {
-            summary.passed += 1;
-        } else {
-            summary.failed += 1;
-        }
-        let should_stop = !item.passed && options.fail_fast;
-        summary.results.push(item);
-        if should_stop {
-            break;
         }
     }
     summary
@@ -187,5 +207,28 @@ mod tests {
         assert!(summary.cancelled);
         assert_eq!(summary.requests, 0);
         assert!(!summary.succeeded());
+    }
+
+    #[tokio::test]
+    async fn reports_requested_iterations_even_when_no_requests_are_present() {
+        let mut first = Variables::new();
+        first.insert("id".to_owned(), "one".to_owned());
+        let mut second = Variables::new();
+        second.insert("id".to_owned(), "two".to_owned());
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let summary = run_requests(
+            &engine,
+            &[],
+            &VariableContext::default(),
+            &RunnerOptions {
+                iterations: vec![first, second],
+                ..RunnerOptions::default()
+            },
+        )
+        .await;
+
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(summary.requests, 0);
+        assert!(summary.succeeded());
     }
 }
