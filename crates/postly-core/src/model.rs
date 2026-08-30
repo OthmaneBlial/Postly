@@ -201,6 +201,14 @@ pub enum RequestBody {
     Json {
         value: serde_json::Value,
     },
+    #[serde(rename = "graphql")]
+    Graphql {
+        query: String,
+        #[serde(default)]
+        variables: serde_json::Value,
+        #[serde(default)]
+        operation_name: Option<String>,
+    },
     FormUrlEncoded {
         fields: Vec<KeyValue>,
     },

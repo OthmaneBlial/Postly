@@ -393,6 +393,25 @@ async fn apply_body(
         RequestBody::Json { value } => {
             builder = builder.json(&resolve_json(value, context));
         }
+        RequestBody::Graphql {
+            query,
+            variables,
+            operation_name,
+        } => {
+            let mut payload = serde_json::Map::new();
+            payload.insert(
+                "query".to_owned(),
+                serde_json::Value::String(context.resolve(query).value),
+            );
+            payload.insert("variables".to_owned(), resolve_json(variables, context));
+            if let Some(operation_name) = operation_name {
+                payload.insert(
+                    "operationName".to_owned(),
+                    serde_json::Value::String(context.resolve(operation_name).value),
+                );
+            }
+            builder = builder.json(&serde_json::Value::Object(payload));
+        }
         RequestBody::FormUrlEncoded { fields } => {
             let values = fields
                 .iter()
@@ -484,6 +503,17 @@ fn resolve_body(
             }
         }
         RequestBody::Json { value } => resolve_json_diagnostics(value, diagnostics, context),
+        RequestBody::Graphql {
+            query,
+            variables,
+            operation_name,
+        } => {
+            diagnostics.extend(context.resolve(query).diagnostics);
+            resolve_json_diagnostics(variables, diagnostics, context);
+            if let Some(operation_name) = operation_name {
+                diagnostics.extend(context.resolve(operation_name).diagnostics);
+            }
+        }
         RequestBody::FormUrlEncoded { fields } => resolve_pairs(diagnostics, fields, context),
         RequestBody::Multipart { parts } => {
             for part in parts.iter().filter(|part| part.enabled) {
@@ -596,6 +626,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn executes_a_graphql_request_as_a_structured_json_envelope() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("connection");
+            let request = read_request_headers(&mut socket).await;
+            assert!(request.contains("POST /graphql HTTP/1.1"));
+            assert!(request.contains("\"query\":\"query User"));
+            assert!(request.contains("\"variables\":{\"id\":\"42\"}"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 29\r\n\r\n{\"data\":{\"user\":{\"id\":\"42\"}}}",
+                )
+                .await
+                .expect("response");
+        });
+
+        let mut graphql = crate::graphql::GraphqlRequest::new(
+            format!("http://{address}/graphql"),
+            "query User($id: ID!) { user(id: $id) { id } }",
+        );
+        graphql.variables =
+            crate::graphql::parse_variables_json(r#"{"id":"42"}"#).expect("variables");
+        let request = graphql.into_http_request("Get user").expect("request");
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("response");
+
+        server.await.expect("server");
+        assert_eq!(response.status, 200);
+        let graphql_response =
+            crate::graphql::parse_response(&response.body_text()).expect("GraphQL response");
+        assert!(!graphql_response.has_errors());
+        assert_eq!(graphql_response.data.expect("data")["user"]["id"], "42");
+    }
+
+    #[tokio::test]
     async fn reuses_session_cookies_and_exposes_response_attributes() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
         let address = listener.local_addr().expect("address");
@@ -690,6 +759,27 @@ mod tests {
         let mut buffer = [0_u8; 1024];
         while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
             let count = socket.read(&mut buffer).await.expect("request read");
+            if count == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buffer[..count]);
+        }
+        let header_end = bytes
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|position| position + 4)
+            .unwrap_or(bytes.len());
+        let headers = String::from_utf8_lossy(&bytes[..header_end]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("content-length:")
+                    .or_else(|| line.strip_prefix("Content-Length:"))
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+            })
+            .unwrap_or(0);
+        while bytes.len() < header_end + content_length {
+            let count = socket.read(&mut buffer).await.expect("request body read");
             if count == 0 {
                 break;
             }

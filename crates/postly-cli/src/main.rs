@@ -9,10 +9,10 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use postly_core::{
     export_postman_collection, export_postman_environment, import_curl_command, import_environment,
-    import_postman_collection, run_requests, Auth, Collection, EngineOptions, Environment,
-    EnvironmentVariable, HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine,
-    Request, RequestBody, RunnerOptions, ScriptResult, ScriptTestResult, VariableContext,
-    Workspace,
+    import_postman_collection, parse_graphql_response, parse_variables_json, run_requests, Auth,
+    Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, HeaderEntry,
+    HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions,
+    ScriptResult, ScriptTestResult, VariableContext, Workspace,
 };
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
@@ -35,6 +35,22 @@ struct ImmediateRequestOptions {
     headers: Vec<String>,
     data: Option<String>,
     json_body: Option<String>,
+    bearer: Option<String>,
+    basic_user: Option<String>,
+    basic_password: Option<String>,
+    timeout: u64,
+    insecure: bool,
+    output_json: bool,
+}
+
+struct GraphqlOptions {
+    endpoint: String,
+    query: Option<String>,
+    query_file: Option<PathBuf>,
+    variables: Vec<String>,
+    variables_json: Option<String>,
+    operation_name: Option<String>,
+    headers: Vec<String>,
     bearer: Option<String>,
     basic_user: Option<String>,
     basic_password: Option<String>,
@@ -103,6 +119,34 @@ enum Command {
         data: Option<String>,
         #[arg(long)]
         json: Option<String>,
+        #[arg(long)]
+        bearer: Option<String>,
+        #[arg(long)]
+        basic_user: Option<String>,
+        #[arg(long)]
+        basic_password: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+        #[arg(long)]
+        insecure: bool,
+        #[arg(long)]
+        output_json: bool,
+    },
+    /// Execute a GraphQL query as a structured request.
+    Graphql {
+        endpoint: String,
+        #[arg(short = 'q', long, conflicts_with = "query_file")]
+        query: Option<String>,
+        #[arg(long, conflicts_with = "query")]
+        query_file: Option<PathBuf>,
+        #[arg(long = "variable")]
+        variables: Vec<String>,
+        #[arg(long)]
+        variables_json: Option<String>,
+        #[arg(long)]
+        operation_name: Option<String>,
+        #[arg(short = 'H', long)]
+        headers: Vec<String>,
         #[arg(long)]
         bearer: Option<String>,
         #[arg(long)]
@@ -367,6 +411,38 @@ async fn main() -> Result<()> {
             })
             .await
         }
+        Command::Graphql {
+            endpoint,
+            query,
+            query_file,
+            variables,
+            variables_json,
+            operation_name,
+            headers,
+            bearer,
+            basic_user,
+            basic_password,
+            timeout,
+            insecure,
+            output_json,
+        } => {
+            send_graphql_request(GraphqlOptions {
+                endpoint,
+                query,
+                query_file,
+                variables,
+                variables_json,
+                operation_name,
+                headers,
+                bearer,
+                basic_user,
+                basic_password,
+                timeout,
+                insecure,
+                output_json,
+            })
+            .await
+        }
         Command::Send {
             file,
             environment,
@@ -495,6 +571,81 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
     .await?;
     print_response(&response, options.output_json)?;
     Ok(())
+}
+
+async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
+    let query = match (options.query, options.query_file) {
+        (Some(query), None) => query,
+        (None, Some(path)) => fs::read_to_string(&path)
+            .with_context(|| format!("could not read GraphQL query file {}", path.display()))?,
+        (None, None) => bail!("provide either --query or --query-file"),
+        (Some(_), Some(_)) => bail!("choose either --query or --query-file"),
+    };
+    let variables = parse_graphql_variables(options.variables_json, &options.variables)?;
+    let mut request = GraphqlRequest {
+        endpoint: options.endpoint,
+        query,
+        variables,
+        operation_name: options.operation_name,
+    }
+    .into_http_request("GraphQL CLI request")?;
+    request.headers.extend(parse_headers(&options.headers)?);
+    request.auth = parse_auth_flags(options.bearer, options.basic_user, options.basic_password)?;
+
+    let response = execute(
+        &request,
+        VariableContext::default(),
+        options.timeout,
+        options.insecure,
+    )
+    .await?;
+    let graphql = parse_graphql_response(&response.body_text())?;
+    if options.output_json {
+        let payload = json!({
+            "status": response.status,
+            "status_text": response.status_text,
+            "headers": response.headers,
+            "duration_ms": response.duration_ms,
+            "protocol": response.protocol,
+            "url": response.url,
+            "graphql": graphql,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!(
+            "{} {} · {} ms · {}",
+            response.status, response.status_text, response.duration_ms, response.protocol
+        );
+        println!("{}", serde_json::to_string_pretty(&graphql)?);
+    }
+    if graphql.has_errors() {
+        let messages = graphql.error_messages();
+        let detail = if messages.is_empty() {
+            format!("{} GraphQL error(s)", graphql.errors.len())
+        } else {
+            messages.join("; ")
+        };
+        bail!("GraphQL response contains errors: {detail}");
+    }
+    Ok(())
+}
+
+fn parse_graphql_variables(
+    variables_json: Option<String>,
+    variables: &[String],
+) -> Result<serde_json::Value> {
+    if variables_json.is_some() && !variables.is_empty() {
+        bail!("choose either --variables-json or --variable");
+    }
+    if let Some(variables_json) = variables_json {
+        return Ok(parse_variables_json(&variables_json)?);
+    }
+    let mut values = serde_json::Map::new();
+    for variable in variables {
+        let (key, value) = parse_assignment(variable)?;
+        values.insert(key.to_owned(), serde_json::Value::String(value.to_owned()));
+    }
+    Ok(serde_json::Value::Object(values))
 }
 
 async fn send_saved_request(
@@ -1094,4 +1245,52 @@ fn find_workspace(path: &Path) -> Result<Workspace> {
         }
     }
     bail!("could not find postly.toml above {}", path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn graphql_command_sends_a_query_and_accepts_data_response() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("connection");
+            let mut request = [0_u8; 8192];
+            let length = socket.read(&mut request).await.expect("request");
+            let request = String::from_utf8_lossy(&request[..length]);
+            assert!(request.contains("POST /graphql HTTP/1.1"));
+            assert!(request.contains("query User"));
+            assert!(request.contains("\"id\":\"42\""));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 29\r\n\r\n{\"data\":{\"user\":{\"id\":\"42\"}}}",
+                )
+                .await
+                .expect("response");
+        });
+
+        send_graphql_request(GraphqlOptions {
+            endpoint: format!("http://{address}/graphql"),
+            query: Some("query User($id: ID!) { user(id: $id) { id } }".to_owned()),
+            query_file: None,
+            variables: vec!["id=42".to_owned()],
+            variables_json: None,
+            operation_name: Some("User".to_owned()),
+            headers: Vec::new(),
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            insecure: false,
+            output_json: true,
+        })
+        .await
+        .expect("GraphQL command");
+        server.await.expect("server");
+    }
 }

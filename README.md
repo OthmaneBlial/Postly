@@ -18,6 +18,7 @@ Postly is an open-source, Rust-first API development workspace designed around l
 - Postman Collection v2.1 and environment import with a migration report.
 - Postman Collection v2.1 and environment export for round-trip interoperability.
 - OpenAPI 3 JSON/YAML import with generated requests and explicit warnings.
+- Structured GraphQL query execution from the Rust core and CLI, with variables and GraphQL error handling.
 - Opt-in Postman script execution through a local Node.js bridge with basic `pm.*` tests.
 - Headless commands for immediate requests, saved requests and sequential collection runs.
 - Searchable, filterable and bounded metadata-only local history for saved request executions (`postly history`).

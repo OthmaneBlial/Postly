@@ -260,6 +260,22 @@ fn body_value(body: &RequestBody) -> Result<Option<Value>, ExportError> {
         RequestBody::Json { value } => {
             raw_body(&serde_json::to_string_pretty(value)?, Some("json"))
         }
+        RequestBody::Graphql {
+            query,
+            variables,
+            operation_name,
+        } => {
+            let mut graphql = Map::new();
+            graphql.insert("query".to_owned(), json!(query));
+            graphql.insert(
+                "variables".to_owned(),
+                json!(serde_json::to_string(variables)?),
+            );
+            if let Some(operation_name) = operation_name {
+                graphql.insert("operationName".to_owned(), json!(operation_name));
+            }
+            json!({ "mode": "graphql", "graphql": Value::Object(graphql) })
+        }
         RequestBody::FormUrlEncoded { fields } => json!({
             "mode": "urlencoded",
             "urlencoded": fields.iter().map(|field| json!({
@@ -507,5 +523,54 @@ mod tests {
                 .expect("json");
         assert_eq!(document["name"], "Local");
         assert_eq!(document["values"][0]["type"], "secret");
+    }
+
+    #[test]
+    fn exports_and_reimports_a_structured_graphql_body() {
+        let directory = tempfile::tempdir().expect("workspace directory");
+        let workspace = Workspace::init(directory.path(), "Demo").expect("workspace");
+        let collection = workspace
+            .create_collection(&Collection::new("GraphQL"))
+            .expect("collection");
+        let mut request = Request::new("Get user", "POST", "https://api.example.test/graphql");
+        request.body = RequestBody::Graphql {
+            query: "query User { user { id } }".to_owned(),
+            variables: json!({ "id": "42" }),
+            operation_name: Some("User".to_owned()),
+        };
+        workspace
+            .save_request(&collection, &request)
+            .expect("request");
+
+        let export_path = directory.path().join("graphql.postman.json");
+        export_postman_collection(&workspace, &collection, &export_path).expect("export");
+        let document: Value =
+            serde_json::from_str(&fs::read_to_string(&export_path).expect("export document"))
+                .expect("json");
+        assert_eq!(document["item"][0]["request"]["body"]["mode"], "graphql");
+        assert_eq!(
+            document["item"][0]["request"]["body"]["graphql"]["operationName"],
+            "User"
+        );
+
+        let imported_directory = directory.path().join("round-trip");
+        import_postman_collection(&export_path, &imported_directory).expect("import");
+        let imported_workspace = Workspace::open(&imported_directory).expect("imported workspace");
+        let imported_collection = imported_workspace.collections().expect("collections");
+        let imported_requests = imported_workspace
+            .requests(&imported_collection[0])
+            .expect("imported requests");
+        match &imported_requests[0].1.body {
+            RequestBody::Graphql {
+                query,
+                variables,
+                operation_name,
+            } => {
+                assert_eq!(query, "query User { user { id } }");
+                assert_eq!(variables["id"], "42");
+                assert_eq!(operation_name.as_deref(), Some("User"));
+            }
+            other => panic!("expected GraphQL body, got {other:?}"),
+        }
     }
 }

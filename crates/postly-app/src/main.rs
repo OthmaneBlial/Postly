@@ -259,7 +259,8 @@ impl PostlyApp {
                 self.body_kind = BodyKind::Json;
                 self.body_text = serde_json::to_string_pretty(value).unwrap_or_default();
             }
-            RequestBody::FormUrlEncoded { .. }
+            RequestBody::Graphql { .. }
+            | RequestBody::FormUrlEncoded { .. }
             | RequestBody::Multipart { .. }
             | RequestBody::BinaryFile { .. } => {
                 self.body_kind = BodyKind::Advanced;

@@ -484,13 +484,46 @@ fn parse_body(name: &str, value: Option<&Value>, report: &mut ImportReport) -> R
             }
         }
         "graphql" => {
-            report.warn(format!("Request {name} uses Postman GraphQL body metadata; imported as raw JSON for review."));
-            RequestBody::Raw {
-                text: body
-                    .get("graphql")
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
-                content_type: Some("application/graphql+json".to_owned()),
+            let Some(graphql) = body.get("graphql").and_then(Value::as_object) else {
+                report.warn(format!(
+                    "Request {name} has malformed GraphQL body metadata."
+                ));
+                return RequestBody::Graphql {
+                    query: String::new(),
+                    variables: Value::Object(serde_json::Map::new()),
+                    operation_name: None,
+                };
+            };
+            let query = graphql
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let variables = match graphql.get("variables") {
+                Some(Value::String(value)) => match serde_json::from_str(value) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        report.warn(format!(
+                            "Request {name} has invalid GraphQL variables JSON: {error}."
+                        ));
+                        Value::Object(serde_json::Map::new())
+                    }
+                },
+                Some(value) => value.clone(),
+                None => Value::Object(serde_json::Map::new()),
+            };
+            let operation_name = graphql
+                .get("operationName")
+                .or_else(|| graphql.get("operation_name"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            report.warn(format!(
+                "Request {name} uses Postman GraphQL body metadata; verify the query and schema."
+            ));
+            RequestBody::Graphql {
+                query,
+                variables,
+                operation_name,
             }
         }
         "none" => RequestBody::None,
@@ -644,17 +677,11 @@ fn description_text(value: &Value) -> Option<String> {
 fn request_needs_review(request: &Request) -> bool {
     request.url.is_empty()
         || matches!(request.body, RequestBody::BinaryFile { .. })
+        || matches!(request.body, RequestBody::Graphql { .. })
         || matches!(
             &request.body,
             RequestBody::Multipart { parts }
                 if parts.iter().any(|part| part.file_path.is_some())
-        )
-        || matches!(
-            &request.body,
-            RequestBody::Raw {
-                content_type: Some(content_type),
-                ..
-            } if content_type == "application/graphql+json"
         )
         || request.pre_request_script.is_some()
         || request.test_script.is_some()
@@ -783,12 +810,6 @@ mod tests {
             .iter()
             .find(|(_, request)| request.name == "GraphQL review")
             .expect("graphql request");
-        assert!(matches!(
-            &graphql.1.body,
-            RequestBody::Raw {
-                content_type: Some(ref content_type),
-                ..
-            } if content_type == "application/graphql+json"
-        ));
+        assert!(matches!(&graphql.1.body, RequestBody::Graphql { .. }));
     }
 }
