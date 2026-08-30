@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
-    time::Duration,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use base64::Engine;
@@ -331,6 +331,9 @@ impl AuthKind {
 }
 
 const GUI_SETTINGS_FILE: &str = ".postly/gui-settings.json";
+const RECOVERY_FILE: &str = ".postly/recovery.json";
+const RECOVERY_VERSION: u8 = 1;
+const MAX_RECOVERY_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -382,6 +385,78 @@ impl TransportSettings {
             cookie_jar: Some(root.join(".postly/cookies.json")),
             ..EngineOptions::default()
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct RecoverySnapshot {
+    version: u8,
+    saved_at_unix: u64,
+    collection_id: String,
+    collection_name: String,
+    request: Request,
+}
+
+fn recovery_path(root: &Path) -> PathBuf {
+    root.join(RECOVERY_FILE)
+}
+
+fn write_recovery_snapshot(root: &Path, snapshot: &RecoverySnapshot) -> Result<(), String> {
+    let path = recovery_path(root);
+    let parent = path
+        .parent()
+        .ok_or_else(|| "recovery path has no parent directory".to_owned())?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let contents = serde_json::to_vec_pretty(snapshot).map_err(|error| error.to_string())?;
+    if contents.len() > MAX_RECOVERY_BYTES {
+        return Err(format!(
+            "recovery snapshot exceeds the {} MiB safety limit",
+            MAX_RECOVERY_BYTES / (1024 * 1024)
+        ));
+    }
+    let temporary = path.with_file_name(format!(".recovery-{}.json.tmp", std::process::id()));
+    fs::write(&temporary, contents).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&temporary)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_mode(0o600);
+        fs::set_permissions(&temporary, permissions).map_err(|error| error.to_string())?;
+    }
+    fs::rename(&temporary, &path).map_err(|error| error.to_string())
+}
+
+fn read_recovery_snapshot(root: &Path) -> Result<Option<RecoverySnapshot>, String> {
+    let path = recovery_path(root);
+    let contents = match fs::read(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if contents.len() > MAX_RECOVERY_BYTES {
+        return Err(format!(
+            "recovery snapshot is larger than the {} MiB safety limit",
+            MAX_RECOVERY_BYTES / (1024 * 1024)
+        ));
+    }
+    let snapshot: RecoverySnapshot =
+        serde_json::from_slice(&contents).map_err(|error| error.to_string())?;
+    if snapshot.version != RECOVERY_VERSION {
+        return Err(format!(
+            "unsupported recovery snapshot version {}",
+            snapshot.version
+        ));
+    }
+    Ok(Some(snapshot))
+}
+
+fn remove_recovery_snapshot(root: &Path) -> Result<(), String> {
+    match fs::remove_file(recovery_path(root)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -465,6 +540,8 @@ pub struct PostlyApp {
     curl_import_text: String,
     curl_import_error: Option<String>,
     dirty: bool,
+    recovery_restored: bool,
+    recovery_last_saved: Option<Instant>,
     status_message: String,
 }
 
@@ -570,10 +647,92 @@ impl PostlyApp {
             curl_import_text: String::new(),
             curl_import_error: None,
             dirty: false,
+            recovery_restored: false,
+            recovery_last_saved: None,
             status_message,
         };
         app.refresh_requests(None)?;
+        match read_recovery_snapshot(app.workspace.root()) {
+            Ok(Some(snapshot)) => app.restore_recovery(snapshot)?,
+            Ok(None) => {}
+            Err(error) => {
+                app.status_message = format!("Recovery snapshot ignored: {error}");
+            }
+        }
         Ok(app)
+    }
+
+    fn restore_recovery(&mut self, snapshot: RecoverySnapshot) -> Result<(), String> {
+        if let Some(index) = self
+            .collections
+            .iter()
+            .position(|collection| collection.collection.id.to_string() == snapshot.collection_id)
+        {
+            self.selected_collection = index;
+            self.requests = self
+                .workspace
+                .requests(&self.collections[index])
+                .map_err(|error| error.to_string())?;
+        }
+        self.selected_request = None;
+        self.request_path = None;
+        self.request = snapshot.request;
+        self.load_request_editors();
+        self.clear_response();
+        self.dirty = true;
+        self.recovery_restored = true;
+        self.recovery_last_saved = Some(Instant::now());
+        self.status_message = format!(
+            "Recovered unsaved draft from {} — save it or discard recovery",
+            snapshot.collection_name
+        );
+        Ok(())
+    }
+
+    fn persist_recovery(&mut self) -> Result<(), String> {
+        let collection = self
+            .collections
+            .get(self.selected_collection)
+            .ok_or_else(|| "no collection selected".to_owned())?;
+        let request = self.edited_request()?;
+        let saved_at_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_secs();
+        let snapshot = RecoverySnapshot {
+            version: RECOVERY_VERSION,
+            saved_at_unix,
+            collection_id: collection.collection.id.to_string(),
+            collection_name: collection.collection.name.clone(),
+            request,
+        };
+        write_recovery_snapshot(self.workspace.root(), &snapshot)?;
+        self.recovery_last_saved = Some(Instant::now());
+        Ok(())
+    }
+
+    fn persist_recovery_if_due(&mut self) {
+        if !self.dirty
+            || self
+                .recovery_last_saved
+                .is_some_and(|saved| saved.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        if let Err(error) = self.persist_recovery() {
+            self.status_message = format!("Draft recovery unavailable: {error}");
+        }
+    }
+
+    fn discard_recovery(&mut self) {
+        if let Err(error) = remove_recovery_snapshot(self.workspace.root()) {
+            self.status_message = format!("Recovery cleanup failed: {error}");
+            return;
+        }
+        self.recovery_restored = false;
+        self.recovery_last_saved = None;
+        self.reset_new_request();
+        self.status_message = "Recovered draft discarded".to_owned();
     }
 
     fn refresh_requests(&mut self, preferred_path: Option<&Path>) -> Result<(), String> {
@@ -637,16 +796,28 @@ impl PostlyApp {
         let Some((path, request)) = self.requests.get(index).cloned() else {
             return;
         };
+        if self.dirty {
+            let _ = self.persist_recovery();
+        }
         self.selected_request = Some(index);
         self.request_path = Some(path);
         self.request = request;
         self.load_request_editors();
         self.clear_response();
         self.dirty = false;
+        self.recovery_restored = false;
         self.status_message = "Request loaded".to_owned();
     }
 
     fn new_request(&mut self) {
+        if self.dirty {
+            let _ = self.persist_recovery();
+        }
+        self.reset_new_request();
+        self.status_message = "Draft request".to_owned();
+    }
+
+    fn reset_new_request(&mut self) {
         self.selected_request = None;
         self.request_path = None;
         self.request = Request::new("New request", "GET", "https://example.com");
@@ -654,10 +825,13 @@ impl PostlyApp {
         self.load_request_editors();
         self.clear_response();
         self.dirty = true;
-        self.status_message = "Draft request".to_owned();
+        self.recovery_restored = false;
     }
 
     fn new_grpc_request(&mut self) {
+        if self.dirty {
+            let _ = self.persist_recovery();
+        }
         self.selected_request = None;
         self.request_path = None;
         self.request = Request::new("New gRPC request", "POST", "http://127.0.0.1:50051");
@@ -666,6 +840,7 @@ impl PostlyApp {
         self.editor_tab = EditorTab::Grpc;
         self.clear_response();
         self.dirty = true;
+        self.recovery_restored = false;
         self.status_message = "gRPC draft request".to_owned();
     }
 
@@ -917,6 +1092,7 @@ impl PostlyApp {
         self.load_request_editors();
         self.clear_response();
         self.dirty = true;
+        self.recovery_restored = false;
         self.status_message = if warnings.is_empty() {
             "cURL command imported as a local draft".to_owned()
         } else {
@@ -1308,9 +1484,12 @@ impl PostlyApp {
         };
         self.request = request;
         self.request_path = Some(path.clone());
+        self.dirty = false;
+        self.recovery_restored = false;
+        self.recovery_last_saved = None;
+        remove_recovery_snapshot(self.workspace.root())?;
         self.refresh_requests(Some(&path))?;
         self.refresh_workspace_search();
-        self.dirty = false;
         self.status_message = format!("Saved locally — {}", path.display());
         Ok(())
     }
@@ -1328,6 +1507,9 @@ impl PostlyApp {
         self.refresh_requests(Some(&path))?;
         self.refresh_workspace_search();
         self.dirty = false;
+        self.recovery_restored = false;
+        self.recovery_last_saved = None;
+        remove_recovery_snapshot(self.workspace.root())?;
         self.status_message = format!("Duplicated locally — {}", path.display());
         Ok(())
     }
@@ -1344,6 +1526,9 @@ impl PostlyApp {
         self.request_path = None;
         self.refresh_requests(None)?;
         self.refresh_workspace_search();
+        self.recovery_restored = false;
+        self.recovery_last_saved = None;
+        remove_recovery_snapshot(self.workspace.root())?;
         self.status_message = "Request deleted locally".to_owned();
         Ok(())
     }
@@ -2515,6 +2700,25 @@ impl PostlyApp {
                         ui.label(RichText::new(&self.status_message).small().color(MUTED));
                     });
                 });
+                if self.recovery_restored {
+                    let mut discard_recovery_clicked = false;
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(
+                                "Recovered local draft — save it to keep it in the workspace.",
+                            )
+                            .small()
+                            .color(Color32::from_rgb(235, 180, 80)),
+                        );
+                        if ui.small_button("Discard recovery").clicked() {
+                            discard_recovery_clicked = true;
+                        }
+                    });
+                    if discard_recovery_clicked {
+                        self.discard_recovery();
+                    }
+                }
                 ui.add_space(7.0);
                 let mut send_clicked = false;
                 let mut cancel_clicked = false;
@@ -4646,8 +4850,15 @@ impl eframe::App for PostlyApp {
         self.draw_editor(ui);
         self.draw_command_palette(&ctx);
         self.draw_curl_import_dialog(&ctx);
+        self.persist_recovery_if_due();
         if pending {
             ctx.request_repaint_after(Duration::from_millis(80));
+        }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.dirty {
+            let _ = self.persist_recovery();
         }
     }
 }
@@ -4930,6 +5141,60 @@ mod tests {
             .expect("blank script is valid")
             .test_script
             .is_none());
+    }
+
+    #[test]
+    fn dirty_gui_draft_round_trips_through_private_recovery_snapshot() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "Unsaved local draft".to_owned();
+        app.request.url = "https://api.example.test/draft".to_owned();
+        app.body_kind = BodyKind::Json;
+        app.body_text = r#"{"draft":true}"#.to_owned();
+        app.dirty = true;
+        app.persist_recovery().expect("persist recovery");
+
+        let path = recovery_path(directory.path());
+        assert!(path.is_file());
+        let snapshot = read_recovery_snapshot(directory.path())
+            .expect("read recovery")
+            .expect("snapshot");
+        assert_eq!(snapshot.request.name, "Unsaved local draft");
+        assert_eq!(snapshot.request.url, "https://api.example.test/draft");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path)
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+
+        let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
+        assert!(reopened.recovery_restored);
+        assert!(reopened.request_path.is_none());
+        assert_eq!(reopened.request.name, "Unsaved local draft");
+        assert_eq!(reopened.body_text, "{\n  \"draft\": true\n}");
+    }
+
+    #[test]
+    fn recovery_can_be_discarded_without_touching_saved_requests() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "Recovered request".to_owned();
+        app.dirty = true;
+        app.persist_recovery().expect("persist recovery");
+
+        let mut reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
+        reopened.discard_recovery();
+        assert!(!recovery_path(directory.path()).exists());
+        assert!(!reopened.recovery_restored);
+        assert_eq!(reopened.request.name, "New request");
+        assert!(reopened.dirty);
     }
 
     #[test]

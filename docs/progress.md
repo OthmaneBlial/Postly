@@ -84,6 +84,9 @@ Implemented:
 - Local `cargo xtask fuzz` targets cURL parsing, variable interpolation and
   malformed Postman imports with a bounded smoke run; fuzz artifacts remain
   ignored and no GitHub Actions workflow is required.
+- Native GUI crash recovery persists a bounded, private draft snapshot with
+  atomic replacement, Unix `0600` permissions, automatic restore as a new
+  unsaved request and an explicit discard action.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:
@@ -92,7 +95,7 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.
-- crash recovery and transactional workspace restore.
+- transactional workspace restore and broader multi-document crash recovery.
 - Authorization Code/PKCE, Device Code and refresh-token OAuth flows; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in the CLI.
 - OpenAPI cyclic/remote references and deeper protocol-specific GUI tooling.
 - Local deterministic protocol test server tooling, cross-client/memory
@@ -100,7 +103,9 @@ Not yet implemented:
 
 ## Verification
 
-The GraphQL schema slice adds core parser coverage for roots, nested type
+The GUI recovery slice adds round-trip coverage for an unsaved JSON draft,
+private file permissions on Unix and explicit discard without changing saved
+requests. The GraphQL schema slice adds core parser coverage for roots, nested type
 references, arguments and malformed introspection, a local HTTP CLI test, and a
 native GUI worker test that confirms schemas stay out of request history. The
 gRPC reflection adds a local tonic server test covering service discovery and
