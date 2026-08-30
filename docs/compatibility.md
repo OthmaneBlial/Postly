@@ -14,7 +14,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | Postman pm.* runtime | partial tested subset, including common response matchers | compatibility matrix and script tests |
 | collection runner | sequential HTTP slice | CLI run |
 | cURL import | common request slice | curl parser tests and CLI round-trip |
-| OpenAPI 3 import | JSON/YAML operation slice | OpenAPI fixture and importer tests |
+| OpenAPI 3.0/3.1 import | JSON/YAML operation and local `$ref` slice | OpenAPI fixtures and importer tests |
 | Postman behavioral parity | not measured | no percentage claimed |
 
 Any future score must count semantic cases, exclude placeholders and retain failing fixtures as regressions.

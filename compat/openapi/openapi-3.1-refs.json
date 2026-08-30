@@ -1,0 +1,73 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Referenced Users API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.example.test/{version}",
+      "variables": {
+        "version": { "default": "v2" }
+      }
+    }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/users/{userId}": {
+      "parameters": [{ "$ref": "#/components/parameters/UserId" }],
+      "get": {
+        "operationId": "getUser",
+        "tags": ["Users"],
+        "parameters": [{ "$ref": "#/components/parameters/Limit" }]
+      },
+      "post": {
+        "operationId": "replaceUser",
+        "requestBody": { "$ref": "#/components/requestBodies/UserPayload" },
+        "security": [{ "bearerAuth": [] }]
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "UserId": {
+        "name": "userId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "example": "42" }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "schema": { "type": "integer", "default": 20 }
+      }
+    },
+    "requestBodies": {
+      "UserPayload": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/User" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "active": { "type": ["boolean", "null"], "default": true },
+          "name": { "type": "string", "examples": ["Ada"] }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}

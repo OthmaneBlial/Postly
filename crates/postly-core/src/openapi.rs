@@ -55,6 +55,8 @@ pub fn import_openapi(
         source,
     })?;
     let document = parse_document(&input_path, &text)?;
+    let mut warnings = Vec::new();
+    let document = expand_references(&document, &mut warnings);
     let root = document
         .as_object()
         .ok_or(OpenApiImportError::NotAnObject)?;
@@ -88,7 +90,6 @@ pub fn import_openapi(
         .unwrap_or_else(|| "Imported OpenAPI".to_owned());
     let workspace = Workspace::open_or_init(output_directory, "Postly workspace")?;
     let mut collection_files = workspace.create_collection(&Collection::new(title))?;
-    let mut warnings = Vec::new();
     let server = resolve_server(root, &mut collection_files.collection, &mut warnings);
     let security_schemes = root
         .get("components")
@@ -199,6 +200,65 @@ fn parse_document(path: &Path, text: &str) -> Result<Value, OpenApiImportError> 
     } else {
         Ok(serde_json::from_str(text)?)
     }
+}
+
+fn expand_references(document: &Value, warnings: &mut Vec<String>) -> Value {
+    fn expand(
+        value: &Value,
+        document: &Value,
+        warnings: &mut Vec<String>,
+        stack: &mut Vec<String>,
+    ) -> Value {
+        let Value::Object(object) = value else {
+            return match value {
+                Value::Array(values) => Value::Array(
+                    values
+                        .iter()
+                        .map(|value| expand(value, document, warnings, stack))
+                        .collect(),
+                ),
+                _ => value.clone(),
+            };
+        };
+
+        if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+            if !reference.starts_with("#/") {
+                warnings.push(format!(
+                    "OpenAPI reference {reference} is external and needs manual review."
+                ));
+            } else if stack.contains(&reference.to_owned()) {
+                warnings.push(format!(
+                    "OpenAPI reference cycle detected at {reference}; it was left unresolved."
+                ));
+            } else if let Some(target) = document.pointer(&reference[1..]) {
+                stack.push(reference.to_owned());
+                let expanded_target = expand(target, document, warnings, stack);
+                stack.pop();
+                if let Value::Object(mut resolved) = expanded_target {
+                    for (key, value) in object {
+                        if key != "$ref" {
+                            resolved.insert(key.clone(), expand(value, document, warnings, stack));
+                        }
+                    }
+                    return Value::Object(resolved);
+                }
+                return expanded_target;
+            } else {
+                warnings.push(format!(
+                    "OpenAPI reference {reference} does not resolve locally."
+                ));
+            }
+        }
+
+        Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), expand(value, document, warnings, stack)))
+                .collect(),
+        )
+    }
+
+    expand(document, document, warnings, &mut Vec::new())
 }
 
 fn resolve_server(
@@ -412,7 +472,15 @@ fn schema_value(schema: &Map<String, Value>) -> Option<String> {
     schema
         .get("example")
         .and_then(value_to_text)
+        .or_else(|| {
+            schema
+                .get("examples")
+                .and_then(Value::as_array)
+                .and_then(|examples| examples.first())
+                .and_then(value_to_text)
+        })
         .or_else(|| schema.get("default").and_then(value_to_text))
+        .or_else(|| schema.get("const").and_then(value_to_text))
         .or_else(|| {
             schema
                 .get("enum")
@@ -502,15 +570,49 @@ fn sample_from_schema(schema: &Value) -> Option<Value> {
     if let Some(example) = schema.get("example") {
         return Some(example.clone());
     }
+    if let Some(example) = schema
+        .get("examples")
+        .and_then(Value::as_array)
+        .and_then(|examples| examples.first())
+    {
+        return Some(example.clone());
+    }
     if let Some(default) = schema.get("default") {
         return Some(default.clone());
     }
-    match schema
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("object")
+    if let Some(constant) = schema.get("const") {
+        return Some(constant.clone());
+    }
+    if let Some(value) = schema
+        .get("enum")
+        .and_then(Value::as_array)
+        .and_then(|values| values.first())
     {
-        "object" => Some(Value::Object(Map::new())),
+        return Some(value.clone());
+    }
+    let schema_type = match schema.get("type") {
+        Some(Value::String(value)) => value.as_str(),
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|value| *value != "null")
+            .unwrap_or("object"),
+        _ => "object",
+    };
+    match schema_type {
+        "object" => {
+            let mut object = Map::new();
+            if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+                let mut names = properties.keys().collect::<Vec<_>>();
+                names.sort();
+                for name in names {
+                    if let Some(value) = sample_from_schema(&properties[name]) {
+                        object.insert(name.clone(), value);
+                    }
+                }
+            }
+            Some(Value::Object(object))
+        }
         "array" => Some(Value::Array(Vec::new())),
         "boolean" => Some(Value::Bool(false)),
         "integer" | "number" => Some(Value::Number(0.into())),
@@ -661,5 +763,48 @@ mod tests {
         assert!(error
             .to_string()
             .contains("unsupported or missing OpenAPI version"));
+    }
+
+    #[test]
+    fn imports_openapi_31_local_references_and_schema_samples() {
+        let output = tempfile::tempdir().expect("output");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../compat/openapi/openapi-3.1-refs.json");
+        let report = import_openapi(&fixture, output.path()).expect("import");
+
+        assert_eq!(report.imported_operations, 2);
+        assert!(!report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("local reference resolution")));
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let collections = workspace.collections().expect("collections");
+        assert_eq!(collections[0].collection.variables["version"], "v2");
+        assert_eq!(collections[0].collection.variables["userId"], "42");
+        let requests = workspace.requests(&collections[0]).expect("requests");
+
+        let get_user = requests
+            .iter()
+            .find(|(_, request)| request.name == "getUser")
+            .expect("get user");
+        assert_eq!(
+            get_user.1.url,
+            "https://api.example.test/v2/users/{{userId}}"
+        );
+        assert_eq!(get_user.1.query, vec![KeyValue::enabled("limit", "20")]);
+        assert!(matches!(get_user.1.auth, Auth::Bearer { .. }));
+
+        let replace_user = requests
+            .iter()
+            .find(|(_, request)| request.name == "replaceUser")
+            .expect("replace user");
+        match &replace_user.1.body {
+            RequestBody::Json { value } => {
+                assert_eq!(value["active"], true);
+                assert_eq!(value["name"], "Ada");
+            }
+            other => panic!("expected JSON body, got {other:?}"),
+        }
+        assert!(matches!(replace_user.1.auth, Auth::Bearer { .. }));
     }
 }
