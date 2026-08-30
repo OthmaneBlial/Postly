@@ -295,13 +295,11 @@ pub async fn run_requests(
                                         .apply(&mut request_to_run, &mut request_context)
                                     {
                                         error = Some(script_error.to_string());
-                                    } else if !assertion_failures.is_empty() {
-                                        if error.is_none() {
-                                            error = Some(format!(
-                                                "{} assertion(s) failed",
-                                                assertion_failures.len()
-                                            ));
-                                        }
+                                    } else if !assertion_failures.is_empty() && error.is_none() {
+                                        error = Some(format!(
+                                            "{} assertion(s) failed",
+                                            assertion_failures.len()
+                                        ));
                                     }
                                 }
                                 Err(script_error) => error = Some(script_error),

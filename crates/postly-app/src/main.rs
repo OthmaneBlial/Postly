@@ -7,9 +7,9 @@ use std::{
 
 use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
 use postly_core::{
-    ApiKeyLocation, Auth, CollectionFiles, EngineOptions, Environment, HeaderEntry, HistoryEntry,
-    HistoryFilter, HttpEngine, HttpResponse, KeyValue, Request, RequestBody, ResponseView,
-    VariableContext, Workspace,
+    ApiKeyLocation, Assertion, Auth, CollectionFiles, EngineOptions, Environment, HeaderEntry,
+    HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, Request, RequestBody,
+    ResponseView, VariableContext, Workspace,
 };
 
 const ACCENT: Color32 = Color32::from_rgb(91, 141, 239);
@@ -24,6 +24,7 @@ enum EditorTab {
     Cookies,
     Body,
     Auth,
+    Assertions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +65,47 @@ enum AuthKind {
     ApiKey,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssertionKind {
+    Status,
+    HeaderPresent,
+    HeaderEquals,
+    BodyContains,
+    JsonPointerEquals,
+}
+
+impl AssertionKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Status => "Status equals",
+            Self::HeaderPresent => "Header exists",
+            Self::HeaderEquals => "Header equals",
+            Self::BodyContains => "Body contains",
+            Self::JsonPointerEquals => "JSON Pointer equals",
+        }
+    }
+
+    fn default_assertion(self) -> Assertion {
+        match self {
+            Self::Status => Assertion::Status { expected: 200 },
+            Self::HeaderPresent => Assertion::HeaderPresent {
+                name: "content-type".to_owned(),
+            },
+            Self::HeaderEquals => Assertion::HeaderEquals {
+                name: "content-type".to_owned(),
+                expected: "application/json".to_owned(),
+            },
+            Self::BodyContains => Assertion::BodyContains {
+                value: String::new(),
+            },
+            Self::JsonPointerEquals => Assertion::JsonPointerEquals {
+                pointer: "/status".to_owned(),
+                expected: serde_json::Value::Null,
+            },
+        }
+    }
+}
+
 impl AuthKind {
     fn label(self) -> &'static str {
         match self {
@@ -93,6 +135,8 @@ pub struct PostlyApp {
     graphql_query: String,
     graphql_variables: String,
     graphql_operation_name: String,
+    assertion_json_text: Vec<String>,
+    new_assertion_kind: AssertionKind,
     auth_kind: AuthKind,
     auth_primary: String,
     auth_secondary: String,
@@ -147,6 +191,8 @@ impl PostlyApp {
             graphql_query: String::new(),
             graphql_variables: String::new(),
             graphql_operation_name: String::new(),
+            assertion_json_text: Vec::new(),
+            new_assertion_kind: AssertionKind::Status,
             auth_kind: AuthKind::None,
             auth_primary: String::new(),
             auth_secondary: String::new(),
@@ -254,6 +300,17 @@ impl PostlyApp {
     }
 
     fn load_request_editors(&mut self) {
+        self.assertion_json_text = self
+            .request
+            .assertions
+            .iter()
+            .map(|assertion| match assertion {
+                Assertion::JsonPointerEquals { expected, .. } => {
+                    serde_json::to_string_pretty(expected).unwrap_or_else(|_| "null".to_owned())
+                }
+                _ => String::new(),
+            })
+            .collect();
         match &self.request.body {
             RequestBody::None => {
                 self.body_kind = BodyKind::None;
@@ -350,6 +407,17 @@ impl PostlyApp {
             }
             BodyKind::Advanced => request.body,
         };
+        for (index, assertion) in request.assertions.iter_mut().enumerate() {
+            if let Assertion::JsonPointerEquals { expected, .. } = assertion {
+                let text = self
+                    .assertion_json_text
+                    .get(index)
+                    .map(String::as_str)
+                    .unwrap_or("null");
+                *expected = serde_json::from_str(text)
+                    .map_err(|error| format!("assertion JSON value is invalid: {error}"))?;
+            }
+        }
         request.auth = match self.auth_kind {
             AuthKind::None => Auth::None,
             AuthKind::Bearer => Auth::Bearer {
@@ -806,6 +874,7 @@ impl PostlyApp {
                         (EditorTab::Cookies, "Cookies"),
                         (EditorTab::Body, "Body"),
                         (EditorTab::Auth, "Auth"),
+                        (EditorTab::Assertions, "Assertions"),
                     ] {
                         if tab_button(ui, self.editor_tab == tab, label).clicked() {
                             self.editor_tab = tab;
@@ -888,6 +957,7 @@ impl PostlyApp {
                     }
                     EditorTab::Body => self.render_body(ui),
                     EditorTab::Auth => self.render_auth(ui),
+                    EditorTab::Assertions => self.render_assertions(ui),
                 }
             });
     }
@@ -1097,6 +1167,106 @@ impl PostlyApp {
                     self.dirty = true;
                 }
             }
+        }
+    }
+
+    fn render_assertions(&mut self, ui: &mut egui::Ui) {
+        ui.heading(RichText::new("Response assertions").color(Color32::WHITE));
+        ui.label(
+            RichText::new(
+                "These local checks run in the collection runner and do not require Node.js.",
+            )
+            .small()
+            .color(MUTED),
+        );
+        ui.add_space(8.0);
+        let mut changed = false;
+        let mut remove = None;
+        for (index, assertion) in self.request.assertions.iter_mut().enumerate() {
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("Assertion {}", index + 1))
+                            .strong()
+                            .color(Color32::WHITE),
+                    );
+                    if ui.small_button("Remove").clicked() {
+                        remove = Some(index);
+                    }
+                });
+                match assertion {
+                    Assertion::Status { expected } => {
+                        ui.horizontal(|ui| {
+                            ui.label("Expected status");
+                            changed |= ui.add(egui::DragValue::new(expected)).changed();
+                        });
+                    }
+                    Assertion::HeaderPresent { name } => {
+                        changed |= labeled_singleline(ui, "Header name", name);
+                    }
+                    Assertion::HeaderEquals { name, expected } => {
+                        changed |= labeled_singleline(ui, "Header name", name);
+                        changed |= labeled_singleline(ui, "Expected value", expected);
+                    }
+                    Assertion::BodyContains { value } => {
+                        changed |= labeled_singleline(ui, "Text", value);
+                    }
+                    Assertion::JsonPointerEquals { pointer, .. } => {
+                        changed |= labeled_singleline(ui, "JSON Pointer", pointer);
+                        if let Some(value) = self.assertion_json_text.get_mut(index) {
+                            ui.label("Expected JSON value");
+                            if ui
+                                .add(
+                                    TextEdit::multiline(value)
+                                        .font(TextStyle::Monospace)
+                                        .desired_rows(3)
+                                        .desired_width(f32::INFINITY),
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            });
+            ui.add_space(5.0);
+        }
+        if let Some(index) = remove {
+            self.request.assertions.remove(index);
+            if index < self.assertion_json_text.len() {
+                self.assertion_json_text.remove(index);
+            }
+            changed = true;
+        }
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("new-assertion-kind")
+                .selected_text(self.new_assertion_kind.label())
+                .show_ui(ui, |ui| {
+                    for kind in [
+                        AssertionKind::Status,
+                        AssertionKind::HeaderPresent,
+                        AssertionKind::HeaderEquals,
+                        AssertionKind::BodyContains,
+                        AssertionKind::JsonPointerEquals,
+                    ] {
+                        ui.selectable_value(&mut self.new_assertion_kind, kind, kind.label());
+                    }
+                });
+            if ui.button("＋ Add assertion").clicked() {
+                let assertion = self.new_assertion_kind.default_assertion();
+                self.assertion_json_text.push(match &assertion {
+                    Assertion::JsonPointerEquals { expected, .. } => {
+                        serde_json::to_string_pretty(expected).unwrap_or_else(|_| "null".to_owned())
+                    }
+                    _ => String::new(),
+                });
+                self.request.assertions.push(assertion);
+                changed = true;
+            }
+        });
+        if changed {
+            self.dirty = true;
         }
     }
 
@@ -1338,6 +1508,17 @@ fn response_search_lines(text: &str, query: &str) -> Vec<(usize, String)> {
         .take(50)
         .map(|(line_number, line)| (line_number + 1, line.to_owned()))
         .collect()
+}
+
+fn labeled_singleline(ui: &mut egui::Ui, label: &str, value: &mut String) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        changed = ui
+            .add(TextEdit::singleline(value).desired_width(360.0))
+            .changed();
+    });
+    changed
 }
 
 fn render_key_values(
