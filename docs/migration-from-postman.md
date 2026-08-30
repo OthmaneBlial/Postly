@@ -11,7 +11,7 @@ export a Postman Collection v2.1
   -> postly send <request>.postly.toml
 ~~~
 
-The importer preserves collection metadata, folders, request URLs, query parameters, headers (including disabled and scalar values), descriptions, raw/JSON/urlencoded/form-data/file bodies, common auth types, examples, variables and request-level scripts. Collection and folder auth is materialized into requests that do not override it, so the imported files retain the effective behavior without depending on a hidden runtime tree. Unsupported auth types and other review-worthy fields are reported and counted for manual review rather than silently discarded.
+The importer preserves collection metadata, folders, request URLs, query parameters, headers (including disabled and scalar values), descriptions, raw/JSON/urlencoded/form-data/file bodies, common auth types including OAuth 2.0 Client Credentials, examples, variables and request-level scripts. Collection and folder auth is materialized into requests that do not override it, so the imported files retain the effective behavior without depending on a hidden runtime tree. Unsupported auth types and other review-worthy fields are reported and counted for manual review rather than silently discarded.
 
 Collection and folder pre-request/test events are preserved into the native collection/request files in execution order. With `--scripts`, the current local Node.js bridge executes the preserved source and reports basic assertions; without that explicit flag, scripts remain source-only.
 
@@ -29,7 +29,8 @@ interoperability path, not a claim of perfect Postman round-trip fidelity.
 Current limitations:
 
 - Script execution is opt-in and currently depends on a local Node.js installation; the bridge is a tested prototype, not an embedded or hardened sandbox.
-- GraphQL request metadata is retained as a reviewable raw JSON body.
+- Authorization Code, PKCE and other OAuth 2.0 grant types remain reviewable; Client Credentials is the currently supported OAuth flow.
+- GraphQL request metadata is retained in the structured native body model.
 - File paths should be checked after import because their meaning depends on the source project location.
 - Collection-level and folder-level script inheritance is materialized into request source, while variable persistence and broader runtime behavior remain limited.
 - Export back to Postman covers the current model; full pm.* compatibility and a measured behavioral score remain planned.

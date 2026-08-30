@@ -56,7 +56,7 @@ This is a working vertical slice, not a static UI mockup.
   query parameters, duplicate headers, cookies, raw/JSON/form/multipart/file
   bodies, redirects, compression, timeouts, cancellation and an ignored local
   cookie jar for saved workspaces.
-- <strong>Authentication:</strong> Bearer, Basic and API-key auth with variable resolution.
+- <strong>Authentication:</strong> Bearer, Basic, API-key and OAuth 2.0 Client Credentials auth with variable resolution.
 - <strong>TLS and routing:</strong> explicit insecure-TLS opt-in, custom PEM CA bundles,
   combined PEM client identities, HTTP(S) proxy routing and actionable file
   diagnostics. HTTPS and mutual TLS are covered by local integration tests.
@@ -321,6 +321,7 @@ marketing-only roadmap.
 - <a href="docs/development.md">Development and local validation</a>
 - <a href="docs/cli.md">CLI reference</a>
 - <a href="docs/collections.md">Collections and environments</a>
+- <a href="docs/authentication.md">Authentication</a>
 - <a href="docs/scripting.md">Scripting and pm.*</a>
 - <a href="docs/history.md">History</a>
 - <a href="docs/cookies.md">Cookies</a>

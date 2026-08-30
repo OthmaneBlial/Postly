@@ -613,6 +613,46 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
                 _ => ApiKeyLocation::Header,
             },
         },
+        "oauth2" => {
+            let oauth = value.get("oauth2");
+            let grant_type = auth_value_any(oauth, &["grant_type", "grantType"]);
+            if !grant_type.is_empty() && grant_type != "client_credentials" {
+                report.warn(format!(
+                    "{subject} uses OAuth 2.0 grant type {grant_type}; only client_credentials is currently supported."
+                ));
+                return ParsedAuth {
+                    auth: Auth::None,
+                    requires_review: true,
+                };
+            }
+            let token_url = auth_value_any(
+                oauth,
+                &[
+                    "accessTokenUrl",
+                    "tokenUrl",
+                    "token_url",
+                    "access_token_url",
+                ],
+            );
+            let client_id = auth_value_any(oauth, &["clientId", "client_id"]);
+            let client_secret = auth_value_any(oauth, &["clientSecret", "client_secret"]);
+            let scope = auth_value_any(oauth, &["scope"]);
+            if token_url.is_empty() || client_id.is_empty() || client_secret.is_empty() {
+                report.warn(format!(
+                    "{subject} has incomplete OAuth 2.0 client credentials; authentication requires manual review."
+                ));
+                return ParsedAuth {
+                    auth: Auth::None,
+                    requires_review: true,
+                };
+            }
+            Auth::OAuth2ClientCredentials {
+                token_url,
+                client_id,
+                client_secret,
+                scope: (!scope.is_empty()).then_some(scope),
+            }
+        }
         "noauth" => Auth::None,
         other => {
             report.warn(format!(
@@ -639,6 +679,13 @@ fn auth_value(value: Option<&Value>, key: &str) -> String {
                 .find(|entry| entry.get("key").and_then(Value::as_str) == Some(key))
         })
         .and_then(|entry| string_value(entry.get("value")))
+        .unwrap_or_default()
+}
+
+fn auth_value_any(value: Option<&Value>, keys: &[&str]) -> String {
+    keys.iter()
+        .map(|key| auth_value(value, key))
+        .find(|value| !value.is_empty())
         .unwrap_or_default()
 }
 
@@ -798,8 +845,8 @@ mod tests {
             .join("../../compat/postman-import/variants-v2.1.json");
 
         let report = import_postman_collection(&fixture, output.path()).expect("import");
-        assert_eq!(report.imported_requests, 6);
-        assert_eq!(report.fully_supported_requests, 3);
+        assert_eq!(report.imported_requests, 7);
+        assert_eq!(report.fully_supported_requests, 4);
         assert_eq!(report.manual_review_requests, 3);
         assert!(report
             .warnings
@@ -813,10 +860,6 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("unsupported event type unknown")));
-        assert!(report
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("unsupported Postman auth type oauth2")));
 
         let workspace = Workspace::open(output.path()).expect("workspace");
         let collection = workspace.collections().expect("collections").remove(0);
@@ -851,6 +894,20 @@ mod tests {
             .find(|(_, request)| request.name == "Upload avatar")
             .expect("upload request");
         assert!(matches!(upload.1.body, RequestBody::Multipart { .. }));
+
+        let oauth = requests
+            .iter()
+            .find(|(_, request)| request.name == "OAuth client credentials")
+            .expect("OAuth client credentials request");
+        assert_eq!(
+            oauth.1.auth,
+            Auth::OAuth2ClientCredentials {
+                token_url: "{{baseUrl}}/oauth/token".to_owned(),
+                client_id: "postly".to_owned(),
+                client_secret: "{{clientSecret}}".to_owned(),
+                scope: Some("read:users".to_owned()),
+            }
+        );
 
         let graphql = requests
             .iter()

@@ -1,9 +1,11 @@
 use std::{
+    collections::HashMap,
     fs,
+    hash::{Hash, Hasher},
     io::BufReader,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
-    time::Duration,
+    sync::{Arc, Mutex, RwLock},
+    time::{Duration, Instant},
 };
 
 use cookie_store::{CookieStore as StoredCookieStore, RawCookie};
@@ -105,13 +107,35 @@ pub enum HttpError {
     JsonBody(#[from] serde_json::Error),
     #[error("could not access cookie jar {path}: {message}")]
     CookieJar { path: String, message: String },
+    #[error("OAuth 2.0 token request failed: {0}")]
+    OAuthToken(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct HttpEngine {
     client: Client,
     cookie_jar: Arc<PersistentCookieJar>,
+    oauth_tokens: Arc<Mutex<HashMap<OAuthTokenKey, CachedOAuthToken>>>,
 }
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct OAuthTokenKey {
+    token_url: String,
+    client_id: String,
+    scope: Option<String>,
+    client_secret_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct CachedOAuthToken {
+    access_token: String,
+    token_type: String,
+    expires_at: Instant,
+}
+
+const OAUTH_CACHE_SKEW: Duration = Duration::from_secs(30);
+const MAX_OAUTH_RESPONSE_BYTES: usize = 1_048_576;
+const MAX_OAUTH_CACHED_TOKENS: usize = 128;
 
 const MAX_COOKIE_JAR_BYTES: usize = 1_048_576;
 
@@ -376,7 +400,11 @@ impl HttpEngine {
             Some(path) => HttpError::CaCertificate { path, source },
             None => HttpError::Client(source),
         })?;
-        Ok(Self { client, cookie_jar })
+        Ok(Self {
+            client,
+            cookie_jar,
+            oauth_tokens: Arc::new(Mutex::new(HashMap::new())),
+        })
     }
 
     /// Add a manually-authored cookie to the jar for a URL.
@@ -485,6 +513,127 @@ impl HttpEngine {
         })
     }
 
+    async fn oauth_access_token(
+        &self,
+        auth: &Auth,
+        context: &VariableContext,
+    ) -> Result<Option<CachedOAuthToken>, HttpError> {
+        let Auth::OAuth2ClientCredentials {
+            token_url,
+            client_id,
+            client_secret,
+            scope,
+        } = auth
+        else {
+            return Ok(None);
+        };
+
+        let token_url = context.resolve(token_url).value;
+        let client_id = context.resolve(client_id).value;
+        let client_secret = context.resolve(client_secret).value;
+        let scope = scope
+            .as_deref()
+            .map(|value| context.resolve(value).value)
+            .filter(|value| !value.trim().is_empty());
+        let key = OAuthTokenKey {
+            token_url: token_url.clone(),
+            client_id: client_id.clone(),
+            scope: scope.clone(),
+            client_secret_fingerprint: secret_fingerprint(&client_secret),
+        };
+        let now = Instant::now();
+        {
+            let mut token_cache = self
+                .oauth_tokens
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            token_cache.retain(|_, cached| cached.expires_at > now);
+            if let Some(cached) = token_cache
+                .get(&key)
+                .filter(|cached| cached.expires_at > now + OAUTH_CACHE_SKEW)
+                .cloned()
+            {
+                return Ok(Some(cached));
+            }
+        }
+
+        let token_url = Url::parse(&token_url).map_err(|error| {
+            HttpError::OAuthToken(format!("invalid token endpoint URL: {error}"))
+        })?;
+        let mut form = vec![
+            ("grant_type", "client_credentials".to_owned()),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ];
+        if let Some(scope) = scope {
+            form.push(("scope", scope));
+        }
+        let mut response = self
+            .client
+            .post(token_url)
+            .form(&form)
+            .send()
+            .await
+            .map_err(|error| {
+                HttpError::OAuthToken(format!("could not reach token endpoint: {error}"))
+            })?;
+        let status = response.status();
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            HttpError::OAuthToken(format!("could not read token response: {error}"))
+        })? {
+            if body.len().saturating_add(chunk.len()) > MAX_OAUTH_RESPONSE_BYTES {
+                return Err(HttpError::OAuthToken(format!(
+                    "token response exceeds {MAX_OAUTH_RESPONSE_BYTES} bytes"
+                )));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        if !status.is_success() {
+            return Err(HttpError::OAuthToken(format!(
+                "token endpoint returned HTTP {}",
+                status.as_u16()
+            )));
+        }
+        let payload: serde_json::Value = serde_json::from_slice(&body).map_err(|error| {
+            HttpError::OAuthToken(format!("token response is not valid JSON: {error}"))
+        })?;
+        let access_token = payload
+            .get("access_token")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| HttpError::OAuthToken("token response has no access_token".to_owned()))?
+            .to_owned();
+        let token_type = payload
+            .get("token_type")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("Bearer")
+            .to_owned();
+        let expires_in = payload
+            .get("expires_in")
+            .and_then(serde_json::Value::as_u64)
+            .filter(|seconds| *seconds > OAUTH_CACHE_SKEW.as_secs());
+        let cached = CachedOAuthToken {
+            access_token,
+            token_type,
+            expires_at: now + Duration::from_secs(expires_in.unwrap_or(0)),
+        };
+        if expires_in.is_some() {
+            let mut token_cache = self
+                .oauth_tokens
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if token_cache.len() >= MAX_OAUTH_CACHED_TOKENS {
+                if let Some(oldest) = token_cache.keys().next().cloned() {
+                    token_cache.remove(&oldest);
+                }
+            }
+            token_cache.insert(key, cached.clone());
+        }
+        Ok(Some(cached))
+    }
+
     async fn prepare_builder(
         &self,
         request: &Request,
@@ -557,11 +706,18 @@ impl HttpEngine {
             }
         }
 
-        builder = apply_auth(builder, &request.auth, context)?;
         builder = apply_body(builder, &request.body, context).await?;
+        let oauth_token = self.oauth_access_token(&request.auth, context).await?;
+        builder = apply_auth(builder, &request.auth, context, oauth_token.as_ref())?;
 
         Ok(builder)
     }
+}
+
+fn secret_fingerprint(secret: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    secret.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn parse_set_cookie(value: &HeaderValue) -> Option<ResponseCookie> {
@@ -629,6 +785,7 @@ fn apply_auth(
     mut builder: reqwest::RequestBuilder,
     auth: &Auth,
     context: &VariableContext,
+    oauth_token: Option<&CachedOAuthToken>,
 ) -> Result<reqwest::RequestBuilder, HttpError> {
     match auth {
         Auth::None => {}
@@ -654,6 +811,14 @@ fn apply_auth(
                     builder = builder.query(&[(key, value)]);
                 }
             }
+        }
+        Auth::OAuth2ClientCredentials { .. } => {
+            let token = oauth_token
+                .ok_or_else(|| HttpError::OAuthToken("access token was not acquired".to_owned()))?;
+            builder = builder.header(
+                "authorization",
+                format!("{} {}", token.token_type, token.access_token),
+            );
         }
     }
     Ok(builder)
@@ -767,6 +932,19 @@ fn resolve_auth(diagnostics: &mut Vec<VariableDiagnostic>, auth: &Auth, context:
         Auth::ApiKey { key, value, .. } => {
             diagnostics.extend(context.resolve(key).diagnostics);
             diagnostics.extend(context.resolve(value).diagnostics);
+        }
+        Auth::OAuth2ClientCredentials {
+            token_url,
+            client_id,
+            client_secret,
+            scope,
+        } => {
+            diagnostics.extend(context.resolve(token_url).diagnostics);
+            diagnostics.extend(context.resolve(client_id).diagnostics);
+            diagnostics.extend(context.resolve(client_secret).diagnostics);
+            if let Some(scope) = scope {
+                diagnostics.extend(context.resolve(scope).diagnostics);
+            }
         }
     }
 }
@@ -1058,6 +1236,72 @@ mod tests {
         server.await.expect("mTLS server");
         assert_eq!(response.status, 200);
         assert_eq!(response.body_text(), "mtls-ok");
+    }
+
+    #[tokio::test]
+    async fn exchanges_and_caches_oauth_client_credentials_tokens() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut token_socket, _) = listener.accept().await.expect("token connection");
+            let token_request = read_request_headers(&mut token_socket).await;
+            assert!(token_request.contains("POST /oauth/token HTTP/1.1"));
+            assert!(token_request.contains("grant_type=client_credentials"));
+            assert!(token_request.contains("client_id=postly-client"));
+            assert!(token_request.contains("client_secret=local-secret"));
+            assert!(token_request.contains("scope=read%3Ausers"));
+            let token_body =
+                br#"{"access_token":"access-123","token_type":"Bearer","expires_in":3600}"#;
+            let token_response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                token_body.len(),
+                String::from_utf8_lossy(token_body)
+            );
+            token_socket
+                .write_all(token_response.as_bytes())
+                .await
+                .expect("token response");
+
+            for path in ["/first", "/second"] {
+                let (mut api_socket, _) = listener.accept().await.expect("API connection");
+                let api_request = read_request_headers(&mut api_socket).await;
+                assert!(api_request.contains(&format!("GET {path} HTTP/1.1")));
+                assert!(api_request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer access-123"));
+                api_socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                    )
+                    .await
+                    .expect("API response");
+            }
+        });
+
+        let mut context = VariableContext::default();
+        context.set_runtime("oauth_token_url", format!("http://{address}/oauth/token"));
+        context.set_runtime("oauth_client_id", "postly-client");
+        context.set_runtime("oauth_client_secret", "local-secret");
+        context.set_runtime("oauth_scope", "read:users");
+        let auth = Auth::OAuth2ClientCredentials {
+            token_url: "{{oauth_token_url}}".to_owned(),
+            client_id: "{{oauth_client_id}}".to_owned(),
+            client_secret: "{{oauth_client_secret}}".to_owned(),
+            scope: Some("{{oauth_scope}}".to_owned()),
+        };
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        for path in ["/first", "/second"] {
+            let mut request =
+                Request::new("OAuth request", "GET", format!("http://{address}{path}"));
+            request.auth = auth.clone();
+            let response = engine
+                .execute(&request, &context)
+                .await
+                .expect("OAuth response");
+            assert_eq!(response.status, 200);
+        }
+
+        server.await.expect("OAuth server");
     }
 
     #[tokio::test]

@@ -370,6 +370,21 @@ fn postman_auth(auth: &Auth) -> Option<Value> {
                 }, "type": "string" },
             ],
         }),
+        Auth::OAuth2ClientCredentials {
+            token_url,
+            client_id,
+            client_secret,
+            scope,
+        } => json!({
+            "type": "oauth2",
+            "oauth2": [
+                { "key": "grant_type", "value": "client_credentials", "type": "string" },
+                { "key": "accessTokenUrl", "value": token_url, "type": "string" },
+                { "key": "clientId", "value": client_id, "type": "string" },
+                { "key": "clientSecret", "value": client_secret, "type": "string" },
+                { "key": "scope", "value": scope.clone().unwrap_or_default(), "type": "string" },
+            ],
+        }),
     };
     Some(value)
 }
@@ -523,6 +538,37 @@ mod tests {
                 .expect("json");
         assert_eq!(document["name"], "Local");
         assert_eq!(document["values"][0]["type"], "secret");
+    }
+
+    #[test]
+    fn exports_oauth_client_credentials_for_postman() {
+        let directory = tempfile::tempdir().expect("workspace directory");
+        let workspace = Workspace::init(directory.path(), "Demo").expect("workspace");
+        let collection = workspace
+            .create_collection(&Collection::new("OAuth"))
+            .expect("collection");
+        let mut request = Request::new("OAuth request", "GET", "https://api.example.test/data");
+        request.auth = Auth::OAuth2ClientCredentials {
+            token_url: "https://auth.example.test/token".to_owned(),
+            client_id: "postly".to_owned(),
+            client_secret: "{{clientSecret}}".to_owned(),
+            scope: Some("read:users".to_owned()),
+        };
+        workspace
+            .save_request(&collection, &request)
+            .expect("request");
+
+        let export_path = directory.path().join("oauth.postman.json");
+        export_postman_collection(&workspace, &collection, &export_path).expect("export");
+        let document: Value =
+            serde_json::from_str(&fs::read_to_string(export_path).expect("export document"))
+                .expect("json");
+        assert_eq!(document["item"][0]["request"]["auth"]["type"], "oauth2");
+        let oauth = &document["item"][0]["request"]["auth"]["oauth2"];
+        assert_eq!(oauth[1]["key"], "accessTokenUrl");
+        assert_eq!(oauth[1]["value"], "https://auth.example.test/token");
+        assert_eq!(oauth[3]["value"], "{{clientSecret}}");
+        assert_eq!(oauth[4]["value"], "read:users");
     }
 
     #[test]

@@ -129,6 +129,23 @@
       }
     },
     {
+      "name": "OAuth client credentials",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/oauth-client",
+        "auth": {
+          "type": "oauth2",
+          "oauth2": [
+            { "key": "grant_type", "value": "client_credentials" },
+            { "key": "accessTokenUrl", "value": "{{baseUrl}}/oauth/token" },
+            { "key": "clientId", "value": "postly" },
+            { "key": "clientSecret", "value": "{{clientSecret}}" },
+            { "key": "scope", "value": "read:users" }
+          ]
+        }
+      }
+    },
+    {
       "name": "HTML payload",
       "request": {
         "method": "POST",

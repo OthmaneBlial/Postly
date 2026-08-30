@@ -93,6 +93,19 @@ read PEM files from disk; private-key contents are never command-line output
 or history data. `request`, `graphql`, `sse`, `send` and `run` accept the same
 HTTP proxy and certificate flags where the transport applies.
 
+Saved requests can use OAuth 2.0 Client Credentials without an account or
+cloud service. Configure the auth block in the native request file or through
+the GUI, then run it normally:
+
+~~~bash
+postly send ./my-api/collections/my-api/requests/private/users.postly.toml \
+  --environment Local --output-json
+~~~
+
+The token exchange is local to the current process and its access token is not
+written to history or the workspace. See [authentication](authentication.md)
+for the model and supported grant boundaries.
+
 ## Protocol commands
 
 ~~~bash

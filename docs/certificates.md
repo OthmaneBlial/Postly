@@ -43,7 +43,7 @@ under `crates/postly-core/testdata/tls/`; they are used to exercise both
 ordinary HTTPS with a custom CA and mutual TLS.
 
 This slice deliberately does not claim support for encrypted private keys,
-PKCS#12 containers, per-domain certificate association, WebSocket certificate
-routing or gRPC certificate routing. Those are separate follow-up
-capabilities. `--insecure` remains an explicit escape hatch and should only
-be used for a controlled local exception.
+PKCS#12 containers, per-domain certificate association or WebSocket certificate
+routing. gRPC CLI calls have their own HTTPS PEM CA/client-identity options;
+see [gRPC](grpc.md). `--insecure` remains an explicit escape hatch and should
+only be used for a controlled local exception.

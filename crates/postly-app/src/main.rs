@@ -142,6 +142,7 @@ enum AuthKind {
     Bearer,
     Basic,
     ApiKey,
+    OAuth2ClientCredentials,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,6 +193,7 @@ impl AuthKind {
             Self::Bearer => "Bearer token",
             Self::Basic => "Basic auth",
             Self::ApiKey => "API key",
+            Self::OAuth2ClientCredentials => "OAuth 2.0 client credentials",
         }
     }
 }
@@ -278,6 +280,8 @@ pub struct PostlyApp {
     auth_kind: AuthKind,
     auth_primary: String,
     auth_secondary: String,
+    auth_tertiary: String,
+    auth_quaternary: String,
     api_key_location: ApiKeyLocation,
     response_tab: ResponseTab,
     response_search: String,
@@ -361,6 +365,8 @@ impl PostlyApp {
             auth_kind: AuthKind::None,
             auth_primary: String::new(),
             auth_secondary: String::new(),
+            auth_tertiary: String::new(),
+            auth_quaternary: String::new(),
             api_key_location: ApiKeyLocation::Header,
             response_tab: ResponseTab::Pretty,
             response_search: String::new(),
@@ -566,18 +572,24 @@ impl PostlyApp {
                 self.auth_kind = AuthKind::None;
                 self.auth_primary.clear();
                 self.auth_secondary.clear();
+                self.auth_tertiary.clear();
+                self.auth_quaternary.clear();
                 self.api_key_location = ApiKeyLocation::Header;
             }
             Auth::Bearer { token } => {
                 self.auth_kind = AuthKind::Bearer;
                 self.auth_primary.clone_from(token);
                 self.auth_secondary.clear();
+                self.auth_tertiary.clear();
+                self.auth_quaternary.clear();
                 self.api_key_location = ApiKeyLocation::Header;
             }
             Auth::Basic { username, password } => {
                 self.auth_kind = AuthKind::Basic;
                 self.auth_primary.clone_from(username);
                 self.auth_secondary.clone_from(password);
+                self.auth_tertiary.clear();
+                self.auth_quaternary.clear();
                 self.api_key_location = ApiKeyLocation::Header;
             }
             Auth::ApiKey {
@@ -588,7 +600,22 @@ impl PostlyApp {
                 self.auth_kind = AuthKind::ApiKey;
                 self.auth_primary.clone_from(key);
                 self.auth_secondary.clone_from(value);
+                self.auth_tertiary.clear();
+                self.auth_quaternary.clear();
                 self.api_key_location = location.clone();
+            }
+            Auth::OAuth2ClientCredentials {
+                token_url,
+                client_id,
+                client_secret,
+                scope,
+            } => {
+                self.auth_kind = AuthKind::OAuth2ClientCredentials;
+                self.auth_primary.clone_from(token_url);
+                self.auth_secondary.clone_from(client_id);
+                self.auth_tertiary.clone_from(client_secret);
+                self.auth_quaternary = scope.clone().unwrap_or_default();
+                self.api_key_location = ApiKeyLocation::Header;
             }
         }
     }
@@ -729,6 +756,13 @@ impl PostlyApp {
                 key: self.auth_primary.clone(),
                 value: self.auth_secondary.clone(),
                 location: self.api_key_location.clone(),
+            },
+            AuthKind::OAuth2ClientCredentials => Auth::OAuth2ClientCredentials {
+                token_url: self.auth_primary.clone(),
+                client_id: self.auth_secondary.clone(),
+                client_secret: self.auth_tertiary.clone(),
+                scope: (!self.auth_quaternary.trim().is_empty())
+                    .then(|| self.auth_quaternary.clone()),
             },
         };
         Ok(request)
@@ -2087,6 +2121,7 @@ impl PostlyApp {
                     AuthKind::Bearer,
                     AuthKind::Basic,
                     AuthKind::ApiKey,
+                    AuthKind::OAuth2ClientCredentials,
                 ] {
                     ui.selectable_value(&mut self.auth_kind, kind, kind.label());
                 }
@@ -2148,6 +2183,43 @@ impl PostlyApp {
                 ui.label("Value");
                 if ui
                     .add(TextEdit::singleline(&mut self.auth_secondary).password(true))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+            }
+            AuthKind::OAuth2ClientCredentials => {
+                ui.label(
+                    RichText::new(
+                        "Client Credentials fetches a token locally and sends it as Authorization.",
+                    )
+                    .small()
+                    .color(MUTED),
+                );
+                ui.label("Token URL");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_primary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Client ID");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_secondary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Client secret");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_tertiary).password(true))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Scope (optional)");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_quaternary))
                     .changed()
                 {
                     self.dirty = true;
@@ -2974,6 +3046,12 @@ fn build_websocket_request(
             location: ApiKeyLocation::Query,
             ..
         } => {}
+        Auth::OAuth2ClientCredentials { .. } => {
+            return Err(
+                "OAuth 2.0 client credentials are currently supported for HTTP requests, not WebSockets"
+                    .to_owned(),
+            );
+        }
     }
     Ok(websocket_request)
 }
@@ -3293,6 +3371,34 @@ mod tests {
             .edited_request()
             .expect_err("GraphQL variables must be an object");
         assert!(error.contains("GraphQL variables are invalid"));
+    }
+
+    #[test]
+    fn oauth_client_credentials_editor_round_trips_authentication() {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.auth_kind = AuthKind::OAuth2ClientCredentials;
+        app.auth_primary = "{{tokenUrl}}".to_owned();
+        app.auth_secondary = "postly".to_owned();
+        app.auth_tertiary = "{{clientSecret}}".to_owned();
+        app.auth_quaternary = "read:users".to_owned();
+
+        let request = app.edited_request().expect("OAuth editor state");
+        assert_eq!(
+            request.auth,
+            Auth::OAuth2ClientCredentials {
+                token_url: "{{tokenUrl}}".to_owned(),
+                client_id: "postly".to_owned(),
+                client_secret: "{{clientSecret}}".to_owned(),
+                scope: Some("read:users".to_owned()),
+            }
+        );
+        let mut reopened = app;
+        reopened.request.auth = request.auth;
+        reopened.load_request_editors();
+        assert_eq!(reopened.auth_kind, AuthKind::OAuth2ClientCredentials);
+        assert_eq!(reopened.auth_primary, "{{tokenUrl}}");
+        assert_eq!(reopened.auth_tertiary, "{{clientSecret}}");
     }
 
     #[test]

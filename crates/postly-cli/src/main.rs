@@ -1685,6 +1685,9 @@ fn build_websocket_request(
                 .insert(HeaderName::from_static("authorization"), value);
         }
         Auth::ApiKey { .. } => unreachable!("CLI auth flags do not create API keys"),
+        Auth::OAuth2ClientCredentials { .. } => {
+            unreachable!("CLI auth flags do not create OAuth 2.0 credentials")
+        }
     }
     Ok(websocket_request)
 }

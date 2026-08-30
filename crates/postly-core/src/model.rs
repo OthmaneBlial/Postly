@@ -277,6 +277,13 @@ pub enum Auth {
         #[serde(default)]
         location: ApiKeyLocation,
     },
+    OAuth2ClientCredentials {
+        token_url: String,
+        client_id: String,
+        client_secret: String,
+        #[serde(default)]
+        scope: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
