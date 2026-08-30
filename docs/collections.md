@@ -18,11 +18,11 @@ my-api/
 
 Request files are independent merge units. The collection file stores metadata and collection-scoped variables; request files store method, URL, parameters, headers, body, auth, scripts and examples.
 
-Environment files may contain secrets. Keep local secret files ignored and commit a redacted template when sharing a project:
+Environment files may contain secrets. Postly ignores runtime environment files by default; keep local values there and commit a separate redacted template when sharing a project:
 
 ~~~text
 environments/staging.postly-env.toml
-environments/staging.postly-env.local.toml
+environments/staging.example.toml
 ~~~
 
 The current CLI reads enabled environment values and resolves scopes in this order:

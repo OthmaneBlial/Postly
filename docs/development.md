@@ -23,3 +23,9 @@ git status --ignored --short
 ~~~
 
 Do not place tokens, real environment values, customer data or private certificates in fixtures. Use local deterministic servers for network integration tests as the protocol surface grows.
+
+The CLI environment command stores values locally and only prints the environment name and count, never the values:
+
+~~~bash
+postly env set --workspace ./project --name Local --set baseUrl=http://127.0.0.1:8080 --secret token=replace-me
+~~~

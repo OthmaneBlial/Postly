@@ -9,7 +9,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use postly_core::{
     import_environment, import_postman_collection, run_requests, Auth, Collection, EngineOptions,
-    HeaderEntry, HttpEngine, Request, RequestBody, RunnerOptions, VariableContext, Workspace,
+    Environment, EnvironmentVariable, HeaderEntry, HttpEngine, Request, RequestBody, RunnerOptions,
+    VariableContext, Workspace,
 };
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
@@ -28,6 +29,7 @@ struct Cli {
 struct ImmediateRequestOptions {
     url: String,
     method: String,
+    query: Vec<String>,
     headers: Vec<String>,
     data: Option<String>,
     json_body: Option<String>,
@@ -46,6 +48,7 @@ struct NewRequestOptions {
     url: String,
     method: String,
     folder: Option<String>,
+    query: Vec<String>,
     headers: Vec<String>,
     data: Option<String>,
     json_body: Option<String>,
@@ -80,6 +83,8 @@ enum Command {
         url: String,
         #[arg(short, long, default_value = "GET")]
         method: String,
+        #[arg(long = "query")]
+        query: Vec<String>,
         #[arg(short = 'H', long = "header")]
         headers: Vec<String>,
         #[arg(long)]
@@ -115,6 +120,11 @@ enum Command {
     Import {
         #[command(subcommand)]
         kind: ImportKind,
+    },
+    /// Create or update a local environment without printing its values.
+    Env {
+        #[command(subcommand)]
+        kind: EnvKind,
     },
     /// List collections and saved requests in a workspace.
     List {
@@ -152,6 +162,8 @@ enum NewKind {
         url: String,
         #[arg(short, long, default_value = "GET")]
         method: String,
+        #[arg(long = "query")]
+        query: Vec<String>,
         #[arg(long)]
         folder: Option<String>,
         #[arg(short = 'H', long = "header")]
@@ -166,6 +178,20 @@ enum NewKind {
         basic_user: Option<String>,
         #[arg(long)]
         basic_password: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum EnvKind {
+    Set {
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long = "set")]
+        values: Vec<String>,
+        #[arg(long = "secret")]
+        secrets: Vec<String>,
     },
 }
 
@@ -202,6 +228,7 @@ async fn main() -> Result<()> {
                 name,
                 url,
                 method,
+                query,
                 folder,
                 headers,
                 data,
@@ -216,6 +243,7 @@ async fn main() -> Result<()> {
                 url,
                 method,
                 folder,
+                query,
                 headers,
                 data,
                 json_body: json,
@@ -227,6 +255,7 @@ async fn main() -> Result<()> {
         Command::Request {
             url,
             method,
+            query,
             headers,
             data,
             json,
@@ -240,6 +269,7 @@ async fn main() -> Result<()> {
             send_unsaved_request(ImmediateRequestOptions {
                 url,
                 method,
+                query,
                 headers,
                 data,
                 json_body: json,
@@ -269,6 +299,14 @@ async fn main() -> Result<()> {
             .await
         }
         Command::Import { kind } => import_command(kind),
+        Command::Env { kind } => match kind {
+            EnvKind::Set {
+                workspace,
+                name,
+                values,
+                secrets,
+            } => set_environment(&workspace, &name, &values, &secrets),
+        },
         Command::List { path } => list_workspace(&path),
         Command::Run {
             path,
@@ -322,6 +360,7 @@ fn create_request(options: NewRequestOptions) -> Result<()> {
         .with_context(|| format!("could not create collection {}", options.collection))?;
     let mut request = Request::new(options.name, options.method, options.url);
     request.folder = options.folder;
+    request.query = parse_pairs_flags(&options.query)?;
     request.headers = parse_headers(&options.headers)?;
     request.auth = parse_auth_flags(options.bearer, options.basic_user, options.basic_password)?;
     request.body = parse_cli_body(options.data, options.json_body)?;
@@ -332,6 +371,7 @@ fn create_request(options: NewRequestOptions) -> Result<()> {
 
 async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
     let mut request = Request::new("CLI request", options.method, options.url);
+    request.query = parse_pairs_flags(&options.query)?;
     request.headers = parse_headers(&options.headers)?;
     request.auth = parse_auth_flags(options.bearer, options.basic_user, options.basic_password)?;
     request.body = parse_cli_body(options.data, options.json_body)?;
@@ -375,6 +415,46 @@ fn import_command(kind: ImportKind) -> Result<()> {
         ImportKind::Environment { input, output } => import_environment(input, output)?,
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn set_environment(
+    workspace_path: &Path,
+    name: &str,
+    values: &[String],
+    secrets: &[String],
+) -> Result<()> {
+    let workspace = Workspace::open_or_init(workspace_path, "Postly workspace")?;
+    let mut environment = workspace
+        .environments()?
+        .into_iter()
+        .find(|(_, environment)| environment.name == name)
+        .map(|(_, environment)| environment)
+        .unwrap_or_else(|| Environment::new(name));
+    for assignment in values {
+        let (key, value) = parse_assignment(assignment)?;
+        environment
+            .variables
+            .insert(key.to_owned(), EnvironmentVariable::plain(value));
+    }
+    for assignment in secrets {
+        let (key, value) = parse_assignment(assignment)?;
+        environment.variables.insert(
+            key.to_owned(),
+            EnvironmentVariable {
+                value: value.to_owned(),
+                enabled: true,
+                secret: true,
+            },
+        );
+    }
+    let path = workspace.save_environment(&environment)?;
+    println!(
+        "Saved environment {} with {} variables at {}",
+        environment.name,
+        environment.variables.len(),
+        path.display()
+    );
     Ok(())
 }
 
@@ -602,6 +682,28 @@ fn parse_headers(headers: &[String]) -> Result<Vec<HeaderEntry>> {
             Ok(HeaderEntry::enabled(key.trim(), value.trim()))
         })
         .collect()
+}
+
+fn parse_pairs_flags(values: &[String]) -> Result<Vec<postly_core::KeyValue>> {
+    values
+        .iter()
+        .map(|value| {
+            let (key, value) = value
+                .split_once('=')
+                .with_context(|| format!("query must use KEY=VALUE syntax: {value}"))?;
+            Ok(postly_core::KeyValue::enabled(key.trim(), value.trim()))
+        })
+        .collect()
+}
+
+fn parse_assignment(value: &str) -> Result<(&str, &str)> {
+    let (key, value) = value
+        .split_once('=')
+        .with_context(|| format!("environment value must use KEY=VALUE syntax: {value}"))?;
+    if key.trim().is_empty() {
+        bail!("environment variable key cannot be empty");
+    }
+    Ok((key.trim(), value))
 }
 
 fn parse_auth_flags(

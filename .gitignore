@@ -14,6 +14,7 @@ bench-generated/
 .env
 .env.local
 *.postly-env.local.toml
+environments/*.postly-env.toml
 
 # Editor / OS files
 .DS_Store

@@ -23,7 +23,8 @@ Postly is an open-source, Rust-first API development workspace designed around l
 
 ~~~bash
 cargo run -- init ./my-api --name "My API"
-cargo run -- new request --workspace ./my-api --collection "My API" --name health https://example.com/health
+cargo run -- new request --workspace ./my-api --collection "My API" --name health https://example.com/health --query "probe=1"
+cargo run -- env set --workspace ./my-api --name Local --set baseUrl=https://example.com
 cargo run -- request https://httpbin.org/get
 cargo run -- list ./my-api
 ~~~
@@ -40,6 +41,7 @@ Send a saved request:
 
 ~~~bash
 cargo run -- send ./my-api/collections/my-api/requests/health.postly.toml
+cargo run -- send ./my-api/collections/my-api/requests/health.postly.toml --environment Local
 ~~~
 
 The CLI can emit machine-readable response data with --output-json. postly run executes saved requests in deterministic path order and returns a failing exit code when a request returns a 4xx/5xx or cannot be sent.
