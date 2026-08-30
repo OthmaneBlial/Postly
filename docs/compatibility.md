@@ -2,6 +2,19 @@
 
 Compatibility numbers are not published until they come from executable fixtures. The current evidence is the fixtures in compat/postman-import/ and the importer unit coverage, including structured URL/body/auth variants and explicit review warnings.
 
+Run the measured fixture report locally:
+
+~~~bash
+cargo xtask compat
+cargo xtask compat --json > compat-generated/local.json
+~~~
+
+The report has two deliberately separate scores. `fixture_execution` tells us
+whether every checked-in fixture still imports successfully. `request_mapping`
+counts imported requests that require no manual review; it is a fixture-backed
+mapping signal, not a behavioral parity percentage for all of Postman. Warnings
+and manual-review cases remain visible in the report.
+
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Postman Collection v2.1 JSON parsing | working slice | importer tests and fixture |
@@ -23,6 +36,6 @@ Compatibility numbers are not published until they come from executable fixtures
 | Server-Sent Events | CLI and native GUI streaming slice with cancellation and bounded reconnects using `Last-Event-ID` | chunked parser tests, local streaming/reconnect CLI integration tests and GUI worker/cancellation/reconnect tests |
 | WebSocket | CLI and native GUI bidirectional `ws://`/`wss://` slice with interactive text console, header/query auth and cancellation; reconnect policy remains CLI-only | local echo/reconnect integration tests, request-builder coverage and GUI worker/cancellation tests |
 | gRPC | local `.proto` discovery plus CLI/native GUI server reflection (v1 with v1alpha fallback), and dynamic unary/server/client/bidirectional streaming CLI and native GUI slice with persisted method metadata, HTTPS webpki roots, custom PEM CA and combined PEM client identity | protox descriptor tests, local tonic HTTP/2 reflection/call integration tests for all four CLI call modes, GUI editor round-trip and native GUI reflection worker coverage |
-| Postman behavioral parity | not measured | no percentage claimed |
+| Postman behavioral parity | not measured; fixture execution and request-mapping signals are available via `cargo xtask compat` | no full behavioral percentage claimed |
 
 Any future score must count semantic cases, exclude placeholders and retain failing fixtures as regressions.

@@ -9,6 +9,7 @@ target/
 tmp/
 *.log
 bench-generated/
+compat-generated/
 dist/
 fuzz/target/
 fuzz/artifacts/

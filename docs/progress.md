@@ -76,6 +76,9 @@ Implemented:
 - A local `cargo xtask bench` harness measures real Postman import and generated
   1,000-request workspace open/search operations without publishing invented
   competitor comparisons.
+- `cargo xtask compat` executes checked-in Postman collection/environment and
+  OpenAPI fixtures, reporting fixture execution separately from manual-review
+  request mapping instead of claiming full behavioral parity.
 - Local `cargo xtask fuzz` targets cURL parsing, variable interpolation and
   malformed Postman imports with a bounded smoke run; fuzz artifacts remain
   ignored and no GitHub Actions workflow is required.

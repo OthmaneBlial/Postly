@@ -5,7 +5,9 @@ use std::{
     time::Instant,
 };
 
-use postly_core::{import_postman_collection, Collection, Request, Workspace};
+use postly_core::{
+    import_environment, import_openapi, import_postman_collection, Collection, Request, Workspace,
+};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -46,10 +48,11 @@ fn main() -> ExitCode {
                 && run("cargo", &["test", "--workspace", "--all-targets"])
         }
         "bench" => run_benchmarks(json_output),
+        "compat" => run_compatibility(json_output),
         "fuzz" => run_fuzz_smoke(),
         "package" => package_release(),
         "help" | "--help" => {
-            println!("cargo xtask check|fmt|lint|test|bench|fuzz|package [--json]");
+            println!("cargo xtask check|fmt|lint|test|compat|bench|fuzz|package [--json]");
             true
         }
         other => {
@@ -135,6 +138,256 @@ fn run_fuzz_smoke() -> bool {
                 ],
             )
         })
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CompatibilityFixtureResult {
+    kind: String,
+    fixture: String,
+    status: String,
+    imported_requests: usize,
+    fully_supported_requests: usize,
+    manual_review_requests: usize,
+    warnings: usize,
+    error: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CompatibilityReport {
+    scope: &'static str,
+    fixtures: Vec<CompatibilityFixtureResult>,
+    fixture_execution: CompatibilityScore,
+    request_mapping: CompatibilityScore,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CompatibilityScore {
+    passed: usize,
+    total: usize,
+    percent: f64,
+}
+
+fn run_compatibility(json_output: bool) -> bool {
+    match collect_compatibility() {
+        Ok(report) => {
+            if json_output {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report)
+                        .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"))
+                );
+            } else {
+                println!("Postly fixture-backed compatibility report");
+                println!("scope: {}", report.scope);
+                println!();
+                println!(
+                    "{:<10} {:<12} {:>10} {:>10} {:>10}",
+                    "status", "fixture", "requests", "mapped", "review"
+                );
+                for fixture in &report.fixtures {
+                    println!(
+                        "{:<10} {:<12} {:>10} {:>10} {:>10}",
+                        fixture.status,
+                        fixture.fixture,
+                        fixture.imported_requests,
+                        fixture.fully_supported_requests,
+                        fixture.manual_review_requests
+                    );
+                    if let Some(error) = &fixture.error {
+                        println!("  error: {error}");
+                    }
+                }
+                println!();
+                println!(
+                    "fixture execution: {:.1}% ({}/{})",
+                    report.fixture_execution.percent,
+                    report.fixture_execution.passed,
+                    report.fixture_execution.total
+                );
+                println!(
+                    "request mapping: {:.1}% ({}/{}) — manual-review cases remain visible",
+                    report.request_mapping.percent,
+                    report.request_mapping.passed,
+                    report.request_mapping.total
+                );
+            }
+            report.fixture_execution.passed == report.fixture_execution.total
+        }
+        Err(error) => {
+            eprintln!("compatibility report failed: {error}");
+            false
+        }
+    }
+}
+
+fn collect_compatibility() -> Result<CompatibilityReport, String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut fixtures = Vec::new();
+    let postman_dir = root.join("compat/postman-import");
+    let mut postman_fixtures = json_files(&postman_dir)?;
+    postman_fixtures.retain(|path| {
+        path.file_name().and_then(|name| name.to_str()) != Some("basic-environment.json")
+    });
+    for fixture in postman_fixtures {
+        let output = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let relative = display_relative(&root, &fixture);
+        let result = import_postman_collection(&fixture, output.path());
+        fixtures.push(match result {
+            Ok(report) => CompatibilityFixtureResult {
+                kind: "postman_collection".to_owned(),
+                fixture: relative,
+                status: "passed".to_owned(),
+                imported_requests: report.imported_requests,
+                fully_supported_requests: report.fully_supported_requests,
+                manual_review_requests: report.manual_review_requests,
+                warnings: report.warnings.len(),
+                error: None,
+            },
+            Err(error) => CompatibilityFixtureResult {
+                kind: "postman_collection".to_owned(),
+                fixture: relative,
+                status: "failed".to_owned(),
+                imported_requests: 0,
+                fully_supported_requests: 0,
+                manual_review_requests: 0,
+                warnings: 0,
+                error: Some(error.to_string()),
+            },
+        });
+    }
+
+    let environment_fixture = postman_dir.join("basic-environment.json");
+    if !environment_fixture.is_file() {
+        return Err(format!(
+            "compatibility fixture is missing: {}",
+            environment_fixture.display()
+        ));
+    }
+    let output = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let relative = display_relative(&root, &environment_fixture);
+    fixtures.push(
+        match import_environment(&environment_fixture, output.path()) {
+            Ok(report) => CompatibilityFixtureResult {
+                kind: "postman_environment".to_owned(),
+                fixture: relative,
+                status: "passed".to_owned(),
+                imported_requests: 0,
+                fully_supported_requests: 0,
+                manual_review_requests: 0,
+                warnings: report.warnings.len(),
+                error: None,
+            },
+            Err(error) => CompatibilityFixtureResult {
+                kind: "postman_environment".to_owned(),
+                fixture: relative,
+                status: "failed".to_owned(),
+                imported_requests: 0,
+                fully_supported_requests: 0,
+                manual_review_requests: 0,
+                warnings: 0,
+                error: Some(error.to_string()),
+            },
+        },
+    );
+
+    for fixture in json_files(&root.join("compat/openapi"))?
+        .into_iter()
+        .chain(yaml_files(&root.join("compat/openapi"))?)
+    {
+        let output = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let relative = display_relative(&root, &fixture);
+        fixtures.push(match import_openapi(&fixture, output.path()) {
+            Ok(report) => CompatibilityFixtureResult {
+                kind: "openapi".to_owned(),
+                fixture: relative,
+                status: "passed".to_owned(),
+                imported_requests: report.imported_operations,
+                fully_supported_requests: report.imported_operations,
+                manual_review_requests: 0,
+                warnings: report.warnings.len(),
+                error: None,
+            },
+            Err(error) => CompatibilityFixtureResult {
+                kind: "openapi".to_owned(),
+                fixture: relative,
+                status: "failed".to_owned(),
+                imported_requests: 0,
+                fully_supported_requests: 0,
+                manual_review_requests: 0,
+                warnings: 0,
+                error: Some(error.to_string()),
+            },
+        });
+    }
+
+    let passed_fixtures = fixtures
+        .iter()
+        .filter(|fixture| fixture.status == "passed")
+        .count();
+    let mapped = fixtures
+        .iter()
+        .map(|fixture| fixture.fully_supported_requests)
+        .sum();
+    let requests = fixtures
+        .iter()
+        .map(|fixture| fixture.imported_requests)
+        .sum();
+    Ok(CompatibilityReport {
+        scope: "checked-in Postman collection/environment and OpenAPI fixtures; not full Postman behavioral parity",
+        fixture_execution: score(passed_fixtures, fixtures.len()),
+        request_mapping: score(mapped, requests),
+        fixtures,
+    })
+}
+
+fn score(passed: usize, total: usize) -> CompatibilityScore {
+    CompatibilityScore {
+        passed,
+        total,
+        percent: if total == 0 {
+            0.0
+        } else {
+            (passed as f64 / total as f64) * 100.0
+        },
+    }
+}
+
+fn json_files(directory: &Path) -> Result<Vec<std::path::PathBuf>, String> {
+    files_with_extensions(directory, &["json"])
+}
+
+fn yaml_files(directory: &Path) -> Result<Vec<std::path::PathBuf>, String> {
+    files_with_extensions(directory, &["yaml", "yml"])
+}
+
+fn files_with_extensions(
+    directory: &Path,
+    extensions: &[&str],
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let mut files = fs::read_dir(directory)
+        .map_err(|error| format!("{}: {error}", directory.display()))?
+        .map(|entry| {
+            entry
+                .map(|entry| entry.path())
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    files.retain(|path| {
+        path.is_file()
+            && path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extensions.contains(&extension))
+    });
+    files.sort();
+    Ok(files)
+}
+
+fn display_relative(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 fn package_release() -> bool {

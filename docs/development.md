@@ -7,6 +7,7 @@ cargo xtask fmt
 cargo xtask lint
 cargo xtask test
 cargo xtask check
+cargo xtask compat
 cargo xtask bench
 cargo xtask fuzz
 cargo xtask package
@@ -30,6 +31,12 @@ Do not place tokens, real environment values, customer data or private certifica
 `cargo xtask bench` measures real local import and workspace/search operations.
 Keep generated JSON under the ignored `bench-generated/` directory and record
 machine, revision and methodology before sharing a result.
+
+`cargo xtask compat` executes every checked-in Postman collection/environment and
+OpenAPI fixture. It reports fixture execution separately from request mapping:
+manual-review requests remain counted as imported but are excluded from the
+fully-supported mapping score. This is fixture evidence, not a claim of full
+Postman behavioral parity.
 
 `cargo xtask package` builds a locked release locally and creates ignored
 `dist/` artifacts with SHA-256 checksums. See [packaging](packaging.md) for the

@@ -266,6 +266,7 @@ cargo xtask test
 cargo xtask check
 
 # Local benchmark and fuzz smoke runs
+cargo xtask compat
 cargo xtask bench
 cargo xtask fuzz
 
