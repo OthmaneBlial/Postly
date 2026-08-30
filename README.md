@@ -241,7 +241,7 @@ Postly is intentionally growing from a strong HTTP foundation:
 | Server-Sent Events | Chunk-safe progressive events, metadata, cancellation and bounded <code>Last-Event-ID</code> reconnects |
 | WebSocket | <code>ws://</code>/<code>wss://</code>, headers/auth, text and binary frames, ping/pong, console and bounded history |
 | gRPC | Dynamic <code>.proto</code> discovery plus unary, server-streaming, client-streaming and bidi CLI calls |
-| OpenAPI | 3.0/3.1 JSON/YAML request generation with local reference resolution |
+| OpenAPI | 3.0/3.1 JSON/YAML request generation with guarded local reference resolution |
 
 Reflection, schema explorers, richer protocol-specific GUI surfaces and deeper
 TLS/proxy parity remain active roadmap work. The matrix is the source of truth.

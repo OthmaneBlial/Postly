@@ -18,7 +18,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | Native response viewer | working GUI slice | virtualized line rows, search, copy, local save and wrapping |
 | collection runner | sequential HTTP slice with iteration data, reporters and folder selection | CLI run |
 | cURL import | common request slice | curl parser tests and CLI round-trip |
-| OpenAPI 3.0/3.1 import | JSON/YAML operation and local `$ref` slice | OpenAPI fixtures and importer tests |
+| OpenAPI 3.0/3.1 import | JSON/YAML operations plus same-source-directory local `$ref` resolution | OpenAPI fixtures and importer tests |
 | GraphQL | structured core/CLI/GUI request editing and HTTP slice; schema explorer pending | GraphQL model, parser, GUI validation and local HTTP integration tests |
 | Server-Sent Events | CLI and native GUI streaming slice with cancellation and bounded reconnects using `Last-Event-ID` | chunked parser tests, local streaming/reconnect CLI integration tests and GUI worker/cancellation/reconnect tests |
 | WebSocket | CLI and native GUI bidirectional `ws://`/`wss://` slice with interactive text console, header/query auth and cancellation; reconnect policy remains CLI-only | local echo/reconnect integration tests, request-builder coverage and GUI worker/cancellation tests |

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs,
     path::{Path, PathBuf},
 };
@@ -68,7 +68,7 @@ pub fn import_openapi_text(
     let input_path = source.as_ref().to_path_buf();
     let document = parse_document(&input_path, text)?;
     let mut warnings = Vec::new();
-    let document = expand_references(&document, &mut warnings);
+    let document = expand_references(&document, &input_path, &mut warnings);
     let root = document
         .as_object()
         .ok_or(OpenApiImportError::NotAnObject)?;
@@ -151,7 +151,7 @@ pub fn import_openapi_text(
             };
             if operation.get("$ref").is_some() {
                 warnings.push(format!(
-                    "Skipped {method} {path_name}: operation references an external object."
+                    "Skipped {method} {path_name}: operation reference could not be resolved."
                 ));
                 continue;
             }
@@ -221,63 +221,192 @@ fn parse_document(path: &Path, text: &str) -> Result<Value, OpenApiImportError> 
     }
 }
 
-fn expand_references(document: &Value, warnings: &mut Vec<String>) -> Value {
-    fn expand(
-        value: &Value,
-        document: &Value,
-        warnings: &mut Vec<String>,
-        stack: &mut Vec<String>,
-    ) -> Value {
-        let Value::Object(object) = value else {
-            return match value {
-                Value::Array(values) => Value::Array(
-                    values
-                        .iter()
-                        .map(|value| expand(value, document, warnings, stack))
-                        .collect(),
-                ),
-                _ => value.clone(),
-            };
-        };
-
-        if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
-            if !reference.starts_with("#/") {
-                warnings.push(format!(
-                    "OpenAPI reference {reference} is external and needs manual review."
-                ));
-            } else if stack.contains(&reference.to_owned()) {
-                warnings.push(format!(
-                    "OpenAPI reference cycle detected at {reference}; it was left unresolved."
-                ));
-            } else if let Some(target) = document.pointer(&reference[1..]) {
-                stack.push(reference.to_owned());
-                let expanded_target = expand(target, document, warnings, stack);
-                stack.pop();
-                if let Value::Object(mut resolved) = expanded_target {
-                    for (key, value) in object {
-                        if key != "$ref" {
-                            resolved.insert(key.clone(), expand(value, document, warnings, stack));
-                        }
-                    }
-                    return Value::Object(resolved);
-                }
-                return expanded_target;
-            } else {
-                warnings.push(format!(
-                    "OpenAPI reference {reference} does not resolve locally."
-                ));
-            }
-        }
-
-        Value::Object(
-            object
-                .iter()
-                .map(|(key, value)| (key.clone(), expand(value, document, warnings, stack)))
-                .collect(),
-        )
+fn expand_references(document: &Value, source: &Path, warnings: &mut Vec<String>) -> Value {
+    struct Resolver<'a> {
+        source_root: Option<PathBuf>,
+        documents: HashMap<PathBuf, Value>,
+        warnings: &'a mut Vec<String>,
     }
 
-    expand(document, document, warnings, &mut Vec::new())
+    impl Resolver<'_> {
+        fn expand(
+            &mut self,
+            value: &Value,
+            document: &Value,
+            source: Option<&Path>,
+            stack: &mut Vec<String>,
+        ) -> Value {
+            let Value::Object(object) = value else {
+                return match value {
+                    Value::Array(values) => Value::Array(
+                        values
+                            .iter()
+                            .map(|value| self.expand(value, document, source, stack))
+                            .collect(),
+                    ),
+                    _ => value.clone(),
+                };
+            };
+
+            if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+                let (path_part, fragment) = reference.split_once('#').unwrap_or((reference, ""));
+                let (target_document, target_source, reference_key) = if path_part.is_empty() {
+                    (
+                        document.clone(),
+                        source.map(Path::to_path_buf),
+                        format!("{}#{fragment}", source_label(source)),
+                    )
+                } else if let Some((path, loaded)) = self.load_external_document(source, path_part)
+                {
+                    (
+                        loaded,
+                        Some(path.clone()),
+                        format!("{}#{fragment}", path.display()),
+                    )
+                } else {
+                    return self.expand_object(object, document, source, stack);
+                };
+
+                if stack.contains(&reference_key) {
+                    self.warnings.push(format!(
+                        "OpenAPI reference cycle detected at {reference}; it was left unresolved."
+                    ));
+                    return self.expand_object(object, document, source, stack);
+                }
+                let target = if fragment.is_empty() {
+                    Some(&target_document)
+                } else if fragment.starts_with('/') {
+                    target_document.pointer(fragment)
+                } else {
+                    self.warnings.push(format!(
+                        "OpenAPI reference {reference} has an unsupported fragment; it was left unresolved."
+                    ));
+                    None
+                };
+                if let Some(target) = target {
+                    stack.push(reference_key);
+                    let expanded_target =
+                        self.expand(target, &target_document, target_source.as_deref(), stack);
+                    stack.pop();
+                    if let Value::Object(mut resolved) = expanded_target {
+                        for (key, value) in object {
+                            if key != "$ref" {
+                                resolved.insert(
+                                    key.clone(),
+                                    self.expand(value, document, source, stack),
+                                );
+                            }
+                        }
+                        return Value::Object(resolved);
+                    }
+                    return expanded_target;
+                }
+            }
+
+            self.expand_object(object, document, source, stack)
+        }
+
+        fn expand_object(
+            &mut self,
+            object: &Map<String, Value>,
+            document: &Value,
+            source: Option<&Path>,
+            stack: &mut Vec<String>,
+        ) -> Value {
+            Value::Object(
+                object
+                    .iter()
+                    .map(|(key, value)| (key.clone(), self.expand(value, document, source, stack)))
+                    .collect(),
+            )
+        }
+
+        fn load_external_document(
+            &mut self,
+            source: Option<&Path>,
+            reference_path: &str,
+        ) -> Option<(PathBuf, Value)> {
+            let Some(source) = source else {
+                self.warnings.push(format!(
+                    "OpenAPI reference {reference_path} is external and has no local source file."
+                ));
+                return None;
+            };
+            let path = Path::new(reference_path);
+            if path.is_absolute() || reference_path.starts_with("file:") {
+                self.warnings.push(format!(
+                    "OpenAPI reference {reference_path} is an absolute path and was rejected."
+                ));
+                return None;
+            }
+            if reference_path.starts_with("http://") || reference_path.starts_with("https://") {
+                self.warnings.push(format!(
+                    "OpenAPI reference {reference_path} is a remote URL and needs manual review."
+                ));
+                return None;
+            }
+            let Some(source_root) = self.source_root.as_deref() else {
+                self.warnings.push(format!(
+                    "OpenAPI reference {reference_path} has no local source root."
+                ));
+                return None;
+            };
+            let candidate = source.parent().unwrap_or(source_root).join(path);
+            let Ok(canonical) = fs::canonicalize(&candidate) else {
+                self.warnings.push(format!(
+                    "OpenAPI reference {reference_path} does not resolve to a local file."
+                ));
+                return None;
+            };
+            if !canonical.starts_with(source_root) {
+                self.warnings.push(format!(
+                    "OpenAPI reference {reference_path} points outside the source directory and was rejected."
+                ));
+                return None;
+            }
+            if let Some(document) = self.documents.get(&canonical) {
+                return Some((canonical, document.clone()));
+            }
+            let text = match fs::read_to_string(&canonical) {
+                Ok(text) => text,
+                Err(error) => {
+                    self.warnings.push(format!(
+                        "OpenAPI reference {reference_path} could not be read: {error}."
+                    ));
+                    return None;
+                }
+            };
+            let document = match parse_document(&canonical, &text) {
+                Ok(document) => document,
+                Err(error) => {
+                    self.warnings.push(format!(
+                        "OpenAPI reference {reference_path} is invalid: {error}."
+                    ));
+                    return None;
+                }
+            };
+            self.documents.insert(canonical.clone(), document.clone());
+            Some((canonical, document))
+        }
+    }
+
+    let source = source.canonicalize().ok();
+    let source_root = source
+        .as_deref()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf);
+    let mut resolver = Resolver {
+        source_root,
+        documents: HashMap::new(),
+        warnings,
+    };
+    resolver.expand(document, document, source.as_deref(), &mut Vec::new())
+}
+
+fn source_label(source: Option<&Path>) -> String {
+    source
+        .map(|source| source.display().to_string())
+        .unwrap_or_else(|| "<inline>".to_owned())
 }
 
 fn resolve_server(
@@ -380,7 +509,8 @@ fn merge_parameters(
                 continue;
             };
             if object.get("$ref").is_some() {
-                warnings.push("Skipped a parameter reference; local reference resolution is not implemented yet.".to_owned());
+                warnings
+                    .push("Skipped a parameter reference that could not be resolved.".to_owned());
                 continue;
             }
             let key = (
@@ -825,5 +955,84 @@ mod tests {
             other => panic!("expected JSON body, got {other:?}"),
         }
         assert!(matches!(replace_user.1.auth, Auth::Bearer { .. }));
+    }
+
+    #[test]
+    fn resolves_external_local_references_and_rejects_source_traversal() {
+        let source = tempfile::tempdir().expect("source");
+        let output = tempfile::tempdir().expect("output");
+        let common = source.path().join("common.yaml");
+        fs::write(
+            &common,
+            r#"components:
+  schemas:
+    User:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Ada
+    Node:
+      type: object
+      properties:
+        child:
+          $ref: '#/components/schemas/Node'
+"#,
+        )
+        .expect("common schema");
+        let outside = source.path().join("..").join("postly-openapi-outside.yaml");
+        fs::write(
+            &outside,
+            r#"components:
+  schemas:
+    Secret:
+      type: string
+"#,
+        )
+        .expect("outside schema");
+        let root = source.path().join("openapi.yaml");
+        fs::write(
+            &root,
+            r#"openapi: 3.0.3
+info:
+  title: Multi-file API
+servers:
+  - url: https://api.example.test
+paths:
+  /users:
+    post:
+      operationId: createUser
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ./common.yaml#/components/schemas/User
+      parameters:
+        - $ref: ../postly-openapi-outside.yaml#/components/schemas/Secret
+components:
+  schemas:
+    Node:
+      $ref: ./common.yaml#/components/schemas/Node
+"#,
+        )
+        .expect("root document");
+
+        let report = import_openapi(&root, output.path()).expect("import");
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("outside the source directory")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("cycle detected")));
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let collections = workspace.collections().expect("collections");
+        let requests = workspace.requests(&collections[0]).expect("requests");
+        match &requests[0].1.body {
+            RequestBody::Json { value } => assert_eq!(value["name"], "Ada"),
+            other => panic!("expected resolved JSON body, got {other:?}"),
+        }
+        fs::remove_file(outside).expect("cleanup outside schema");
     }
 }

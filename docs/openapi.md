@@ -24,7 +24,7 @@ collection variables. Parameters without an
 example/default remain explicit `{{variable}}` placeholders and are reported
 as warnings rather than silently invented.
 
-The JSON report is part of the migration artifact. External or cyclic `$ref`
-graphs, OAuth coordination, binary/multipart body generation, OpenAPI
-2/Swagger documents and response examples still require manual review or a
-future milestone.
+The JSON report is part of the migration artifact. Cyclic graphs, remote or
+out-of-source `$ref` targets, OAuth coordination, binary/multipart body
+generation, OpenAPI 2/Swagger documents and response examples still require
+manual review or a future milestone.
