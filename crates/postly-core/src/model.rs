@@ -109,6 +109,10 @@ pub struct Request {
     pub name: String,
     pub method: String,
     pub url: String,
+    /// Optional dynamic gRPC configuration. HTTP requests keep this absent so
+    /// old request files remain compact and fully backward-compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grpc: Option<GrpcRequest>,
     #[serde(default)]
     pub folder: Option<String>,
     #[serde(default)]
@@ -140,6 +144,7 @@ impl Request {
             name: name.into(),
             method: method.into(),
             url: url.into(),
+            grpc: None,
             folder: None,
             description: None,
             query: Vec::new(),
@@ -151,6 +156,32 @@ impl Request {
             test_script: None,
             examples: Vec::new(),
             assertions: Vec::new(),
+        }
+    }
+}
+
+/// Persisted configuration for a dynamic gRPC request.
+///
+/// The protobuf descriptor is compiled from `proto` when the request runs;
+/// generated source code is never written into the workspace. Relative proto
+/// and include paths are resolved from the workspace root by the native GUI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GrpcRequest {
+    pub proto: String,
+    #[serde(default)]
+    pub includes: Vec<String>,
+    pub method: String,
+    #[serde(default)]
+    pub metadata: Vec<KeyValue>,
+}
+
+impl GrpcRequest {
+    pub fn new(proto: impl Into<String>, method: impl Into<String>) -> Self {
+        Self {
+            proto: proto.into(),
+            includes: Vec::new(),
+            method: method.into(),
+            metadata: Vec::new(),
         }
     }
 }

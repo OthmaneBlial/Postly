@@ -12,12 +12,15 @@ use chrono::Local;
 use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
-    export_curl_command, parse_curl_command, parse_graphql_response, parse_graphql_schema,
-    schema_introspection_query, ApiKeyLocation, Assertion, Auth, CancellationToken,
-    CollectionFiles, EngineOptions, Environment, GraphqlSchema, HeaderEntry, HistoryEntry,
-    HistoryFilter, HttpEngine, HttpResponse, KeyValue, MultipartPart, Request, RequestBody,
-    RequestSearchResult, ResponseView, SseEvent, SseParser, VariableContext, Workspace,
+    export_curl_command, message_from_json, message_to_json, parse_curl_command,
+    parse_graphql_response, parse_graphql_schema, schema_introspection_query, ApiKeyLocation,
+    Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions, Environment, GraphqlSchema,
+    GrpcRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse,
+    KeyValue, MultipartPart, Request, RequestBody, RequestSearchResult, ResponseView, SseEvent,
+    SseParser, VariableContext, Workspace,
 };
+use prost::Message as ProstMessage;
+use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::{
     connect_async,
@@ -27,11 +30,71 @@ use tokio_tungstenite::{
         Message,
     },
 };
+use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
 
 const ACCENT: Color32 = Color32::from_rgb(91, 141, 239);
 const MUTED: Color32 = Color32::from_rgb(145, 157, 177);
 const PANEL: Color32 = Color32::from_rgb(24, 29, 39);
 const SURFACE: Color32 = Color32::from_rgb(31, 37, 49);
+
+#[derive(Clone)]
+struct DynamicGrpcCodec {
+    output: MessageDescriptor,
+}
+
+struct DynamicGrpcEncoder;
+
+struct DynamicGrpcDecoder {
+    output: MessageDescriptor,
+}
+
+impl tonic::codec::Codec for DynamicGrpcCodec {
+    type Encode = DynamicMessage;
+    type Decode = DynamicMessage;
+    type Encoder = DynamicGrpcEncoder;
+    type Decoder = DynamicGrpcDecoder;
+
+    fn encoder(&mut self) -> Self::Encoder {
+        DynamicGrpcEncoder
+    }
+
+    fn decoder(&mut self) -> Self::Decoder {
+        DynamicGrpcDecoder {
+            output: self.output.clone(),
+        }
+    }
+}
+
+impl tonic::codec::Encoder for DynamicGrpcEncoder {
+    type Item = DynamicMessage;
+    type Error = tonic::Status;
+
+    fn encode(
+        &mut self,
+        item: Self::Item,
+        dst: &mut tonic::codec::EncodeBuf<'_>,
+    ) -> Result<(), Self::Error> {
+        ProstMessage::encode(&item, dst).map_err(|error| {
+            tonic::Status::internal(format!("could not encode protobuf message: {error}"))
+        })
+    }
+}
+
+impl tonic::codec::Decoder for DynamicGrpcDecoder {
+    type Item = DynamicMessage;
+    type Error = tonic::Status;
+
+    fn decode(
+        &mut self,
+        src: &mut tonic::codec::DecodeBuf<'_>,
+    ) -> Result<Option<Self::Item>, Self::Error> {
+        DynamicMessage::decode(self.output.clone(), src)
+            .map(Some)
+            .map_err(|error| {
+                tonic::Status::internal(format!("could not decode protobuf message: {error}"))
+            })
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EditorTab {
@@ -39,6 +102,7 @@ enum EditorTab {
     Headers,
     Cookies,
     Body,
+    Grpc,
     Auth,
     Scripts,
     Assertions,
@@ -60,6 +124,7 @@ enum ResponseTab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandPaletteAction {
     NewRequest,
+    NewGrpcRequest,
     SaveRequest,
     SendRequest,
     CancelOperation,
@@ -72,6 +137,7 @@ impl CommandPaletteAction {
     fn label(self) -> &'static str {
         match self {
             Self::NewRequest => "New request",
+            Self::NewGrpcRequest => "New gRPC request",
             Self::SaveRequest => "Save current request",
             Self::SendRequest => "Send current request",
             Self::CancelOperation => "Cancel active operation",
@@ -84,6 +150,7 @@ impl CommandPaletteAction {
     fn shortcut(self) -> &'static str {
         match self {
             Self::NewRequest => "⌘N",
+            Self::NewGrpcRequest => "",
             Self::SaveRequest => "⌘S",
             Self::SendRequest => "⌘↵",
             Self::CancelOperation => "Esc",
@@ -317,6 +384,10 @@ pub struct PostlyApp {
     graphql_query: String,
     graphql_variables: String,
     graphql_operation_name: String,
+    grpc_proto_path: String,
+    grpc_includes_text: String,
+    grpc_method: String,
+    grpc_metadata: Vec<KeyValue>,
     graphql_schema: Option<GraphqlSchema>,
     graphql_schema_search: String,
     graphql_schema_error: Option<String>,
@@ -338,6 +409,7 @@ pub struct PostlyApp {
     pending: Option<Receiver<Result<HttpResponse, String>>>,
     pending_request: Option<Request>,
     pending_graphql_schema: bool,
+    pending_grpc: bool,
     pending_cancellation: Option<CancellationToken>,
     sse_pending: Option<Receiver<Result<SseStreamUpdate, String>>>,
     sse_cancellation: Option<CancellationToken>,
@@ -412,6 +484,10 @@ impl PostlyApp {
             graphql_query: String::new(),
             graphql_variables: String::new(),
             graphql_operation_name: String::new(),
+            grpc_proto_path: String::new(),
+            grpc_includes_text: String::new(),
+            grpc_method: String::new(),
+            grpc_metadata: Vec::new(),
             graphql_schema: None,
             graphql_schema_search: String::new(),
             graphql_schema_error: None,
@@ -433,6 +509,7 @@ impl PostlyApp {
             pending: None,
             pending_request: None,
             pending_graphql_schema: false,
+            pending_grpc: false,
             pending_cancellation: None,
             sse_pending: None,
             sse_cancellation: None,
@@ -542,10 +619,23 @@ impl PostlyApp {
         self.selected_request = None;
         self.request_path = None;
         self.request = Request::new("New request", "GET", "https://example.com");
+        self.editor_tab = EditorTab::Params;
         self.load_request_editors();
         self.clear_response();
         self.dirty = true;
         self.status_message = "Draft request".to_owned();
+    }
+
+    fn new_grpc_request(&mut self) {
+        self.selected_request = None;
+        self.request_path = None;
+        self.request = Request::new("New gRPC request", "POST", "http://127.0.0.1:50051");
+        self.request.grpc = Some(GrpcRequest::new("api.proto", "/demo.Echo/Echo"));
+        self.load_request_editors();
+        self.editor_tab = EditorTab::Grpc;
+        self.clear_response();
+        self.dirty = true;
+        self.status_message = "gRPC draft request".to_owned();
     }
 
     fn refresh_history(&mut self) {
@@ -586,6 +676,18 @@ impl PostlyApp {
     }
 
     fn load_request_editors(&mut self) {
+        if let Some(grpc) = &self.request.grpc {
+            self.editor_tab = EditorTab::Grpc;
+            self.grpc_proto_path.clone_from(&grpc.proto);
+            self.grpc_includes_text = grpc.includes.join("\n");
+            self.grpc_method.clone_from(&grpc.method);
+            self.grpc_metadata = grpc.metadata.clone();
+        } else {
+            self.grpc_proto_path.clear();
+            self.grpc_includes_text.clear();
+            self.grpc_method.clear();
+            self.grpc_metadata.clear();
+        }
         self.assertion_json_text = self
             .request
             .assertions
@@ -634,6 +736,10 @@ impl PostlyApp {
                 self.body_kind = BodyKind::BinaryFile;
                 self.body_text.clear();
             }
+        }
+        if self.request.grpc.is_some() && matches!(self.body_kind, BodyKind::None) {
+            self.body_kind = BodyKind::Json;
+            self.body_text = "{}".to_owned();
         }
         self.pre_request_script = self.request.pre_request_script.clone().unwrap_or_default();
         self.test_script = self.request.test_script.clone().unwrap_or_default();
@@ -702,6 +808,7 @@ impl PostlyApp {
         self.pending = None;
         self.pending_request = None;
         self.pending_graphql_schema = false;
+        self.pending_grpc = false;
         self.pending_cancellation = None;
         self.sse_pending = None;
         self.sse_cancellation = None;
@@ -725,6 +832,7 @@ impl PostlyApp {
     fn palette_actions(&self) -> Vec<CommandPaletteAction> {
         vec![
             CommandPaletteAction::NewRequest,
+            CommandPaletteAction::NewGrpcRequest,
             CommandPaletteAction::SaveRequest,
             CommandPaletteAction::SendRequest,
             CommandPaletteAction::CancelOperation,
@@ -740,6 +848,7 @@ impl PostlyApp {
         self.command_palette_selected = 0;
         match action {
             CommandPaletteAction::NewRequest => self.new_request(),
+            CommandPaletteAction::NewGrpcRequest => self.new_grpc_request(),
             CommandPaletteAction::SaveRequest => {
                 if let Err(error) = self.save_current() {
                     self.status_message = format!("Save failed: {error}");
@@ -766,6 +875,7 @@ impl PostlyApp {
         self.selected_request = None;
         self.request_path = None;
         self.request = request;
+        self.editor_tab = EditorTab::Params;
         self.load_request_editors();
         self.clear_response();
         self.dirty = true;
@@ -1109,6 +1219,28 @@ impl PostlyApp {
                     .then(|| self.auth_quaternary.clone()),
             },
         };
+        if request.grpc.is_some() {
+            let proto = self.grpc_proto_path.trim();
+            if proto.is_empty() {
+                return Err("gRPC protobuf path is required".to_owned());
+            }
+            let method = self.grpc_method.trim();
+            if method.is_empty() {
+                return Err("gRPC method path is required".to_owned());
+            }
+            request.grpc = Some(GrpcRequest {
+                proto: proto.to_owned(),
+                includes: self
+                    .grpc_includes_text
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect(),
+                method: method.to_owned(),
+                metadata: self.grpc_metadata.clone(),
+            });
+        }
         Ok(request)
     }
 
@@ -1210,6 +1342,9 @@ impl PostlyApp {
             return Ok(());
         }
         let request = self.edited_request()?;
+        if request.grpc.is_some() {
+            return self.start_grpc_current(request);
+        }
         let context = self.context();
         let engine = self.configured_engine()?;
         let cancellation = CancellationToken::default();
@@ -1240,6 +1375,42 @@ impl PostlyApp {
         self.pending_request = Some(request);
         self.pending_cancellation = Some(cancellation);
         self.status_message = "Sending request…".to_owned();
+        Ok(())
+    }
+
+    fn start_grpc_current(&mut self, request: Request) -> Result<(), String> {
+        if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
+        {
+            return Ok(());
+        }
+        let context = self.context();
+        let transport = self.transport.clone();
+        let root = self.workspace.root().to_path_buf();
+        let cancellation = CancellationToken::default();
+        let worker_cancellation = cancellation.clone();
+        let (sender, receiver) = mpsc::channel();
+        let worker_request = request.clone();
+        thread::spawn(move || {
+            let result = (|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                runtime.block_on(async move {
+                    tokio::select! {
+                        result = execute_grpc_request(worker_request, context, transport, root) => result,
+                        _ = worker_cancellation.cancelled() => Err("gRPC call cancelled".to_owned()),
+                    }
+                })
+            })();
+            let _ = sender.send(result);
+        });
+        self.clear_response();
+        self.pending = Some(receiver);
+        self.pending_request = Some(request);
+        self.pending_grpc = true;
+        self.pending_cancellation = Some(cancellation);
+        self.status_message = "Calling gRPC method…".to_owned();
         Ok(())
     }
 
@@ -1641,8 +1812,10 @@ impl PostlyApp {
             .is_some_and(CancellationToken::is_cancelled);
         let request = self.pending_request.take();
         let schema_pending = self.pending_graphql_schema;
+        let grpc_pending = self.pending_grpc;
         self.pending = None;
         self.pending_graphql_schema = false;
+        self.pending_grpc = false;
         self.pending_cancellation = None;
         match result {
             Ok(response) => {
@@ -1711,7 +1884,11 @@ impl PostlyApp {
                     }
                 }
                 if cancelled {
-                    self.status_message = "Request cancelled".to_owned();
+                    self.status_message = if grpc_pending {
+                        "gRPC call cancelled".to_owned()
+                    } else {
+                        "Request cancelled".to_owned()
+                    };
                     self.response_error = None;
                 } else {
                     self.status_message = "Request failed".to_owned();
@@ -2292,6 +2469,17 @@ impl PostlyApp {
                         (EditorTab::Headers, "Headers"),
                         (EditorTab::Cookies, "Cookies"),
                         (EditorTab::Body, "Body"),
+                    ] {
+                        if tab_button(ui, self.editor_tab == tab, label).clicked() {
+                            self.editor_tab = tab;
+                        }
+                    }
+                    if self.request.grpc.is_some()
+                        && tab_button(ui, self.editor_tab == EditorTab::Grpc, "gRPC").clicked()
+                    {
+                        self.editor_tab = EditorTab::Grpc;
+                    }
+                    for (tab, label) in [
                         (EditorTab::Auth, "Auth"),
                         (EditorTab::Scripts, "Scripts"),
                         (EditorTab::Assertions, "Assertions"),
@@ -2417,12 +2605,78 @@ impl PostlyApp {
                         );
                     }
                     EditorTab::Body => self.render_body(ui),
+                    EditorTab::Grpc => self.render_grpc(ui),
                     EditorTab::Auth => self.render_auth(ui),
                     EditorTab::Scripts => self.render_scripts(ui),
                     EditorTab::Assertions => self.render_assertions(ui),
                     EditorTab::Transport => self.render_transport(ui),
                 }
             });
+    }
+
+    fn render_grpc(&mut self, ui: &mut egui::Ui) {
+        ui.heading(RichText::new("gRPC method").color(Color32::WHITE));
+        ui.label(
+            RichText::new(
+                "Compile a local .proto file at send time. The JSON body is converted through the method descriptor.",
+            )
+            .small()
+            .color(MUTED),
+        );
+        ui.add_space(10.0);
+        let mut changed = false;
+        changed |= labeled_singleline(ui, "Proto file", &mut self.grpc_proto_path);
+        ui.label(
+            RichText::new("Relative paths use the workspace root; one include directory per line.")
+                .small()
+                .color(MUTED),
+        );
+        ui.add_space(5.0);
+        ui.label(
+            RichText::new("Include directories")
+                .strong()
+                .color(Color32::WHITE),
+        );
+        changed |= ui
+            .add(
+                TextEdit::multiline(&mut self.grpc_includes_text)
+                    .font(TextStyle::Monospace)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("proto\nthird_party/protos"),
+            )
+            .changed();
+        ui.add_space(7.0);
+        changed |= labeled_singleline(ui, "Method path", &mut self.grpc_method);
+        ui.label(
+            RichText::new("Examples: /demo.Echo/Echo, demo.Echo/Echo or Echo/Echo")
+                .small()
+                .color(MUTED),
+        );
+        ui.add_space(9.0);
+        ui.label(RichText::new("Metadata").strong().color(Color32::WHITE));
+        ui.label(
+            RichText::new("Enabled metadata values are resolved from the selected environment.")
+                .small()
+                .color(MUTED),
+        );
+        changed |= render_key_values(
+            ui,
+            &mut self.grpc_metadata,
+            "grpc-metadata",
+            "＋ Add metadata",
+        );
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(
+                "Unary and all streaming method shapes are supported. gRPC GUI calls use verified HTTP/2 TLS when the endpoint is HTTPS; proxy and insecure TLS options are rejected explicitly.",
+            )
+            .small()
+            .color(MUTED),
+        );
+        if changed {
+            self.dirty = true;
+        }
     }
 
     fn render_body(&mut self, ui: &mut egui::Ui) {
@@ -3772,6 +4026,335 @@ fn build_websocket_request(
     Ok(websocket_request)
 }
 
+fn grpc_path_from_workspace(root: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value.trim());
+    if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    }
+}
+
+fn apply_grpc_metadata<T>(
+    request: &mut tonic::Request<T>,
+    config: &GrpcRequest,
+    auth: &Auth,
+    context: &VariableContext,
+) -> Result<(), String> {
+    for pair in config.metadata.iter().filter(|pair| pair.enabled) {
+        let key = resolve_websocket_value(&pair.key, context)?.to_ascii_lowercase();
+        if key.is_empty() {
+            return Err("gRPC metadata key cannot be empty".to_owned());
+        }
+        let key = key
+            .parse::<tonic::metadata::MetadataKey<tonic::metadata::Ascii>>()
+            .map_err(|error| format!("invalid gRPC metadata key {key}: {error}"))?;
+        let value = resolve_websocket_value(&pair.value, context)?
+            .parse::<tonic::metadata::MetadataValue<tonic::metadata::Ascii>>()
+            .map_err(|error| format!("invalid ASCII gRPC metadata value: {error}"))?;
+        request.metadata_mut().insert(key, value);
+    }
+    match auth {
+        Auth::None => {}
+        Auth::Bearer { token } => {
+            let token = resolve_websocket_value(token, context)?;
+            let value = format!("Bearer {token}")
+                .parse()
+                .map_err(|error| format!("invalid bearer token: {error}"))?;
+            request.metadata_mut().insert("authorization", value);
+        }
+        Auth::Basic { username, password } => {
+            let username = resolve_websocket_value(username, context)?;
+            let password = resolve_websocket_value(password, context)?;
+            let credentials =
+                base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+            let value = format!("Basic {credentials}")
+                .parse()
+                .map_err(|error| format!("invalid basic credentials: {error}"))?;
+            request.metadata_mut().insert("authorization", value);
+        }
+        Auth::ApiKey {
+            key,
+            value,
+            location: ApiKeyLocation::Header,
+        } => {
+            let key = resolve_websocket_value(key, context)?.to_ascii_lowercase();
+            let key = key
+                .parse::<tonic::metadata::MetadataKey<tonic::metadata::Ascii>>()
+                .map_err(|error| format!("invalid gRPC API-key metadata key {key}: {error}"))?;
+            let value = resolve_websocket_value(value, context)?
+                .parse::<tonic::metadata::MetadataValue<tonic::metadata::Ascii>>()
+                .map_err(|error| format!("invalid gRPC API-key metadata value: {error}"))?;
+            request.metadata_mut().insert(key, value);
+        }
+        Auth::ApiKey {
+            location: ApiKeyLocation::Query,
+            ..
+        } => {
+            return Err("gRPC API keys must use metadata/header placement".to_owned());
+        }
+        Auth::OAuth2ClientCredentials { .. } => {
+            return Err(
+                "OAuth 2.0 client credentials are not yet supported for native gRPC calls"
+                    .to_owned(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn build_grpc_endpoint(
+    endpoint_url: &str,
+    transport: &TransportSettings,
+    root: &Path,
+) -> Result<Endpoint, String> {
+    if !transport.proxy_url.trim().is_empty() {
+        return Err("gRPC GUI calls do not yet support HTTP proxy routing".to_owned());
+    }
+    if transport.insecure_tls {
+        return Err(
+            "gRPC GUI calls require verified TLS; disable insecure TLS for this request".to_owned(),
+        );
+    }
+    let parsed = url::Url::parse(endpoint_url).map_err(|error| error.to_string())?;
+    let mut endpoint = Endpoint::from_shared(endpoint_url.to_owned())
+        .map_err(|error| format!("invalid gRPC endpoint: {error}"))?
+        .timeout(Duration::from_secs(transport.timeout_seconds.max(1)));
+    match parsed.scheme() {
+        "http" => {
+            if !transport.ca_cert_path.trim().is_empty()
+                || !transport.client_identity_path.trim().is_empty()
+            {
+                return Err("gRPC CA and client identity require an https:// endpoint".to_owned());
+            }
+        }
+        "https" => {
+            let domain = parsed
+                .host_str()
+                .ok_or_else(|| "gRPC HTTPS endpoint has no hostname".to_owned())?;
+            let mut tls = ClientTlsConfig::new()
+                .domain_name(domain)
+                .with_webpki_roots();
+            if !transport.ca_cert_path.trim().is_empty() {
+                let path = grpc_path_from_workspace(root, &transport.ca_cert_path);
+                let pem = fs::read(&path).map_err(|error| {
+                    format!(
+                        "could not read gRPC CA certificate {}: {error}",
+                        path.display()
+                    )
+                })?;
+                if pem.is_empty() {
+                    return Err(format!("gRPC CA certificate {} is empty", path.display()));
+                }
+                tls = tls.ca_certificate(Certificate::from_pem(pem));
+            }
+            if !transport.client_identity_path.trim().is_empty() {
+                let path = grpc_path_from_workspace(root, &transport.client_identity_path);
+                let pem = fs::read(&path).map_err(|error| {
+                    format!(
+                        "could not read gRPC client identity {}: {error}",
+                        path.display()
+                    )
+                })?;
+                if pem.is_empty() {
+                    return Err(format!("gRPC client identity {} is empty", path.display()));
+                }
+                tls = tls.identity(Identity::from_pem(&pem, &pem));
+            }
+            endpoint = endpoint
+                .tls_config(tls)
+                .map_err(|error| format!("invalid gRPC TLS configuration: {error}"))?;
+        }
+        scheme => {
+            return Err(format!(
+                "gRPC endpoint must use http:// or https://, got {scheme}://"
+            ));
+        }
+    }
+    Ok(endpoint)
+}
+
+async fn execute_grpc_request(
+    request: Request,
+    context: VariableContext,
+    transport: TransportSettings,
+    root: PathBuf,
+) -> Result<HttpResponse, String> {
+    let config = request
+        .grpc
+        .clone()
+        .ok_or_else(|| "gRPC configuration is missing".to_owned())?;
+    let endpoint_url = resolve_websocket_value(&request.url, &context)?;
+    let proto = grpc_path_from_workspace(&root, &resolve_websocket_value(&config.proto, &context)?);
+    let includes = config
+        .includes
+        .iter()
+        .map(|include| {
+            Ok(grpc_path_from_workspace(
+                &root,
+                &resolve_websocket_value(include, &context)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let schema = GrpcSchema::from_proto(&proto, &includes).map_err(|error| error.to_string())?;
+    let method_name = resolve_websocket_value(&config.method, &context)?;
+    let method = schema
+        .find_method(&method_name)
+        .ok_or_else(|| format!("gRPC method not found: {method_name}"))?;
+    let body = match &request.body {
+        RequestBody::None => serde_json::Value::Object(serde_json::Map::new()),
+        RequestBody::Json { value } => value.clone(),
+        _ => return Err("gRPC request body must be JSON or empty".to_owned()),
+    };
+    let auth = request.auth.clone();
+    let message_text = serde_json::to_string(&body).map_err(|error| error.to_string())?;
+    let request_message = if method.is_client_streaming() {
+        None
+    } else {
+        Some(message_from_json(method.input(), &message_text).map_err(|error| error.to_string())?)
+    };
+    let stream_messages = if method.is_client_streaming() {
+        let values = body
+            .as_array()
+            .ok_or_else(|| "client-streaming gRPC bodies must be a JSON array".to_owned())?;
+        values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let raw = serde_json::to_string(value).map_err(|error| error.to_string())?;
+                message_from_json(method.input(), &raw).map_err(|error| {
+                    format!("invalid gRPC message at stream index {index}: {error}")
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?
+    } else {
+        Vec::new()
+    };
+    let endpoint = build_grpc_endpoint(&endpoint_url, &transport, &root)?;
+    let started = std::time::Instant::now();
+    let channel = endpoint
+        .connect()
+        .await
+        .map_err(|error| format!("could not connect to gRPC endpoint {endpoint_url}: {error}"))?;
+    let method_path = format!("/{}/{}", method.parent_service().full_name(), method.name());
+    let path = http::uri::PathAndQuery::try_from(method_path.clone())
+        .map_err(|error| format!("invalid gRPC method path: {error}"))?;
+    let mut grpc = tonic::client::Grpc::new(channel);
+    grpc.ready()
+        .await
+        .map_err(|error| format!("gRPC channel is not ready: {error}"))?;
+    let body = if method.is_client_streaming() {
+        let input_count = stream_messages.len();
+        let request = tonic::Request::new(futures_util::stream::iter(stream_messages));
+        let mut request = request;
+        apply_grpc_metadata(&mut request, &config, &auth, &context)?;
+        if method.is_server_streaming() {
+            let response = grpc
+                .streaming(
+                    request,
+                    path,
+                    DynamicGrpcCodec {
+                        output: method.output(),
+                    },
+                )
+                .await
+                .map_err(|error| format!("gRPC call failed: {error}"))?;
+            let mut stream = response.into_inner();
+            let mut messages = Vec::new();
+            while let Some(message) = stream
+                .message()
+                .await
+                .map_err(|error| format!("gRPC stream failed: {error}"))?
+            {
+                messages.push(message_to_json(&message).map_err(|error| error.to_string())?);
+            }
+            serde_json::json!({
+                "method": method_path,
+                "streaming": "bidirectional",
+                "input_count": input_count,
+                "messages": messages,
+            })
+        } else {
+            let response = grpc
+                .client_streaming(
+                    request,
+                    path,
+                    DynamicGrpcCodec {
+                        output: method.output(),
+                    },
+                )
+                .await
+                .map_err(|error| format!("gRPC call failed: {error}"))?;
+            serde_json::json!({
+                "method": method_path,
+                "streaming": "client",
+                "input_count": input_count,
+                "response": message_to_json(&response.into_inner()).map_err(|error| error.to_string())?,
+            })
+        }
+    } else {
+        let request = tonic::Request::new(
+            request_message.expect("non-client-streaming methods have a request message"),
+        );
+        let mut request = request;
+        apply_grpc_metadata(&mut request, &config, &auth, &context)?;
+        if method.is_server_streaming() {
+            let response = grpc
+                .server_streaming(
+                    request,
+                    path,
+                    DynamicGrpcCodec {
+                        output: method.output(),
+                    },
+                )
+                .await
+                .map_err(|error| format!("gRPC call failed: {error}"))?;
+            let mut stream = response.into_inner();
+            let mut messages = Vec::new();
+            while let Some(message) = stream
+                .message()
+                .await
+                .map_err(|error| format!("gRPC stream failed: {error}"))?
+            {
+                messages.push(message_to_json(&message).map_err(|error| error.to_string())?);
+            }
+            serde_json::json!({
+                "method": method_path,
+                "streaming": "server",
+                "messages": messages,
+            })
+        } else {
+            let response = grpc
+                .unary(
+                    request,
+                    path,
+                    DynamicGrpcCodec {
+                        output: method.output(),
+                    },
+                )
+                .await
+                .map_err(|error| format!("gRPC call failed: {error}"))?;
+            serde_json::json!({
+                "method": method_path,
+                "streaming": "unary",
+                "response": message_to_json(&response.into_inner()).map_err(|error| error.to_string())?,
+            })
+        }
+    };
+    let body = serde_json::to_vec_pretty(&body).map_err(|error| error.to_string())?;
+    Ok(HttpResponse {
+        status: 200,
+        status_text: "OK".to_owned(),
+        headers: Vec::new(),
+        body,
+        content_type: Some("application/json".to_owned()),
+        duration_ms: started.elapsed().as_millis(),
+        protocol: "gRPC".to_owned(),
+        url: endpoint_url,
+        cookies: Vec::new(),
+    })
+}
+
 impl eframe::App for PostlyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -4010,8 +4593,10 @@ fn main() -> eframe::Result {
 mod tests {
     use super::*;
     use std::{
+        convert::Infallible,
         io::{Read, Write},
         net::TcpListener,
+        task::{Context, Poll},
     };
 
     #[test]
@@ -4248,6 +4833,172 @@ mod tests {
         assert!(matches!(app.request.body, RequestBody::Json { .. }));
         assert!(app.request_path.is_none());
         assert!(app.dirty);
+    }
+
+    #[test]
+    fn grpc_editor_round_trips_a_saved_dynamic_request() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "Echo gRPC".to_owned();
+        app.request.url = "http://127.0.0.1:50051".to_owned();
+        app.request.grpc = Some(GrpcRequest {
+            proto: "proto/echo.proto".to_owned(),
+            includes: vec!["proto".to_owned(), "third_party".to_owned()],
+            method: "/demo.Echo/Echo".to_owned(),
+            metadata: vec![KeyValue::enabled("x-request-id", "{{requestId}}")],
+        });
+        app.request.body = RequestBody::Json {
+            value: serde_json::json!({"message": "hello"}),
+        };
+        app.load_request_editors();
+
+        assert_eq!(app.editor_tab, EditorTab::Grpc);
+        assert_eq!(app.grpc_proto_path, "proto/echo.proto");
+        assert_eq!(app.grpc_method, "/demo.Echo/Echo");
+        let request = app.edited_request().expect("gRPC editor state");
+        assert_eq!(request.grpc, app.request.grpc);
+        assert_eq!(request.body, app.request.body);
+
+        app.save_current().expect("save gRPC request");
+        let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
+        assert_eq!(reopened.request.grpc, request.grpc);
+        assert_eq!(reopened.request.body, request.body);
+        assert_eq!(reopened.editor_tab, EditorTab::Grpc);
+    }
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct EchoRequest {
+        #[prost(string, tag = "1")]
+        message: String,
+    }
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct EchoResponse {
+        #[prost(string, tag = "1")]
+        message: String,
+    }
+
+    #[derive(Clone, Default)]
+    struct TestGrpcService;
+
+    impl tonic::codegen::Service<tonic::Request<EchoRequest>> for TestGrpcService {
+        type Response = tonic::Response<EchoResponse>;
+        type Error = tonic::Status;
+        type Future = tonic::codegen::BoxFuture<Self::Response, Self::Error>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, request: tonic::Request<EchoRequest>) -> Self::Future {
+            assert_eq!(
+                request
+                    .metadata()
+                    .get("x-test")
+                    .and_then(|value| value.to_str().ok()),
+                Some("local")
+            );
+            let message = request.into_inner().message;
+            Box::pin(async move {
+                Ok(tonic::Response::new(EchoResponse {
+                    message: format!("echo:{message}"),
+                }))
+            })
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct TestGrpcServer;
+
+    impl tonic::server::NamedService for TestGrpcServer {
+        const NAME: &'static str = "demo.Echo";
+    }
+
+    impl tonic::codegen::Service<http::Request<tonic::body::Body>> for TestGrpcServer {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = Infallible;
+        type Future = tonic::codegen::BoxFuture<Self::Response, Self::Error>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, request: http::Request<tonic::body::Body>) -> Self::Future {
+            if request.uri().path() == "/demo.Echo/Echo" {
+                Box::pin(async move {
+                    let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
+                    Ok(grpc.unary(TestGrpcService, request).await)
+                })
+            } else {
+                Box::pin(async move {
+                    let mut response = http::Response::new(tonic::body::Body::empty());
+                    *response.status_mut() = http::StatusCode::NOT_FOUND;
+                    Ok(response)
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn grpc_worker_executes_a_dynamic_unary_call() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let proto = directory.path().join("echo.proto");
+        std::fs::write(
+            &proto,
+            r#"
+                syntax = "proto3";
+                package demo;
+                message EchoRequest { string message = 1; }
+                message EchoResponse { string message = 1; }
+                service Echo {
+                    rpc Echo(EchoRequest) returns (EchoResponse);
+                }
+            "#,
+        )
+        .expect("proto");
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(TestGrpcServer)
+                .serve_with_incoming_shutdown(
+                    tonic::transport::server::TcpIncoming::from(listener),
+                    async {
+                        let _ = shutdown_rx.await;
+                    },
+                )
+                .await
+                .expect("gRPC server");
+        });
+
+        let mut request = Request::new("Echo gRPC", "POST", format!("http://{address}"));
+        request.grpc = Some(GrpcRequest {
+            proto: proto.to_string_lossy().into_owned(),
+            includes: Vec::new(),
+            method: "/demo.Echo/Echo".to_owned(),
+            metadata: vec![KeyValue::enabled("x-test", "local")],
+        });
+        request.body = RequestBody::Json {
+            value: serde_json::json!({"message": "hello"}),
+        };
+        let response = execute_grpc_request(
+            request,
+            VariableContext::default(),
+            TransportSettings::default(),
+            directory.path().to_path_buf(),
+        )
+        .await
+        .expect("gRPC call");
+        let body: serde_json::Value = serde_json::from_slice(&response.body).expect("response");
+        assert_eq!(response.protocol, "gRPC");
+        assert_eq!(body["response"]["message"], "echo:hello");
+
+        let _ = shutdown_tx.send(());
+        server.await.expect("server task");
     }
 
     #[test]

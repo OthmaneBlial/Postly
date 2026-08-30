@@ -52,6 +52,8 @@ impl Default for EngineOptions {
 
 #[derive(Debug, Error)]
 pub enum HttpError {
+    #[error("request uses gRPC; use the gRPC transport instead of HTTP")]
+    UnsupportedGrpcRequest,
     #[error("invalid HTTP method {0}")]
     InvalidMethod(String),
     #[error("invalid URL after variable resolution: {0}")]
@@ -639,6 +641,9 @@ impl HttpEngine {
         request: &Request,
         context: &VariableContext,
     ) -> Result<reqwest::RequestBuilder, HttpError> {
+        if request.grpc.is_some() {
+            return Err(HttpError::UnsupportedGrpcRequest);
+        }
         let resolved_url = context.resolve(&request.url);
         let mut diagnostics = resolved_url.diagnostics;
         resolve_pairs(&mut diagnostics, &request.query, context);

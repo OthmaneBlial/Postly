@@ -2,6 +2,13 @@
 
 Postly currently supports a local, descriptor-driven gRPC slice. It compiles a root `.proto` file in Rust, discovers services and methods, converts protobuf JSON into dynamic messages, and executes unary, server-streaming, client-streaming and bidirectional calls through Tonic.
 
+The native workspace can persist the same configuration. Open the command palette,
+choose **New gRPC request**, set the endpoint, proto file, method path and metadata
+in the gRPC tab, then put a protobuf-JSON object (or an array for client-streaming)
+in the Body tab and press **Send**. Relative proto/include paths are resolved from
+the workspace root; the response viewer presents the resulting messages as local
+JSON while retaining the request in the normal Git-friendly collection model.
+
 ## Discover services and methods
 
 ```bash
@@ -47,12 +54,13 @@ cargo run -- grpc call http://127.0.0.1:50051 \
   --output-json
 ```
 
-Server responses are consumed progressively. With `--output-json`, Postly emits one JSON object per line with `method`, `stream_index` and `response`; human-readable output labels each message. Reflection and GUI gRPC editing remain future slices.
+Server responses are consumed progressively. With `--output-json`, Postly emits one JSON object per line with `method`, `stream_index` and `response`; human-readable output labels each message. The GUI collects the finite response stream into the local response viewer. Reflection remains a future slice.
 
 ## Client and bidirectional streaming
 
 Client-streaming and bidirectional methods take a JSON array of protobuf request
-objects. The array is encoded as a finite client stream:
+objects. The array is encoded as a finite client stream. The native GUI uses the
+same JSON shape in its Body tab:
 
 ```bash
 cargo run -- grpc call http://127.0.0.1:50051 \
@@ -71,4 +79,6 @@ cargo run -- grpc call http://127.0.0.1:50051 \
 Client-streaming methods return one response and bidirectional methods emit
 one JSON object per response with `stream_index` and `input_count`. Custom CA
 certificates and combined PEM client identities work for HTTPS calls; reflection
-and GUI gRPC editing remain future slices.
+and deeper protocol-specific tooling remain future slices. Native GUI gRPC calls
+currently require verified TLS for HTTPS endpoints and reject proxy/insecure-TLS
+configuration explicitly rather than silently ignoring it.

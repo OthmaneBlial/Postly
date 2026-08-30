@@ -56,6 +56,12 @@ pub struct CurlExportResult {
 pub fn export_curl_command(request: &Request) -> CurlExportResult {
     let mut arguments = vec!["curl".to_owned()];
     let mut warnings = Vec::new();
+    if request.grpc.is_some() {
+        warnings.push(
+            "gRPC requests are exported as an HTTP-shaped cURL preview, not a protobuf call."
+                .to_owned(),
+        );
+    }
     let url = append_query_parameters(&request.url, &request.query);
     arguments.push("--request".to_owned());
     arguments.push(shell_quote(&request.method));

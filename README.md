@@ -72,8 +72,8 @@ This is a working vertical slice, not a static UI mockup.
   script bridge, basic <code>pm.*</code>, collection runner, iteration data, pretty/JSON/
   JUnit reporters and deliberate exit behavior.
 - <strong>Modern APIs:</strong> structured GraphQL requests, progressive SSE subscriptions,
-  interactive WebSockets and dynamic <code>.proto</code> gRPC calls for unary and all
-  three streaming modes.
+  interactive WebSockets and dynamic <code>.proto</code> gRPC calls from the CLI or native
+  workspace for unary and all three streaming modes.
 - <strong>Native desktop workspace:</strong> a Rust/egui application using the same core,
   with local history, request editing, a Scripts tab, cancellation and persisted
   local Transport settings for HTTP/SSE, plus cURL paste/copy.
@@ -244,7 +244,7 @@ Postly is intentionally growing from a strong HTTP foundation:
 | GraphQL | Structured query, variables, operation name, error-aware response parsing, schema introspection and GUI explorer |
 | Server-Sent Events | Chunk-safe progressive events, metadata, cancellation and bounded <code>Last-Event-ID</code> reconnects |
 | WebSocket | <code>ws://</code>/<code>wss://</code>, headers/auth, text and binary frames, ping/pong, console and bounded history |
-| gRPC | Dynamic <code>.proto</code> discovery plus unary, server-streaming, client-streaming and bidi CLI calls with HTTPS custom-CA/client-identity support |
+| gRPC | Dynamic <code>.proto</code> discovery plus unary, server-streaming, client-streaming and bidi CLI/GUI calls with HTTPS custom-CA/client-identity support |
 | OpenAPI | 3.0/3.1 JSON/YAML request generation with guarded local reference resolution |
 
 gRPC reflection, richer protocol-specific GUI surfaces and deeper TLS/proxy parity
@@ -311,7 +311,7 @@ Highest-value roadmap areas include:
 - broader Postman script and <code>pm.*</code> compatibility with a hardened runtime;
 - OS keychain integration and complete secret-handling workflows;
 - richer Postman fixtures and executable compatibility scoring;
-- gRPC reflection and a first-class gRPC GUI;
+- gRPC reflection and deeper protocol-specific GUI tooling;
 - tabs, accessibility and crash recovery;
 - deterministic protocol test servers, fuzzing, benchmarks and packaging.
 

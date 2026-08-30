@@ -2949,12 +2949,16 @@ dependencies = [
  "chrono",
  "eframe",
  "futures-util",
+ "http",
  "postly-core",
+ "prost",
+ "prost-reflect",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "tonic",
  "url",
 ]
 
