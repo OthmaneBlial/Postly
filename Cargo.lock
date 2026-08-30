@@ -2949,6 +2949,7 @@ dependencies = [
  "eframe",
  "futures-util",
  "postly-core",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

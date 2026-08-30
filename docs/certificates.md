@@ -2,7 +2,8 @@
 
 Postly's shared HTTP engine supports an additional PEM trust bundle and a
 combined PEM client identity. The CLI exposes both options for `request`,
-`graphql`, `sse`, `send` and `run`:
+`graphql`, `sse`, `send` and `run`. The native GUI exposes the same HTTP/SSE
+settings from the request workspace's `Transport` tab:
 
 ```bash
 postly request https://api.example.test/health --ca-cert ./certs/company-ca.pem
@@ -13,6 +14,11 @@ postly send ./my-api/collections/my-api/requests/health.postly.toml \
   --ca-cert ./certs/company-ca.pem
 postly run ./my-api --ca-cert ./certs/company-ca.pem
 ```
+
+GUI transport settings are stored locally in the ignored
+`.postly/gui-settings.json` file. They contain paths and connection flags,
+never certificate or private-key contents. `Validate & apply` checks the
+configured files before the next request.
 
 `--ca-cert` accepts a PEM bundle containing one or more trusted CA
 certificates. It is added to the normal trust roots; it does not disable
@@ -37,7 +43,7 @@ under `crates/postly-core/testdata/tls/`; they are used to exercise both
 ordinary HTTPS with a custom CA and mutual TLS.
 
 This slice deliberately does not claim support for encrypted private keys,
-PKCS#12 containers, GUI certificate settings, per-domain certificate
-association, WebSocket certificate routing or gRPC certificate routing. Those
-are separate follow-up capabilities. `--insecure` remains an explicit escape
-hatch and should only be used for a controlled local exception.
+PKCS#12 containers, per-domain certificate association, WebSocket certificate
+routing or gRPC certificate routing. Those are separate follow-up
+capabilities. `--insecure` remains an explicit escape hatch and should only
+be used for a controlled local exception.

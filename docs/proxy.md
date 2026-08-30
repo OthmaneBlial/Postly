@@ -16,7 +16,9 @@ covered by a deterministic local proxy test. The setting is shared by normal
 HTTP bodies and streaming responses, so collection-run requests use the same
 route.
 
-The current slice does not yet expose a GUI proxy editor, per-request proxy
-files, SOCKS configuration or WebSocket proxy routing. A proxy can observe
-traffic and credentials; use one you trust and keep TLS verification enabled
-unless an explicit, documented local exception is required.
+The native GUI exposes the proxy URL in the request workspace's `Transport`
+tab. It is persisted under the ignored `.postly/gui-settings.json` file and
+applies to HTTP requests and SSE streams. Per-request proxy files, SOCKS
+configuration and WebSocket proxy routing remain future slices. A proxy can
+observe traffic and credentials; use one you trust and keep TLS verification
+enabled unless an explicit, documented local exception is required.

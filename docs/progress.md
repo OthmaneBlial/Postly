@@ -36,6 +36,7 @@ Implemented:
 - SSE parser plus progressive CLI/native GUI subscriptions with chunk-safe event decoding, event metadata, bounded GUI history, JSON-lines output and local streaming coverage.
 - WebSocket CLI and native GUI client for `ws://` and `wss://` with headers/auth, interactive text sends, text/binary/pong output, ping replies, bounded reconnects/history and local integration coverage.
 - native GUI HTTP, SSE and WebSocket workers support explicit cancellation, with cancellation-aware body/stream reads and local worker tests.
+- native GUI Transport tab with persisted local timeout, HTTP(S) proxy, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE workflows.
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata and HTTPS webpki roots.
 - Persistable response assertions for status, headers, body text and JSON Pointer values, evaluated by the runner without Node.js.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
@@ -51,7 +52,7 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility.
 - Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.
 - OS keychain storage, persistent/manual cookie management and crash recovery.
-- GUI certificate configuration, encrypted/PKCS#12 identities, passphrase handling and per-domain certificate association.
+- encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association and certificate settings for WebSocket/gRPC workflows.
 - OpenAPI external/cyclic references, GraphQL schema explorer, gRPC reflection and gRPC GUI.
 - Local deterministic protocol test servers, fuzzing, benchmarks and packaging.
 

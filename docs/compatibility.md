@@ -9,7 +9,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | variables and environments | working slice | variable precedence tests and environment import |
 | common headers, bodies and auth | working slice | model/import coverage |
 | HTTP(S) proxy routing | core and CLI slice; GUI setting and SOCKS pending | local proxy forwarding and invalid-proxy tests |
-| HTTPS certificates | core and CLI PEM CA/client-identity slice; GUI, PKCS#12/passphrases and domain association pending | local HTTPS CA and mutual-TLS tests, file/format diagnostics |
+| HTTPS certificates | core and CLI PEM CA/client-identity slice; native GUI HTTP/SSE Transport settings; PKCS#12/passphrases and domain association pending | local HTTPS CA and mutual-TLS tests, GUI settings persistence and file/format diagnostics |
 | Postman Collection v2.1 export | working slice | export/import round-trip fixture |
 | Postman environment export | working slice | export serialization fixture |
 | Postman scripts | opt-in basic execution | Node bridge tests and migration docs |

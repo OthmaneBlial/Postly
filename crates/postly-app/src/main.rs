@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fs,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
@@ -15,6 +16,7 @@ use postly_core::{
     Environment, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue,
     Request, RequestBody, ResponseView, SseEvent, SseParser, VariableContext, Workspace,
 };
+use serde::{Deserialize, Serialize};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{
@@ -37,6 +39,7 @@ enum EditorTab {
     Body,
     Auth,
     Assertions,
+    Transport,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +194,60 @@ impl AuthKind {
     }
 }
 
+const GUI_SETTINGS_FILE: &str = ".postly/gui-settings.json";
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+struct TransportSettings {
+    timeout_seconds: u64,
+    proxy_url: String,
+    ca_cert_path: String,
+    client_identity_path: String,
+    insecure_tls: bool,
+}
+
+impl Default for TransportSettings {
+    fn default() -> Self {
+        Self {
+            timeout_seconds: 30,
+            proxy_url: String::new(),
+            ca_cert_path: String::new(),
+            client_identity_path: String::new(),
+            insecure_tls: false,
+        }
+    }
+}
+
+impl TransportSettings {
+    fn load(root: &Path) -> Self {
+        fs::read_to_string(root.join(GUI_SETTINGS_FILE))
+            .ok()
+            .and_then(|contents| serde_json::from_str(&contents).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self, root: &Path) -> Result<(), String> {
+        let path = root.join(GUI_SETTINGS_FILE);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        let contents = serde_json::to_vec_pretty(self).map_err(|error| error.to_string())?;
+        fs::write(path, contents).map_err(|error| error.to_string())
+    }
+
+    fn engine_options(&self) -> EngineOptions {
+        let path = |value: &str| (!value.trim().is_empty()).then(|| PathBuf::from(value.trim()));
+        EngineOptions {
+            timeout: Duration::from_secs(self.timeout_seconds.max(1)),
+            accept_invalid_certs: self.insecure_tls,
+            proxy: (!self.proxy_url.trim().is_empty()).then(|| self.proxy_url.trim().to_owned()),
+            ca_cert: path(&self.ca_cert_path),
+            client_identity: path(&self.client_identity_path),
+            ..EngineOptions::default()
+        }
+    }
+}
+
 pub struct PostlyApp {
     workspace: Workspace,
     engine: HttpEngine,
@@ -242,6 +299,8 @@ pub struct PostlyApp {
     websocket_started: bool,
     websocket_connected: bool,
     selected_environment: Option<String>,
+    transport: TransportSettings,
+    transport_settings_dirty: bool,
     dirty: bool,
     status_message: String,
 }
@@ -265,6 +324,7 @@ impl PostlyApp {
             Ok(history) => (history, "Ready — local workspace".to_owned()),
             Err(error) => (Vec::new(), format!("Ready — history unavailable: {error}")),
         };
+        let transport = TransportSettings::load(workspace.root());
         let engine =
             HttpEngine::new(&EngineOptions::default()).map_err(|error| error.to_string())?;
         let mut app = Self {
@@ -318,6 +378,8 @@ impl PostlyApp {
             websocket_started: false,
             websocket_connected: false,
             selected_environment: None,
+            transport,
+            transport_settings_dirty: false,
             dirty: false,
             status_message,
         };
@@ -701,6 +763,20 @@ impl PostlyApp {
         context
     }
 
+    fn configured_engine(&mut self) -> Result<HttpEngine, String> {
+        let engine = HttpEngine::new(&self.transport.engine_options())
+            .map_err(|error| format!("connection settings are invalid: {error}"))?;
+        self.engine = engine.clone();
+        Ok(engine)
+    }
+
+    fn save_transport_settings(&mut self) -> Result<(), String> {
+        self.transport.save(self.workspace.root())?;
+        self.transport_settings_dirty = false;
+        self.status_message = "Connection settings saved locally".to_owned();
+        Ok(())
+    }
+
     fn send_current(&mut self) -> Result<(), String> {
         if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
         {
@@ -708,7 +784,7 @@ impl PostlyApp {
         }
         let request = self.edited_request()?;
         let context = self.context();
-        let engine = self.engine.clone();
+        let engine = self.configured_engine()?;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
         let (sender, receiver) = mpsc::channel();
@@ -747,7 +823,7 @@ impl PostlyApp {
         }
         let request = self.edited_request()?;
         let context = self.context();
-        let engine = self.engine.clone();
+        let engine = self.configured_engine()?;
         let reconnect_limit = self.sse_reconnect_limit;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
@@ -1638,6 +1714,7 @@ impl PostlyApp {
                         (EditorTab::Body, "Body"),
                         (EditorTab::Auth, "Auth"),
                         (EditorTab::Assertions, "Assertions"),
+                        (EditorTab::Transport, "Transport"),
                     ] {
                         if tab_button(ui, self.editor_tab == tab, label).clicked() {
                             self.editor_tab = tab;
@@ -1758,6 +1835,7 @@ impl PostlyApp {
                     EditorTab::Body => self.render_body(ui),
                     EditorTab::Auth => self.render_auth(ui),
                     EditorTab::Assertions => self.render_assertions(ui),
+                    EditorTab::Transport => self.render_transport(ui),
                 }
             });
     }
@@ -1968,6 +2046,139 @@ impl PostlyApp {
                 }
             }
         }
+    }
+
+    fn render_transport(&mut self, ui: &mut egui::Ui) {
+        ui.heading(RichText::new("Connection settings").color(Color32::WHITE));
+        ui.label(
+            RichText::new(
+                "These local settings apply to HTTP requests and SSE streams. Only file paths are stored.",
+            )
+            .small()
+            .color(MUTED),
+        );
+        ui.add_space(10.0);
+
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label("Timeout");
+            changed |= ui
+                .add(
+                    egui::DragValue::new(&mut self.transport.timeout_seconds)
+                        .range(1..=3_600)
+                        .speed(0.2),
+                )
+                .changed();
+            ui.label("seconds");
+        });
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("HTTP(S) proxy")
+                .strong()
+                .color(Color32::WHITE),
+        );
+        changed |= ui
+            .add(
+                TextEdit::singleline(&mut self.transport.proxy_url)
+                    .desired_width(460.0)
+                    .hint_text("http://127.0.0.1:8080 (optional)"),
+            )
+            .changed();
+        ui.label(
+            RichText::new("SOCKS and WebSocket proxying are not included in this slice.")
+                .small()
+                .color(MUTED),
+        );
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("Additional CA certificate (PEM)")
+                .strong()
+                .color(Color32::WHITE),
+        );
+        changed |= ui
+            .add(
+                TextEdit::singleline(&mut self.transport.ca_cert_path)
+                    .desired_width(460.0)
+                    .hint_text("/path/to/company-ca.pem (optional)"),
+            )
+            .changed();
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("Client identity (combined PEM)")
+                .strong()
+                .color(Color32::WHITE),
+        );
+        changed |= ui
+            .add(
+                TextEdit::singleline(&mut self.transport.client_identity_path)
+                    .desired_width(460.0)
+                    .hint_text("/path/to/client-cert-and-key.pem (optional)"),
+            )
+            .changed();
+        ui.label(
+            RichText::new("The PEM contains the client certificate chain followed by an unencrypted private key.")
+                .small()
+                .color(MUTED),
+        );
+        ui.add_space(8.0);
+        if ui
+            .checkbox(
+                &mut self.transport.insecure_tls,
+                "Disable TLS certificate verification (unsafe)",
+            )
+            .changed()
+        {
+            changed = true;
+        }
+        if self.transport.insecure_tls {
+            ui.colored_label(
+                Color32::from_rgb(240, 165, 90),
+                "Warning: certificate verification is disabled for this local GUI session.",
+            );
+        }
+        if changed {
+            self.transport_settings_dirty = true;
+        }
+        ui.add_space(10.0);
+        let mut save_clicked = false;
+        let mut validate_clicked = false;
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    self.transport_settings_dirty,
+                    egui::Button::new("Save settings"),
+                )
+                .clicked()
+            {
+                save_clicked = true;
+            }
+            if ui.button("Validate & apply").clicked() {
+                validate_clicked = true;
+            }
+            if self.transport_settings_dirty {
+                ui.label(RichText::new("unsaved").small().color(MUTED));
+            }
+        });
+        if save_clicked {
+            if let Err(error) = self.save_transport_settings() {
+                self.status_message = format!("Settings save failed: {error}");
+            }
+        }
+        if validate_clicked {
+            match self.configured_engine() {
+                Ok(_) => {
+                    self.status_message =
+                        "Connection settings valid and applied to the next request".to_owned();
+                }
+                Err(error) => self.status_message = error,
+            }
+        }
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("Stored locally at .postly/gui-settings.json, which is ignored by Git.")
+                .small()
+                .color(MUTED),
+        );
     }
 
     fn render_assertions(&mut self, ui: &mut egui::Ui) {
@@ -2860,6 +3071,48 @@ mod tests {
             .edited_request()
             .expect_err("GraphQL variables must be an object");
         assert!(error.contains("GraphQL variables are invalid"));
+    }
+
+    #[test]
+    fn transport_settings_persist_paths_without_persisting_key_material() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.transport.timeout_seconds = 45;
+        app.transport.proxy_url = "http://127.0.0.1:8080".to_owned();
+        app.transport.ca_cert_path = "/tmp/company-ca.pem".to_owned();
+        app.transport.client_identity_path = "/tmp/client-identity.pem".to_owned();
+        app.transport.insecure_tls = true;
+        app.transport_settings_dirty = true;
+        app.save_transport_settings().expect("save settings");
+
+        let settings = std::fs::read_to_string(directory.path().join(GUI_SETTINGS_FILE))
+            .expect("settings file");
+        assert!(settings.contains("company-ca.pem"));
+        assert!(!settings.contains("BEGIN PRIVATE KEY"));
+
+        let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
+        assert_eq!(reopened.transport.timeout_seconds, 45);
+        assert_eq!(reopened.transport.proxy_url, "http://127.0.0.1:8080");
+        assert_eq!(reopened.transport.ca_cert_path, "/tmp/company-ca.pem");
+        assert_eq!(
+            reopened.transport.client_identity_path,
+            "/tmp/client-identity.pem"
+        );
+        assert!(reopened.transport.insecure_tls);
+        assert!(!reopened.transport_settings_dirty);
+    }
+
+    #[test]
+    fn transport_settings_surface_missing_certificate_diagnostics_before_network_work() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.transport.ca_cert_path = "/definitely-not-a-postly-ca.pem".to_owned();
+
+        let error = app
+            .configured_engine()
+            .expect_err("missing CA should be diagnosed");
+        assert!(error.contains("could not read CA certificate"));
+        assert!(error.contains("definitely-not-a-postly-ca.pem"));
     }
 
     #[test]
