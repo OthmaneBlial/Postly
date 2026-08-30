@@ -5,6 +5,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -56,6 +57,24 @@ pub struct Workspace {
 pub struct CollectionFiles {
     pub directory: PathBuf,
     pub collection: Collection,
+}
+
+/// A secret-free index entry for a request found by workspace search.
+///
+/// Search deliberately covers navigational metadata only. Headers, cookies,
+/// bodies, authentication and scripts are never loaded into the result so a
+/// search command cannot accidentally turn sensitive request data into output.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RequestSearchResult {
+    pub collection_id: uuid::Uuid,
+    pub collection: String,
+    pub folder: Option<String>,
+    /// Path relative to the workspace root, suitable for local CLI output.
+    pub path: PathBuf,
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub method: String,
+    pub url: String,
 }
 
 impl Workspace {
@@ -298,6 +317,49 @@ impl Workspace {
                 Ok((path, request))
             })
             .collect()
+    }
+
+    /// Search all saved requests by collection, folder, name, method, URL or
+    /// description, in deterministic filesystem order.
+    pub fn search_requests(&self, query: &str) -> Result<Vec<RequestSearchResult>, WorkspaceError> {
+        let query = query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut results = Vec::new();
+        for collection in self.collections()? {
+            for (path, request) in self.requests(&collection)? {
+                let folder = request.folder.clone();
+                let fields = [
+                    collection.collection.name.as_str(),
+                    folder.as_deref().unwrap_or_default(),
+                    request.name.as_str(),
+                    request.method.as_str(),
+                    request.url.as_str(),
+                    request.description.as_deref().unwrap_or_default(),
+                ];
+                if fields
+                    .iter()
+                    .any(|field| field.to_ascii_lowercase().contains(&query))
+                {
+                    let relative_path = path
+                        .strip_prefix(&self.root)
+                        .map(Path::to_path_buf)
+                        .unwrap_or(path);
+                    results.push(RequestSearchResult {
+                        collection_id: collection.collection.id,
+                        collection: collection.collection.name.clone(),
+                        folder,
+                        path: relative_path,
+                        id: request.id,
+                        name: request.name,
+                        method: request.method,
+                        url: request.url,
+                    });
+                }
+            }
+        }
+        Ok(results)
     }
 
     pub fn save_environment(&self, environment: &Environment) -> Result<PathBuf, WorkspaceError> {
@@ -729,5 +791,48 @@ mod tests {
         assert!(!entries
             .iter()
             .any(|entry| entry.request_name == "Request 0"));
+    }
+
+    #[test]
+    fn searches_request_metadata_across_collections_without_secret_values() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = Workspace::init(directory.path(), "Demo API").expect("init");
+        let users = workspace
+            .create_collection(&Collection::new("Users"))
+            .expect("users collection");
+        let billing = workspace
+            .create_collection(&Collection::new("Billing"))
+            .expect("billing collection");
+
+        let mut users_request =
+            Request::new("List administrators", "GET", "https://example.com/users");
+        users_request.folder = Some("Admin / Read".to_owned());
+        users_request.description = Some("Searchable operational endpoint".to_owned());
+        users_request.headers.push(crate::HeaderEntry::enabled(
+            "Authorization",
+            "Bearer secret",
+        ));
+        workspace
+            .save_request(&users, &users_request)
+            .expect("users request");
+
+        let billing_request = Request::new("Charge card", "POST", "https://example.com/charge");
+        workspace
+            .save_request(&billing, &billing_request)
+            .expect("billing request");
+
+        let results = workspace.search_requests("ADMIN / READ").expect("search");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].collection, "Users");
+        assert_eq!(results[0].folder.as_deref(), Some("Admin / Read"));
+        assert!(results[0].path.ends_with("list-administrators.postly.toml"));
+        assert!(workspace
+            .search_requests("secret")
+            .expect("secret search")
+            .is_empty());
+        assert!(workspace
+            .search_requests(" ")
+            .expect("empty search")
+            .is_empty());
     }
 }

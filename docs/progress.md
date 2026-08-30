@@ -29,6 +29,7 @@ Implemented:
 - env set creates local environments and saved requests resolve enabled environment variables.
 - common cURL commands can be parsed and imported without shell execution.
 - saved-request executions can be recorded, searched, filtered, cleared and retained as bounded ignored metadata-only local history.
+- global request metadata search across collections is available in the native workspace and CLI; secrets are excluded from the index.
 - native `postly-gui` request workspace with async send, editor tabs and response views.
 - native saved-request duplication and guarded deletion with storage/UI regression tests.
 - saved request rename/folder changes relocate the canonical file while preserving request identity.

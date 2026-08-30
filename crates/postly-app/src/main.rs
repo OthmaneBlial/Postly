@@ -14,7 +14,8 @@ use futures_util::{SinkExt, StreamExt};
 use postly_core::{
     ApiKeyLocation, Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions,
     Environment, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue,
-    Request, RequestBody, ResponseView, SseEvent, SseParser, VariableContext, Workspace,
+    Request, RequestBody, RequestSearchResult, ResponseView, SseEvent, SseParser, VariableContext,
+    Workspace,
 };
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::{
@@ -256,6 +257,8 @@ pub struct PostlyApp {
     environments: Vec<(PathBuf, Environment)>,
     history: Vec<HistoryEntry>,
     history_search: String,
+    workspace_search: String,
+    workspace_search_results: Vec<RequestSearchResult>,
     selected_collection: usize,
     requests: Vec<(PathBuf, Request)>,
     selected_request: Option<usize>,
@@ -337,6 +340,8 @@ impl PostlyApp {
             environments,
             history,
             history_search: String::new(),
+            workspace_search: String::new(),
+            workspace_search_results: Vec::new(),
             selected_collection: 0,
             requests: Vec::new(),
             selected_request: None,
@@ -417,6 +422,35 @@ impl PostlyApp {
         } else {
             self.new_request();
         }
+        Ok(())
+    }
+
+    fn refresh_workspace_search(&mut self) {
+        if self.workspace_search.trim().is_empty() {
+            self.workspace_search_results.clear();
+            return;
+        }
+        match self.workspace.search_requests(&self.workspace_search) {
+            Ok(results) => self.workspace_search_results = results,
+            Err(error) => {
+                self.workspace_search_results.clear();
+                self.status_message = format!("Workspace search failed: {error}");
+            }
+        }
+    }
+
+    fn open_search_result(&mut self, result: &RequestSearchResult) -> Result<(), String> {
+        let collection_index = self
+            .collections
+            .iter()
+            .position(|collection| collection.collection.id == result.collection_id)
+            .ok_or_else(|| format!("collection not found: {}", result.collection))?;
+        self.selected_collection = collection_index;
+        let path = self.workspace.root().join(&result.path);
+        self.refresh_requests(Some(&path))?;
+        self.workspace_search.clear();
+        self.workspace_search_results.clear();
+        self.status_message = format!("Opened search result — {}", result.name);
         Ok(())
     }
 
@@ -721,6 +755,7 @@ impl PostlyApp {
         self.request = request;
         self.request_path = Some(path.clone());
         self.refresh_requests(Some(&path))?;
+        self.refresh_workspace_search();
         self.dirty = false;
         self.status_message = format!("Saved locally — {}", path.display());
         Ok(())
@@ -737,6 +772,7 @@ impl PostlyApp {
             .duplicate_request(collection, &request)
             .map_err(|error| error.to_string())?;
         self.refresh_requests(Some(&path))?;
+        self.refresh_workspace_search();
         self.dirty = false;
         self.status_message = format!("Duplicated locally — {}", path.display());
         Ok(())
@@ -753,6 +789,7 @@ impl PostlyApp {
         self.selected_request = None;
         self.request_path = None;
         self.refresh_requests(None)?;
+        self.refresh_workspace_search();
         self.status_message = "Request deleted locally".to_owned();
         Ok(())
     }
@@ -1438,6 +1475,7 @@ impl PostlyApp {
         let mut new_clicked = false;
         let mut environment_clicked = None;
         let mut history_clicked = None;
+        let mut search_result_clicked = None;
         let mut clear_history_clicked = false;
         egui::Panel::left("navigator")
             .resizable(true)
@@ -1466,47 +1504,98 @@ impl PostlyApp {
                 {
                     new_clicked = true;
                 }
-                ui.add_space(18.0);
-                ui.label(RichText::new("COLLECTIONS").small().strong().color(MUTED));
-                ui.add_space(5.0);
-                for (index, collection) in self.collections.iter().enumerate() {
-                    let selected = index == self.selected_collection;
-                    if ui
-                        .selectable_label(
-                            selected,
-                            RichText::new(format!("▸  {}", collection.collection.name))
-                                .color(if selected { Color32::WHITE } else { MUTED }),
-                        )
-                        .clicked()
-                    {
-                        collection_clicked = Some(index);
-                    }
-                }
                 ui.add_space(14.0);
-                ui.label(RichText::new("REQUESTS").small().strong().color(MUTED));
-                ui.add_space(4.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("request-list")
-                    .max_height((ui.available_height() - 280.0).max(100.0))
-                    .show(ui, |ui| {
-                        for (index, (_, request)) in self.requests.iter().enumerate() {
-                            let selected = self.selected_request == Some(index);
-                            let label = format!("{}  {}", request.method, request.name);
-                            if ui
-                                .selectable_label(
-                                    selected,
-                                    RichText::new(label).color(if selected {
-                                        Color32::WHITE
-                                    } else {
-                                        MUTED
-                                    }),
-                                )
-                                .clicked()
-                            {
-                                request_clicked = Some(index);
-                            }
+                ui.label(
+                    RichText::new("WORKSPACE SEARCH")
+                        .small()
+                        .strong()
+                        .color(MUTED),
+                );
+                if ui
+                    .add(
+                        TextEdit::singleline(&mut self.workspace_search)
+                            .hint_text("Search collections, requests or URLs")
+                            .desired_width(ui.available_width()),
+                    )
+                    .changed()
+                {
+                    self.refresh_workspace_search();
+                }
+                if self.workspace_search.trim().is_empty() {
+                    ui.add_space(12.0);
+                    ui.label(RichText::new("COLLECTIONS").small().strong().color(MUTED));
+                    ui.add_space(5.0);
+                    for (index, collection) in self.collections.iter().enumerate() {
+                        let selected = index == self.selected_collection;
+                        if ui
+                            .selectable_label(
+                                selected,
+                                RichText::new(format!("▸  {}", collection.collection.name))
+                                    .color(if selected { Color32::WHITE } else { MUTED }),
+                            )
+                            .clicked()
+                        {
+                            collection_clicked = Some(index);
                         }
-                    });
+                    }
+                    ui.add_space(14.0);
+                    ui.label(RichText::new("REQUESTS").small().strong().color(MUTED));
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("request-list")
+                        .max_height((ui.available_height() - 280.0).max(100.0))
+                        .show(ui, |ui| {
+                            for (index, (_, request)) in self.requests.iter().enumerate() {
+                                let selected = self.selected_request == Some(index);
+                                let label = format!("{}  {}", request.method, request.name);
+                                if ui
+                                    .selectable_label(
+                                        selected,
+                                        RichText::new(label).color(if selected {
+                                            Color32::WHITE
+                                        } else {
+                                            MUTED
+                                        }),
+                                    )
+                                    .clicked()
+                                {
+                                    request_clicked = Some(index);
+                                }
+                            }
+                        });
+                } else {
+                    let result_count = self.workspace_search_results.len();
+                    ui.label(
+                        RichText::new(format!("{result_count} matching request(s)"))
+                            .small()
+                            .color(MUTED),
+                    );
+                    egui::ScrollArea::vertical()
+                        .id_salt("workspace-search-results")
+                        .max_height((ui.available_height() - 280.0).max(100.0))
+                        .show(ui, |ui| {
+                            for result in &self.workspace_search_results {
+                                let location = result
+                                    .folder
+                                    .as_deref()
+                                    .map(|folder| format!("{} / {folder}", result.collection))
+                                    .unwrap_or_else(|| result.collection.clone());
+                                let label = format!("{}  {}", result.method, result.name);
+                                if ui
+                                    .selectable_label(false, RichText::new(label).color(MUTED))
+                                    .on_hover_text(format!("{location} · {}", result.url))
+                                    .clicked()
+                                {
+                                    search_result_clicked = Some(result.clone());
+                                }
+                                ui.label(
+                                    RichText::new(format!("{location} · {}", result.url))
+                                        .small()
+                                        .color(MUTED),
+                                );
+                            }
+                        });
+                }
                 ui.add_space(10.0);
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -1597,6 +1686,11 @@ impl PostlyApp {
         }
         if let Some(index) = request_clicked {
             self.select_request(index);
+        }
+        if let Some(result) = search_result_clicked {
+            if let Err(error) = self.open_search_result(&result) {
+                self.status_message = format!("Search result could not open: {error}");
+            }
         }
         if let Some(environment) = environment_clicked {
             self.selected_environment = environment;
@@ -3124,6 +3218,29 @@ mod tests {
             .expect("blank script is valid")
             .test_script
             .is_none());
+    }
+
+    #[test]
+    fn workspace_search_opens_a_saved_request_and_returns_to_navigation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        let collection = app.collections[0].clone();
+        let request = Request::new("List payments", "GET", "https://example.com/payments");
+        let path = app
+            .workspace
+            .save_request(&collection, &request)
+            .expect("save request");
+
+        app.workspace_search = "payments".to_owned();
+        app.refresh_workspace_search();
+        assert_eq!(app.workspace_search_results.len(), 1);
+        let result = app.workspace_search_results[0].clone();
+        assert_eq!(result.path, path.strip_prefix(directory.path()).unwrap());
+
+        app.open_search_result(&result).expect("open result");
+        assert_eq!(app.request.name, "List payments");
+        assert!(app.workspace_search.is_empty());
+        assert!(app.workspace_search_results.is_empty());
     }
 
     #[test]

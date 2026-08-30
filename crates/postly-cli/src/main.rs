@@ -533,6 +533,14 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Search saved request metadata across every local collection.
+    Search {
+        query: String,
+        #[arg(short, long, default_value = ".")]
+        workspace: PathBuf,
+        #[arg(long)]
+        output_json: bool,
+    },
     /// Show recent metadata-only executions from the local workspace.
     History {
         #[arg(default_value = ".")]
@@ -979,6 +987,11 @@ async fn main() -> Result<()> {
             } => set_environment(&workspace, &name, &values, &secrets),
         },
         Command::List { path } => list_workspace(&path),
+        Command::Search {
+            query,
+            workspace,
+            output_json,
+        } => search_workspace(&workspace, &query, output_json),
         Command::History {
             path,
             limit,
@@ -1883,6 +1896,39 @@ fn list_workspace(path: &Path) -> Result<()> {
         for (_, environment) in environments {
             println!("  {}", environment.name);
         }
+    }
+    Ok(())
+}
+
+fn search_workspace(path: &Path, query: &str, output_json: bool) -> Result<()> {
+    if query.trim().is_empty() {
+        bail!("search query cannot be empty");
+    }
+    let workspace = Workspace::open(path)?;
+    let results = workspace.search_requests(query)?;
+    if output_json {
+        println!("{}", serde_json::to_string_pretty(&results)?);
+        return Ok(());
+    }
+    if results.is_empty() {
+        println!("No saved requests matched {query:?}.");
+        return Ok(());
+    }
+    println!("{} saved request(s) matched {query:?}:", results.len());
+    for result in results {
+        let location = result
+            .folder
+            .as_deref()
+            .map(|folder| format!("{} / {folder}", result.collection))
+            .unwrap_or(result.collection);
+        println!(
+            "{} {} — {} — {} ({})",
+            result.method,
+            result.name,
+            location,
+            result.url,
+            result.path.display()
+        );
     }
     Ok(())
 }

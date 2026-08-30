@@ -19,6 +19,22 @@ postly list ./my-api
 
 During development, use `cargo run --` in place of `postly`.
 
+## Search the workspace
+
+Search covers collection names, request names, folders, methods, URLs and
+descriptions across every collection. Headers, cookies, bodies,
+authentication and scripts are intentionally excluded from the index and
+output:
+
+~~~bash
+postly search payments --workspace ./my-api
+postly search "admin / read" --workspace ./my-api --output-json
+~~~
+
+The result paths are relative to the workspace root and deterministic. An
+empty query is rejected; a valid query with no matches exits successfully and
+prints an explicit no-match message.
+
 ## Send requests
 
 ~~~bash

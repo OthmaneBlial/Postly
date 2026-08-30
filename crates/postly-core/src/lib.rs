@@ -42,5 +42,5 @@ pub use openapi::{import_openapi, OpenApiImportError, OpenApiImportReport};
 pub use runner::{run_requests, CancellationToken, RunnerItemResult, RunnerOptions, RunnerSummary};
 pub use scripting::{run_script, ScriptError, ScriptLog, ScriptResult, ScriptTestResult};
 pub use sse::{parse_sse, SseError, SseEvent, SseParser};
-pub use storage::{CollectionFiles, Workspace, WorkspaceError};
+pub use storage::{CollectionFiles, RequestSearchResult, Workspace, WorkspaceError};
 pub use variables::{ResolvedText, VariableContext, VariableDiagnostic, VariableDiagnosticKind};

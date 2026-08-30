@@ -64,7 +64,7 @@ This is a working vertical slice, not a static UI mockup.
   local response snapshots.
 - <strong>Collections:</strong> local TOML project model, nested request folders,
   deterministic discovery, stable request identity, duplicate/delete/rename
-  flows and bounded metadata-only history.
+  flows, global metadata search and bounded metadata-only history.
 - <strong>Migration:</strong> Postman Collection v2.1 import/export, environment import/
   export, OpenAPI 3.0/3.1 JSON/YAML import and common cURL import.
 - <strong>Testing and automation:</strong> explicit response assertions, opt-in Node.js
@@ -192,6 +192,9 @@ postly run ./my-api --environment Local --reporter json
 postly run ./my-api --environment Local --reporter junit > postly-results.xml
 postly run ./my-api --folder auth --environment Local --reporter pretty
 
+# Search every collection without exposing request secrets
+postly search payments --workspace ./my-api --output-json
+
 # Protocol workflows
 postly graphql https://api.example.com/graphql --query 'query { health }'
 postly sse https://api.example.com/events --reconnect 3
@@ -305,7 +308,7 @@ Highest-value roadmap areas include:
 - OS keychain integration and complete secret-handling workflows;
 - richer Postman fixtures and executable compatibility scoring;
 - gRPC reflection and a first-class gRPC GUI;
-- global search, tabs, command palette, accessibility and crash recovery;
+- tabs, command palette, accessibility and crash recovery;
 - deterministic protocol test servers, fuzzing, benchmarks and packaging.
 
 See <a href="docs/progress.md">docs/progress.md</a> for current evidence instead of a
