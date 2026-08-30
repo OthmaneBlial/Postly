@@ -49,7 +49,7 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility.
 - Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.
 - OS keychain storage, persistent/manual cookie management and crash recovery.
-- OpenAPI external/cyclic references, GraphQL schema explorer, SSE reconnection, gRPC reflection and gRPC GUI.
+- OpenAPI external/cyclic references, GraphQL schema explorer, GUI SSE reconnection, gRPC reflection and gRPC GUI.
 - Local deterministic protocol test servers, fuzzing, benchmarks and packaging.
 
 ## Verification

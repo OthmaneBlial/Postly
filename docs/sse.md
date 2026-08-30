@@ -9,6 +9,7 @@ rules as regular requests.
 postly sse https://api.example.test/events
 postly sse https://api.example.test/events --output-json
 postly sse https://api.example.test/events -H 'Authorization: Bearer local-token'
+postly sse https://api.example.test/events --reconnect 3
 ~~~
 
 The parser handles `id`, `event`, repeated `data` lines, comments, `retry`,
@@ -18,4 +19,6 @@ local tools without an account or hosted relay. In the GUI, the `Stream SSE`
 action opens a progressive event console with event type, data, id, retry,
 timestamp and connection status. `Cancel` interrupts the in-flight body read and
 closes the local stream. The GUI retains at most 500 events; reconnect policy
-remains planned.
+remains planned. The CLI supports bounded reconnects with `--reconnect N`, waits
+for the server-provided `retry` delay when present, and sends the most recent
+`Last-Event-ID` on the next attempt.

@@ -225,6 +225,7 @@ struct SseOptions {
     basic_user: Option<String>,
     basic_password: Option<String>,
     timeout: u64,
+    reconnect: u32,
     insecure: bool,
     output_json: bool,
 }
@@ -360,6 +361,8 @@ enum Command {
         basic_password: Option<String>,
         #[arg(long, default_value_t = 300)]
         timeout: u64,
+        #[arg(long, default_value_t = 0)]
+        reconnect: u32,
         #[arg(long)]
         insecure: bool,
         #[arg(long)]
@@ -751,6 +754,7 @@ async fn main() -> Result<()> {
             basic_user,
             basic_password,
             timeout,
+            reconnect,
             insecure,
             output_json,
         } => {
@@ -761,6 +765,7 @@ async fn main() -> Result<()> {
                 basic_user,
                 basic_password,
                 timeout,
+                reconnect,
                 insecure,
                 output_json,
             })
@@ -1196,59 +1201,122 @@ async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
 }
 
 async fn stream_sse(options: SseOptions) -> Result<()> {
-    let mut request = Request::new("SSE CLI subscription", "GET", options.endpoint);
-    request.headers = parse_headers(&options.headers)?;
-    if !request
+    let mut base_request = Request::new("SSE CLI subscription", "GET", options.endpoint);
+    base_request.headers = parse_headers(&options.headers)?;
+    if !base_request
         .headers
         .iter()
         .any(|header| header.enabled && header.key.eq_ignore_ascii_case("accept"))
     {
-        request
+        base_request
             .headers
             .push(HeaderEntry::enabled("accept", "text/event-stream"));
     }
-    request.auth = parse_auth_flags(options.bearer, options.basic_user, options.basic_password)?;
+    base_request.auth =
+        parse_auth_flags(options.bearer, options.basic_user, options.basic_password)?;
 
     let engine = HttpEngine::new(&EngineOptions {
         timeout: Duration::from_secs(options.timeout),
         accept_invalid_certs: options.insecure,
         ..EngineOptions::default()
     })?;
-    let mut response = engine
-        .execute_stream(&request, &VariableContext::default())
-        .await?;
-    if response.status >= 400 {
-        let body = response.response.text().await.unwrap_or_default();
-        bail!(
-            "SSE endpoint returned {} {}{}",
-            response.status,
-            response.status_text,
-            if body.trim().is_empty() {
-                String::new()
+    let mut reconnects_used = 0;
+    let mut last_event_id = None;
+    loop {
+        let mut request = base_request.clone();
+        if let Some(last_event_id) = &last_event_id {
+            if let Some(header) = request
+                .headers
+                .iter_mut()
+                .find(|header| header.enabled && header.key.eq_ignore_ascii_case("last-event-id"))
+            {
+                header.value.clone_from(last_event_id);
             } else {
-                format!(": {}", body.trim())
+                request
+                    .headers
+                    .push(HeaderEntry::enabled("last-event-id", last_event_id));
             }
-        );
-    }
-    if !options.output_json {
-        println!(
-            "{} {} · {} · {}",
-            response.status,
-            response.status_text,
-            response.content_type.as_deref().unwrap_or("SSE"),
-            response.url
-        );
-    }
+        }
+        let mut response = match engine
+            .execute_stream(&request, &VariableContext::default())
+            .await
+        {
+            Ok(response) => response,
+            Err(error) if reconnects_used < options.reconnect => {
+                reconnects_used += 1;
+                print_sse_state("reconnecting", options.output_json)?;
+                eprintln!("SSE connection failed, retrying: {error}");
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if response.status >= 400 {
+            let body = response.response.text().await.unwrap_or_default();
+            bail!(
+                "SSE endpoint returned {} {}{}",
+                response.status,
+                response.status_text,
+                if body.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", body.trim())
+                }
+            );
+        }
+        print_sse_state("connected", options.output_json)?;
+        if !options.output_json {
+            println!(
+                "{} {} · {} · {}",
+                response.status,
+                response.status_text,
+                response.content_type.as_deref().unwrap_or("SSE"),
+                response.url
+            );
+        }
 
-    let mut parser = SseParser::default();
-    while let Some(chunk) = response.response.chunk().await? {
-        for event in parser.feed_bytes(&chunk)? {
+        let mut parser = SseParser::default();
+        let mut retry_delay_ms = 250;
+        while let Some(chunk) = response.response.chunk().await? {
+            for event in parser.feed_bytes(&chunk)? {
+                if let Some(id) = &event.id {
+                    last_event_id = Some(id.clone());
+                }
+                if let Some(retry_ms) = event.retry_ms {
+                    retry_delay_ms = retry_ms;
+                }
+                print_sse_event(&event, options.output_json)?;
+            }
+        }
+        for event in parser.finish()? {
+            if let Some(id) = &event.id {
+                last_event_id = Some(id.clone());
+            }
+            if let Some(retry_ms) = event.retry_ms {
+                retry_delay_ms = retry_ms;
+            }
             print_sse_event(&event, options.output_json)?;
         }
+        if reconnects_used >= options.reconnect {
+            print_sse_state("closed", options.output_json)?;
+            return Ok(());
+        }
+        reconnects_used += 1;
+        print_sse_state("reconnecting", options.output_json)?;
+        tokio::time::sleep(Duration::from_millis(retry_delay_ms)).await;
     }
-    for event in parser.finish()? {
-        print_sse_event(&event, options.output_json)?;
+}
+
+fn print_sse_state(state: &str, output_json: bool) -> Result<()> {
+    if output_json {
+        println!(
+            "{}",
+            serde_json::to_string(&json!({"type": "connection", "state": state}))?
+        );
+    } else {
+        println!("SSE {state}");
     }
+    io::stdout().flush()?;
     Ok(())
 }
 
@@ -2422,11 +2490,60 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            reconnect: 0,
             insecure: false,
             output_json: true,
         })
         .await
         .expect("SSE command");
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn sse_command_reconnects_with_the_last_event_id() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let responses: [(Option<&str>, &[u8]); 2] = [
+                (None, b"id: first\ndata: one\n\n"),
+                (Some("first"), b"id: second\ndata: two\n\n"),
+            ];
+            for (last_event_id, body) in responses {
+                let (mut socket, _) = listener.accept().await.expect("connection");
+                let mut request = [0_u8; 8192];
+                let length = socket.read(&mut request).await.expect("request");
+                let request = String::from_utf8_lossy(&request[..length]);
+                assert!(request.contains("GET /events HTTP/1.1"));
+                if let Some(last_event_id) = last_event_id {
+                    assert!(request.contains(&format!("last-event-id: {last_event_id}")));
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n",
+                    body.len()
+                );
+                socket
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("headers");
+                socket.write_all(body).await.expect("events");
+            }
+        });
+
+        stream_sse(SseOptions {
+            endpoint: format!("http://{address}/events"),
+            headers: Vec::new(),
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            reconnect: 1,
+            insecure: false,
+            output_json: true,
+        })
+        .await
+        .expect("SSE reconnect command");
         server.await.expect("server");
     }
 
