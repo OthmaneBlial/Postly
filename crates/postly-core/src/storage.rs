@@ -167,6 +167,38 @@ impl Workspace {
         collection: &CollectionFiles,
         request: &Request,
     ) -> Result<PathBuf, WorkspaceError> {
+        let path = self.request_path_for(collection, request, None)?;
+        self.write_request_file(&path, request)?;
+        Ok(path)
+    }
+
+    pub fn relocate_request(
+        &self,
+        path: impl AsRef<Path>,
+        collection: &CollectionFiles,
+        request: &Request,
+    ) -> Result<PathBuf, WorkspaceError> {
+        let old_path = path.as_ref();
+        if !is_request_path(&self.root, old_path) {
+            return Err(WorkspaceError::InvalidName(old_path.display().to_string()));
+        }
+        let new_path = self.request_path_for(collection, request, Some(old_path))?;
+        self.write_request_file(&new_path, request)?;
+        if new_path != old_path {
+            fs::remove_file(old_path).map_err(|source| WorkspaceError::Io {
+                path: old_path.to_path_buf(),
+                source,
+            })?;
+        }
+        Ok(new_path)
+    }
+
+    fn request_path_for(
+        &self,
+        collection: &CollectionFiles,
+        request: &Request,
+        current_path: Option<&Path>,
+    ) -> Result<PathBuf, WorkspaceError> {
         let mut directory = collection.directory.join("requests");
         if let Some(folder) = request
             .folder
@@ -181,22 +213,34 @@ impl Workspace {
                 directory.push(slug);
             }
         }
-        fs::create_dir_all(&directory).map_err(|source| WorkspaceError::Io {
-            path: directory.clone(),
-            source,
-        })?;
         let base = slugify(&request.name)?;
-        let mut path = directory.join(format!("{base}{REQUEST_SUFFIX}"));
-        if path.exists() {
-            path = directory.join(format!(
-                "{}-{}{}",
-                base,
-                &request.id.to_string()[..8],
-                REQUEST_SUFFIX
-            ));
+        let preferred = directory.join(format!("{base}{REQUEST_SUFFIX}"));
+        if current_path.is_some_and(|path| path == preferred) || !preferred.exists() {
+            return Ok(preferred);
         }
-        self.write_toml(&path, request)?;
-        Ok(path)
+        let identity = &request.id.to_string()[..8];
+        let identity_path = directory.join(format!("{base}-{identity}{REQUEST_SUFFIX}"));
+        if current_path.is_some_and(|path| path == identity_path) || !identity_path.exists() {
+            return Ok(identity_path);
+        }
+        let mut suffix = 2_u32;
+        loop {
+            let path = directory.join(format!("{base}-{identity}-{suffix}{REQUEST_SUFFIX}"));
+            if current_path.is_some_and(|current| current == path) || !path.exists() {
+                return Ok(path);
+            }
+            suffix = suffix.saturating_add(1);
+        }
+    }
+
+    fn write_request_file(&self, path: &Path, request: &Request) -> Result<(), WorkspaceError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| WorkspaceError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        self.write_toml(path, request)
     }
 
     pub fn update_request(
@@ -226,15 +270,7 @@ impl Workspace {
         let has_parent = relative
             .components()
             .any(|component| component == Component::ParentDir);
-        let is_request_file = relative
-            .components()
-            .next()
-            .is_some_and(|component| component.as_os_str() == "collections")
-            && !has_parent
-            && path
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().ends_with(REQUEST_SUFFIX));
-        if !is_request_file {
+        if has_parent || !is_request_path(&self.root, path) {
             return Err(WorkspaceError::InvalidName(path.display().to_string()));
         }
         fs::remove_file(path).map_err(|source| WorkspaceError::Io {
@@ -494,6 +530,22 @@ fn collect_files(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Works
     Ok(())
 }
 
+fn is_request_path(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let components = relative.components().collect::<Vec<_>>();
+    components.len() >= 4
+        && components
+            .iter()
+            .all(|component| matches!(component, Component::Normal(_)))
+        && components[0].as_os_str() == "collections"
+        && components[2].as_os_str() == "requests"
+        && path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().ends_with(REQUEST_SUFFIX))
+}
+
 fn slugify(value: &str) -> Result<String, WorkspaceError> {
     let slug = value
         .trim()
@@ -548,11 +600,15 @@ mod tests {
         assert!(path.to_string_lossy().contains("users/read"));
 
         request.name = "List all users".to_owned();
-        reopened
-            .update_request(&path, &request)
-            .expect("update request");
-        let updated = reopened.load_request(&path).expect("updated request");
+        request.folder = Some("Users / Write".to_owned());
+        let reopened_collection = reopened.collections().expect("collections")[0].clone();
+        let relocated = reopened
+            .relocate_request(&path, &reopened_collection, &request)
+            .expect("relocate request");
+        let updated = reopened.load_request(&relocated).expect("updated request");
         assert_eq!(updated.name, "List all users");
+        assert!(relocated.to_string_lossy().contains("users/write"));
+        assert!(!path.exists());
     }
 
     #[test]

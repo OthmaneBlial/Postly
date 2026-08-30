@@ -25,6 +25,7 @@ Implemented:
 - saved-request executions can be recorded, searched, filtered, cleared and retained as bounded ignored metadata-only local history.
 - native `postly-gui` request workspace with async send, editor tabs and response views.
 - native saved-request duplication and guarded deletion with storage/UI regression tests.
+- saved request rename/folder changes relocate the canonical file while preserving request identity.
 - OpenAPI 3 JSON/YAML import for common operations, parameters, JSON bodies and auth placeholders.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
 - Stateful in-memory cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing.

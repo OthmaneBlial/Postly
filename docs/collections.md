@@ -23,6 +23,10 @@ The native workspace can duplicate a saved request with a new stable UUID and a
 under the current workspace's `collections/` tree. Draft requests are not
 deleted, and storage guards reject paths outside the project.
 
+Changing a saved request's name or folder also relocates its canonical file;
+the request UUID remains stable and the old path is removed only after the new
+file has been written successfully.
+
 Environment files may contain secrets. Postly ignores runtime environment files by default; keep local values there and commit a separate redacted template when sharing a project:
 
 ~~~text

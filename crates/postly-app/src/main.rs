@@ -335,11 +335,14 @@ impl PostlyApp {
 
     fn save_current(&mut self) -> Result<(), String> {
         let request = self.edited_request()?;
-        let path = if let Some(path) = &self.request_path {
+        let path = if let Some(path) = self.request_path.clone() {
+            let collection = self
+                .collections
+                .get(self.selected_collection)
+                .ok_or_else(|| "no collection selected".to_owned())?;
             self.workspace
-                .update_request(path, &request)
-                .map_err(|error| error.to_string())?;
-            path.clone()
+                .relocate_request(&path, collection, &request)
+                .map_err(|error| error.to_string())?
         } else {
             let collection = self
                 .collections
@@ -1309,6 +1312,26 @@ mod tests {
         app.delete_current().expect("delete duplicate");
         assert_eq!(app.requests.len(), 1);
         assert_eq!(app.requests[0].1.name, "List users");
+    }
+
+    #[test]
+    fn saving_a_request_name_or_folder_relocates_its_file() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "List users".to_owned();
+        app.save_current().expect("save request");
+        let original_path = app.request_path.clone().expect("original path");
+
+        app.request.name = "List all users".to_owned();
+        app.request.folder = Some("Users / Read".to_owned());
+        app.save_current().expect("relocate request");
+
+        let relocated_path = app.request_path.clone().expect("relocated path");
+        assert_ne!(relocated_path, original_path);
+        assert!(!original_path.exists());
+        assert!(relocated_path.to_string_lossy().contains("users/read"));
+        assert_eq!(app.requests.len(), 1);
+        assert_eq!(app.requests[0].1.name, "List all users");
     }
 
     #[test]
