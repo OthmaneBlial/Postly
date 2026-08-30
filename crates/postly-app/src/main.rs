@@ -145,6 +145,7 @@ pub struct PostlyApp {
     response_search: String,
     response: Option<HttpResponse>,
     response_error: Option<String>,
+    response_wrap: bool,
     pending: Option<Receiver<Result<HttpResponse, String>>>,
     pending_request: Option<Request>,
     selected_environment: Option<String>,
@@ -201,6 +202,7 @@ impl PostlyApp {
             response_search: String::new(),
             response: None,
             response_error: None,
+            response_wrap: false,
             pending: None,
             pending_request: None,
             selected_environment: None,
@@ -379,6 +381,38 @@ impl PostlyApp {
         self.response = None;
         self.response_error = None;
         self.response_search.clear();
+    }
+
+    fn save_current_response(&mut self) -> Result<(), String> {
+        let response = self
+            .response
+            .as_ref()
+            .ok_or_else(|| "no response to save".to_owned())?;
+        let directory = self.workspace.root().join(".postly").join("responses");
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let extension = if response
+            .content_type
+            .as_deref()
+            .is_some_and(|content_type| content_type.contains("json"))
+        {
+            "json"
+        } else {
+            "txt"
+        };
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_secs();
+        let slug = response_file_slug(&self.request.name);
+        let mut path = directory.join(format!("{slug}-{timestamp}.{extension}"));
+        let mut suffix = 2_u32;
+        while path.exists() {
+            path = directory.join(format!("{slug}-{timestamp}-{suffix}.{extension}"));
+            suffix = suffix.saturating_add(1);
+        }
+        std::fs::write(&path, response.body_text()).map_err(|error| error.to_string())?;
+        self.status_message = format!("Response saved locally — {}", path.display());
+        Ok(())
     }
 
     fn edited_request(&self) -> Result<Request, String> {
@@ -1321,6 +1355,23 @@ impl PostlyApp {
                                 .hint_text("find in response")
                                 .desired_width(220.0),
                         );
+                        if ui.button("Copy").clicked() {
+                            if let Some(response) = &self.response {
+                                let view = if self.response_tab == ResponseTab::Pretty {
+                                    ResponseView::Pretty
+                                } else {
+                                    ResponseView::Raw
+                                };
+                                ui.ctx().copy_text(response.formatted_body(view));
+                                self.status_message = "Response copied to clipboard".to_owned();
+                            }
+                        }
+                        if ui.button("Save response").clicked() {
+                            if let Err(error) = self.save_current_response() {
+                                self.status_message = format!("Save failed: {error}");
+                            }
+                        }
+                        ui.checkbox(&mut self.response_wrap, "Wrap");
                     });
                 }
                 ui.separator();
@@ -1346,7 +1397,7 @@ impl PostlyApp {
                 } else {
                     ResponseView::Raw
                 };
-                let mut text = response.formatted_body(view);
+                let text = response.formatted_body(view);
                 if !self.response_search.trim().is_empty() {
                     let total = response_search_matches(&text, &self.response_search);
                     let lines = response_search_lines(&text, &self.response_search);
@@ -1376,15 +1427,31 @@ impl PostlyApp {
                             }
                         });
                 }
+                let lines = text.lines().collect::<Vec<_>>();
+                let line_count = lines.len().max(1);
+                let line_height = ui.text_style_height(&TextStyle::Monospace);
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add(
-                            TextEdit::multiline(&mut text)
-                                .font(TextStyle::Monospace)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(10),
-                        );
+                    .show_rows(ui, line_height, line_count, |ui, row_range| {
+                        for index in row_range {
+                            ui.horizontal(|ui| {
+                                ui.add_sized(
+                                    [52.0, line_height],
+                                    egui::Label::new(
+                                        RichText::new(format!("{:>5}", index + 1))
+                                            .monospace()
+                                            .color(MUTED),
+                                    ),
+                                );
+                                let line = lines.get(index).copied().unwrap_or_default();
+                                let label = egui::Label::new(RichText::new(line).monospace());
+                                if self.response_wrap {
+                                    ui.add(label.wrap());
+                                } else {
+                                    ui.add(label);
+                                }
+                            });
+                        }
                     });
             }
             ResponseTab::Headers => {
@@ -1519,6 +1586,28 @@ fn labeled_singleline(ui: &mut egui::Ui, label: &str, value: &mut String) -> boo
             .changed();
     });
     changed
+}
+
+fn response_file_slug(value: &str) -> String {
+    let slug = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .chars()
+        .take(48)
+        .collect::<String>();
+    if slug.is_empty() {
+        "response".to_owned()
+    } else {
+        slug
+    }
 }
 
 fn render_key_values(
@@ -1690,6 +1779,36 @@ mod tests {
             .edited_request()
             .expect_err("GraphQL variables must be an object");
         assert!(error.contains("GraphQL variables are invalid"));
+    }
+
+    #[test]
+    fn response_can_be_saved_to_ignored_local_artifacts() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "Saved users / response".to_owned();
+        app.response = Some(HttpResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: vec![HeaderEntry::enabled("content-type", "application/json")],
+            body: br#"{"ok":true}"#.to_vec(),
+            content_type: Some("application/json".to_owned()),
+            duration_ms: 4,
+            protocol: "HTTP/1.1".to_owned(),
+            url: "https://example.test/users".to_owned(),
+            cookies: Vec::new(),
+        });
+
+        app.save_current_response().expect("save response");
+        let response_directory = directory.path().join(".postly/responses");
+        let entries = std::fs::read_dir(response_directory)
+            .expect("response directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("response entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(entries[0].path()).expect("saved response"),
+            r#"{"ok":true}"#
+        );
     }
 
     #[test]

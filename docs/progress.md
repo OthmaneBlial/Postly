@@ -28,6 +28,7 @@ Implemented:
 - native saved-request duplication and guarded deletion with storage/UI regression tests.
 - saved request rename/folder changes relocate the canonical file while preserving request identity.
 - response Pretty/Raw views now provide case-insensitive local search with occurrence counts and line snippets.
+- response Pretty/Raw views now use virtualized line rows with optional wrapping, clipboard copy and workspace-local response snapshots.
 - OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, parameters, JSON bodies and auth placeholders.
 - Structured GraphQL core/CLI/GUI request model with variables, operation names, partial-data/error parsing, validated GUI editing and local HTTP integration coverage.
 - SSE parser and progressive CLI subscription with chunk-safe event decoding, JSON-lines output and local streaming integration coverage.
@@ -42,7 +43,7 @@ Implemented:
 
 Not yet implemented:
 
-- Desktop GUI polish, large-response virtualization and richer response editor.
+- Desktop GUI polish, richer response preview/syntax features and manual responsive/accessibility QA.
 - Embedded/hardened script runtime and broader pm.* compatibility.
 - Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.
 - OS keychain storage, persistent/manual cookie management and crash recovery.
@@ -57,5 +58,5 @@ cargo xtask check is the required validation command for this milestone. The CLI
 
 1. Add importer fixtures for more Postman body/auth/URL variants.
 2. Add script isolation research and an ADR before broadening runtime compatibility.
-3. Add a safe, explicit test/assertion model beyond the current basic bridge.
-4. Add large-response handling, search and desktop accessibility QA.
+3. Extend the explicit assertion model with broader Postman-compatible cases and GUI coverage.
+4. Extend response preview features and complete desktop accessibility/responsive QA.
