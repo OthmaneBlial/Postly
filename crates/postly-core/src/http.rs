@@ -1,7 +1,8 @@
-use std::{path::Path, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use reqwest::{
-    header::{HeaderName, HeaderValue},
+    cookie::{CookieStore, Jar},
+    header::{HeaderName, HeaderValue, SET_COOKIE},
     Client, Method, Url,
 };
 use serde::{Deserialize, Serialize};
@@ -65,6 +66,7 @@ pub enum HttpError {
 #[derive(Debug, Clone)]
 pub struct HttpEngine {
     client: Client,
+    cookie_jar: Arc<Jar>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +79,28 @@ pub struct HttpResponse {
     pub duration_ms: u128,
     pub protocol: String,
     pub url: String,
+    #[serde(default)]
+    pub cookies: Vec<ResponseCookie>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResponseCookie {
+    pub name: String,
+    pub value: String,
+    #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub secure: bool,
+    #[serde(default)]
+    pub http_only: bool,
+    #[serde(default)]
+    pub same_site: Option<String>,
+    #[serde(default)]
+    pub expires: Option<String>,
+    #[serde(default)]
+    pub max_age_seconds: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,13 +138,34 @@ impl HttpResponse {
 
 impl HttpEngine {
     pub fn new(options: &EngineOptions) -> Result<Self, HttpError> {
+        let cookie_jar = Arc::new(Jar::default());
         let client = Client::builder()
             .timeout(options.timeout)
             .danger_accept_invalid_certs(options.accept_invalid_certs)
             .redirect(reqwest::redirect::Policy::limited(options.max_redirects))
+            .cookie_provider(Arc::clone(&cookie_jar))
             .build()
             .map_err(HttpError::Client)?;
-        Ok(Self { client })
+        Ok(Self { client, cookie_jar })
+    }
+
+    /// Add a manually-authored cookie to the in-memory jar for a URL.
+    ///
+    /// The cookie is scoped by the URL and is discarded when this engine is
+    /// dropped. This deliberately does not persist cookie values to disk.
+    pub fn add_cookie(&self, url: &str, cookie: &str) -> Result<(), HttpError> {
+        let url = Url::parse(url)?;
+        self.cookie_jar.add_cookie_str(cookie, &url);
+        Ok(())
+    }
+
+    /// Return the cookie header currently applicable to a URL, if any.
+    pub fn cookie_header(&self, url: &str) -> Result<Option<String>, HttpError> {
+        let url = Url::parse(url)?;
+        Ok(self
+            .cookie_jar
+            .cookies(&url)
+            .and_then(|value| value.to_str().ok().map(ToOwned::to_owned)))
     }
 
     pub async fn execute(
@@ -214,6 +259,13 @@ impl HttpEngine {
                 HeaderEntry::enabled(name.as_str(), value.to_str().unwrap_or("<binary>"))
             })
             .collect();
+        let cookies = response
+            .headers()
+            .get_all(SET_COOKIE)
+            .iter()
+            .filter_map(parse_set_cookie)
+            .collect();
+        let final_url = response.url().to_string();
         let body = response.bytes().await.map_err(HttpError::Request)?.to_vec();
 
         Ok(HttpResponse {
@@ -224,9 +276,60 @@ impl HttpEngine {
             content_type,
             duration_ms: started.elapsed().as_millis(),
             protocol,
-            url: url.to_string(),
+            url: final_url,
+            cookies,
         })
     }
+}
+
+fn parse_set_cookie(value: &HeaderValue) -> Option<ResponseCookie> {
+    let text = value.to_str().ok()?;
+    let mut segments = text.split(';');
+    let pair = segments.next()?.trim();
+    let (name, value) = pair.split_once('=')?;
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    let mut cookie = ResponseCookie {
+        name: name.to_owned(),
+        value: value.trim().to_owned(),
+        domain: None,
+        path: None,
+        secure: false,
+        http_only: false,
+        same_site: None,
+        expires: None,
+        max_age_seconds: None,
+    };
+    for segment in segments
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+    {
+        let Some((key, attribute_value)) = segment.split_once('=') else {
+            if segment.eq_ignore_ascii_case("secure") {
+                cookie.secure = true;
+            } else if segment.eq_ignore_ascii_case("httponly") {
+                cookie.http_only = true;
+            }
+            continue;
+        };
+        let key = key.trim();
+        let attribute_value = attribute_value.trim();
+        if key.eq_ignore_ascii_case("domain") {
+            cookie.domain = Some(attribute_value.to_owned());
+        } else if key.eq_ignore_ascii_case("path") {
+            cookie.path = Some(attribute_value.to_owned());
+        } else if key.eq_ignore_ascii_case("samesite") {
+            cookie.same_site = Some(attribute_value.to_owned());
+        } else if key.eq_ignore_ascii_case("expires") {
+            cookie.expires = Some(attribute_value.to_owned());
+        } else if key.eq_ignore_ascii_case("max-age") {
+            cookie.max_age_seconds = attribute_value.parse().ok();
+        }
+    }
+    Some(cookie)
 }
 
 fn resolve_pairs(
@@ -493,6 +596,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reuses_session_cookies_and_exposes_response_attributes() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.expect("first connection");
+            let first_request = read_request_headers(&mut first).await;
+            assert!(first_request.contains("GET /login HTTP/1.1"));
+            first
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nset-cookie: session=abc; Path=/; HttpOnly; SameSite=Lax\r\nconnection: close\r\n\r\nok",
+                )
+                .await
+                .expect("first response");
+            drop(first);
+
+            let (mut second, _) = listener.accept().await.expect("second connection");
+            let second_request = read_request_headers(&mut second).await;
+            assert!(second_request
+                .to_ascii_lowercase()
+                .contains("cookie: session=abc"));
+            second
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok")
+                .await
+                .expect("second response");
+        });
+
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let first_request = Request::new("Login", "GET", format!("http://{address}/login"));
+        let first_response = engine
+            .execute(&first_request, &VariableContext::default())
+            .await
+            .expect("first response");
+        assert_eq!(first_response.status, 200);
+        assert_eq!(first_response.cookies.len(), 1);
+        let cookie = &first_response.cookies[0];
+        assert_eq!(cookie.name, "session");
+        assert_eq!(cookie.value, "abc");
+        assert_eq!(cookie.path.as_deref(), Some("/"));
+        assert!(cookie.http_only);
+        assert_eq!(cookie.same_site.as_deref(), Some("Lax"));
+        assert_eq!(
+            engine
+                .cookie_header(&format!("http://{address}/next"))
+                .expect("cookie header"),
+            Some("session=abc".to_owned())
+        );
+
+        let second_request = Request::new("Next", "GET", format!("http://{address}/next"));
+        let second_response = engine
+            .execute(&second_request, &VariableContext::default())
+            .await
+            .expect("second response");
+        assert_eq!(second_response.status, 200);
+        assert!(second_response.cookies.is_empty());
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
     async fn rejects_undefined_values_before_network_io() {
         let mut request = Request::new("Invalid", "GET", "http://127.0.0.1:1/{{missing}}");
         request
@@ -522,5 +683,18 @@ mod tests {
             }
             other => panic!("expected variable diagnostics, got {other}"),
         }
+    }
+
+    async fn read_request_headers(socket: &mut tokio::net::TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            let count = socket.read(&mut buffer).await.expect("request read");
+            if count == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buffer[..count]);
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
     }
 }

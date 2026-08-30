@@ -16,7 +16,7 @@ The supported compatibility slice includes:
 - `pm.collectionVariables.get/set`
 - `pm.variables.get/set/replaceIn`
 - `pm.request` URL, method and readable headers
-- `pm.response.code/status/responseTime/text/json/headers`
+- `pm.response.code/status/responseTime/text/json/headers/cookies`
 - `pm.test` and `pm.expect` equality, inclusion, property and boolean checks
 - `console.log`, `console.warn` and `console.error` capture
 

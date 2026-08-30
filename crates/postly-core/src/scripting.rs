@@ -8,7 +8,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    http::HttpResponse,
+    http::{HttpResponse, ResponseCookie},
     model::{Request, Variables},
     variables::VariableContext,
 };
@@ -100,6 +100,7 @@ struct ResponseInput {
     status: u16,
     status_text: String,
     headers: Vec<crate::model::HeaderEntry>,
+    cookies: Vec<ResponseCookie>,
     body_text: String,
     duration_ms: u128,
 }
@@ -139,6 +140,7 @@ pub fn run_script(
             status: response.status,
             status_text: response.status_text.clone(),
             headers: response.headers.clone(),
+            cookies: response.cookies.clone(),
             body_text: response.body_text(),
             duration_ms: response.duration_ms,
         }),
@@ -288,6 +290,7 @@ if (responseData) {
     status: responseData.status_text,
     responseTime: responseData.duration_ms,
     headers: responseHeaders,
+    cookies: responseData.cookies || [],
     text: () => responseData.body_text,
     json: () => JSON.parse(responseData.body_text),
     to: {
@@ -387,6 +390,17 @@ mod tests {
             duration_ms: 4,
             protocol: "HTTP/1.1".to_owned(),
             url: "https://example.test".to_owned(),
+            cookies: vec![ResponseCookie {
+                name: "session".to_owned(),
+                value: "abc".to_owned(),
+                domain: None,
+                path: Some("/".to_owned()),
+                secure: false,
+                http_only: true,
+                same_site: Some("Lax".to_owned()),
+                expires: None,
+                max_age_seconds: None,
+            }],
         };
         let result = run_script(
             r#"
@@ -396,15 +410,19 @@ mod tests {
                 pm.test("json", function () {
                     pm.expect(pm.response.json().ok).to.be.true;
                 });
+                pm.test("cookie", function () {
+                    pm.expect(pm.response.cookies[0].name).to.eql("session");
+                });
             "#,
             &request,
             Some(&response),
             &VariableContext::default(),
         )
         .expect("script");
-        assert_eq!(result.tests.len(), 2);
+        assert_eq!(result.tests.len(), 3);
         assert!(!result.tests[0].passed);
         assert!(result.tests[1].passed);
+        assert!(result.tests[2].passed);
         assert_eq!(result.request["name"], "Scripted");
     }
 }

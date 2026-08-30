@@ -2,7 +2,7 @@
 
 ## Current boundary
 
-The repository is a Cargo workspace with three packages:
+The repository is a Cargo workspace with four packages:
 
 - postly-core: durable models, variable resolution, filesystem storage, Postman import, HTTP execution and runner orchestration.
 - postly: the CLI, intentionally thin over the core.
@@ -35,7 +35,7 @@ CLI or native UI
   -> renderer / reporter
 ~~~
 
-The HTTP engine uses a bounded timeout and redirect policy. Insecure certificate acceptance is an explicit option rather than a default. Variable diagnostics are surfaced before network I/O.
+The HTTP engine uses a bounded timeout and redirect policy, plus an in-memory cookie jar shared by cloned engine handles. Insecure certificate acceptance is an explicit option rather than a default. Variable diagnostics are surfaced before network I/O.
 
 ## Next decisions
 

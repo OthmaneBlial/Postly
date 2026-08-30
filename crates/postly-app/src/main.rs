@@ -21,6 +21,7 @@ const SURFACE: Color32 = Color32::from_rgb(31, 37, 49);
 enum EditorTab {
     Params,
     Headers,
+    Cookies,
     Body,
     Auth,
 }
@@ -74,6 +75,7 @@ impl AuthKind {
 
 pub struct PostlyApp {
     workspace: Workspace,
+    engine: HttpEngine,
     collections: Vec<CollectionFiles>,
     environments: Vec<(PathBuf, Environment)>,
     selected_collection: usize,
@@ -113,8 +115,11 @@ impl PostlyApp {
         let environments = workspace
             .environments()
             .map_err(|error| error.to_string())?;
+        let engine =
+            HttpEngine::new(&EngineOptions::default()).map_err(|error| error.to_string())?;
         let mut app = Self {
             workspace,
+            engine,
             collections,
             environments,
             selected_collection: 0,
@@ -330,6 +335,7 @@ impl PostlyApp {
         }
         let request = self.edited_request()?;
         let context = self.context();
+        let engine = self.engine.clone();
         let (sender, receiver) = mpsc::channel();
         let worker_request = request.clone();
         thread::spawn(move || {
@@ -337,8 +343,6 @@ impl PostlyApp {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
-                    .map_err(|error| error.to_string())?;
-                let engine = HttpEngine::new(&EngineOptions::default())
                     .map_err(|error| error.to_string())?;
                 runtime
                     .block_on(engine.execute(&worker_request, &context))
@@ -612,6 +616,7 @@ impl PostlyApp {
                     for (tab, label) in [
                         (EditorTab::Params, "Params"),
                         (EditorTab::Headers, "Headers"),
+                        (EditorTab::Cookies, "Cookies"),
                         (EditorTab::Body, "Body"),
                         (EditorTab::Auth, "Auth"),
                     ] {
@@ -648,7 +653,12 @@ impl PostlyApp {
                                 .color(MUTED),
                         );
                         ui.add_space(10.0);
-                        self.dirty |= render_key_values(ui, &mut self.request.query, "query");
+                        self.dirty |= render_key_values(
+                            ui,
+                            &mut self.request.query,
+                            "query",
+                            "＋ Add parameter",
+                        );
                     }
                     EditorTab::Headers => {
                         ui.heading(RichText::new("Headers").color(Color32::WHITE));
@@ -661,6 +671,23 @@ impl PostlyApp {
                         );
                         ui.add_space(10.0);
                         self.dirty |= render_headers(ui, &mut self.request.headers);
+                    }
+                    EditorTab::Cookies => {
+                        ui.heading(RichText::new("Request cookies").color(Color32::WHITE));
+                        ui.label(
+                            RichText::new(
+                                "Explicit cookies are sent for this request and override the automatic jar header.",
+                            )
+                            .small()
+                            .color(MUTED),
+                        );
+                        ui.add_space(10.0);
+                        self.dirty |= render_key_values(
+                            ui,
+                            &mut self.request.cookies,
+                            "request-cookies",
+                            "＋ Add cookie",
+                        );
                     }
                     EditorTab::Body => self.render_body(ui),
                     EditorTab::Auth => self.render_auth(ui),
@@ -893,12 +920,50 @@ impl PostlyApp {
                 });
             }
             ResponseTab::Cookies => {
-                ui.label(
-                    RichText::new(
-                        "Response cookie parsing is reserved for the cookie jar milestone.",
-                    )
-                    .color(MUTED),
-                );
+                if response.cookies.is_empty() {
+                    ui.label(RichText::new("No Set-Cookie headers in this response.").color(MUTED));
+                } else {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::Grid::new("response-cookies")
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("Cookie").strong());
+                                ui.label(RichText::new("Attributes").strong());
+                                ui.end_row();
+                                for cookie in &response.cookies {
+                                    ui.label(format!("{} = {}", cookie.name, cookie.value));
+                                    let mut attributes = Vec::new();
+                                    if let Some(domain) = &cookie.domain {
+                                        attributes.push(format!("Domain={domain}"));
+                                    }
+                                    if let Some(path) = &cookie.path {
+                                        attributes.push(format!("Path={path}"));
+                                    }
+                                    if cookie.secure {
+                                        attributes.push("Secure".to_owned());
+                                    }
+                                    if cookie.http_only {
+                                        attributes.push("HttpOnly".to_owned());
+                                    }
+                                    if let Some(same_site) = &cookie.same_site {
+                                        attributes.push(format!("SameSite={same_site}"));
+                                    }
+                                    if let Some(expires) = &cookie.expires {
+                                        attributes.push(format!("Expires={expires}"));
+                                    }
+                                    if let Some(max_age) = cookie.max_age_seconds {
+                                        attributes.push(format!("Max-Age={max_age}"));
+                                    }
+                                    ui.label(if attributes.is_empty() {
+                                        "session cookie".to_owned()
+                                    } else {
+                                        attributes.join("; ")
+                                    });
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                }
             }
             ResponseTab::Timing => {
                 ui.label(format!("Total duration: {} ms", response.duration_ms));
@@ -941,7 +1006,12 @@ fn tab_button(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response 
     )
 }
 
-fn render_key_values(ui: &mut egui::Ui, values: &mut Vec<KeyValue>, id: &str) -> bool {
+fn render_key_values(
+    ui: &mut egui::Ui,
+    values: &mut Vec<KeyValue>,
+    id: &str,
+    add_label: &str,
+) -> bool {
     let mut changed = false;
     let mut remove = None;
     egui::Grid::new(id)
@@ -966,7 +1036,7 @@ fn render_key_values(ui: &mut egui::Ui, values: &mut Vec<KeyValue>, id: &str) ->
         values.remove(index);
         changed = true;
     }
-    if ui.button("＋ Add parameter").clicked() {
+    if ui.button(add_label).clicked() {
         values.push(KeyValue::enabled("", ""));
         changed = true;
     }

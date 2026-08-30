@@ -37,6 +37,6 @@ core async engine is executing.
 
 The current GUI is a native, testable foundation rather than finished desktop
 parity. Large response virtualization, richer text editing, keychain-backed
-secrets, cookie jars and advanced protocol editors remain explicit milestones.
+secrets, persistent/manual cookie management and advanced protocol editors remain explicit milestones.
 The app must keep a rendering smoke test and continue to share all request
 behavior with the CLI/core.
