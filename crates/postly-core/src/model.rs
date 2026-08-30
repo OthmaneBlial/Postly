@@ -176,12 +176,17 @@ impl Request {
 
 /// Persisted configuration for a dynamic gRPC request.
 ///
-/// The protobuf descriptor is compiled from `proto` when the request runs;
+/// The protobuf descriptor is compiled from `proto` when the request runs, or
+/// discovered from the endpoint's reflection service when `reflection` is set;
 /// generated source code is never written into the workspace. Relative proto
 /// and include paths are resolved from the workspace root by the native GUI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GrpcRequest {
     pub proto: String,
+    #[serde(default)]
+    pub reflection: bool,
+    #[serde(default)]
+    pub reflection_host: String,
     #[serde(default)]
     pub includes: Vec<String>,
     pub method: String,
@@ -193,6 +198,8 @@ impl GrpcRequest {
     pub fn new(proto: impl Into<String>, method: impl Into<String>) -> Self {
         Self {
             proto: proto.into(),
+            reflection: false,
+            reflection_host: String::new(),
             includes: Vec::new(),
             method: method.into(),
             metadata: Vec::new(),

@@ -406,6 +406,8 @@ pub struct PostlyApp {
     graphql_variables: String,
     graphql_operation_name: String,
     grpc_proto_path: String,
+    grpc_reflection: bool,
+    grpc_reflection_host: String,
     grpc_includes_text: String,
     grpc_method: String,
     grpc_metadata: Vec<KeyValue>,
@@ -509,6 +511,8 @@ impl PostlyApp {
             graphql_variables: String::new(),
             graphql_operation_name: String::new(),
             grpc_proto_path: String::new(),
+            grpc_reflection: false,
+            grpc_reflection_host: String::new(),
             grpc_includes_text: String::new(),
             grpc_method: String::new(),
             grpc_metadata: Vec::new(),
@@ -706,11 +710,15 @@ impl PostlyApp {
         if let Some(grpc) = &self.request.grpc {
             self.editor_tab = EditorTab::Grpc;
             self.grpc_proto_path.clone_from(&grpc.proto);
+            self.grpc_reflection = grpc.reflection;
+            self.grpc_reflection_host.clone_from(&grpc.reflection_host);
             self.grpc_includes_text = grpc.includes.join("\n");
             self.grpc_method.clone_from(&grpc.method);
             self.grpc_metadata = grpc.metadata.clone();
         } else {
             self.grpc_proto_path.clear();
+            self.grpc_reflection = false;
+            self.grpc_reflection_host.clear();
             self.grpc_includes_text.clear();
             self.grpc_method.clear();
             self.grpc_metadata.clear();
@@ -1250,9 +1258,12 @@ impl PostlyApp {
             },
         };
         if request.grpc.is_some() {
+            let reflection_host = self.grpc_reflection_host.trim();
             let proto = self.grpc_proto_path.trim();
-            if proto.is_empty() {
-                return Err("gRPC protobuf path is required".to_owned());
+            if !self.grpc_reflection && proto.is_empty() {
+                return Err(
+                    "gRPC protobuf path is required unless server reflection is enabled".to_owned(),
+                );
             }
             let method = self.grpc_method.trim();
             if method.is_empty() {
@@ -1260,6 +1271,8 @@ impl PostlyApp {
             }
             request.grpc = Some(GrpcRequest {
                 proto: proto.to_owned(),
+                reflection: self.grpc_reflection,
+                reflection_host: reflection_host.to_owned(),
                 includes: self
                     .grpc_includes_text
                     .lines()
@@ -2742,34 +2755,57 @@ impl PostlyApp {
         ui.heading(RichText::new("gRPC method").color(Color32::WHITE));
         ui.label(
             RichText::new(
-                "Compile a local .proto file at send time. The JSON body is converted through the method descriptor.",
+                "Use a local .proto file or discover the schema from the server. The JSON body is converted through the method descriptor.",
             )
             .small()
             .color(MUTED),
         );
         ui.add_space(10.0);
         let mut changed = false;
-        changed |= labeled_singleline(ui, "Proto file", &mut self.grpc_proto_path);
-        ui.label(
-            RichText::new("Relative paths use the workspace root; one include directory per line.")
-                .small()
-                .color(MUTED),
-        );
-        ui.add_space(5.0);
-        ui.label(
-            RichText::new("Include directories")
-                .strong()
-                .color(Color32::WHITE),
-        );
         changed |= ui
-            .add(
-                TextEdit::multiline(&mut self.grpc_includes_text)
-                    .font(TextStyle::Monospace)
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("proto\nthird_party/protos"),
+            .checkbox(
+                &mut self.grpc_reflection,
+                "Discover schema through server reflection (v1 / v1alpha)",
             )
             .changed();
+        if self.grpc_reflection {
+            ui.label(
+                RichText::new(
+                    "Descriptors stay in memory. Leave the host empty unless the server routes reflection by virtual host.",
+                )
+                .small()
+                .color(MUTED),
+            );
+            changed |= labeled_singleline(
+                ui,
+                "Reflection host (optional)",
+                &mut self.grpc_reflection_host,
+            );
+        } else {
+            changed |= labeled_singleline(ui, "Proto file", &mut self.grpc_proto_path);
+            ui.label(
+                RichText::new(
+                    "Relative paths use the workspace root; one include directory per line.",
+                )
+                .small()
+                .color(MUTED),
+            );
+            ui.add_space(5.0);
+            ui.label(
+                RichText::new("Include directories")
+                    .strong()
+                    .color(Color32::WHITE),
+            );
+            changed |= ui
+                .add(
+                    TextEdit::multiline(&mut self.grpc_includes_text)
+                        .font(TextStyle::Monospace)
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("proto\nthird_party/protos"),
+                )
+                .changed();
+        }
         ui.add_space(7.0);
         changed |= labeled_singleline(ui, "Method path", &mut self.grpc_method);
         ui.label(
@@ -4416,18 +4452,34 @@ async fn execute_grpc_request(
         .clone()
         .ok_or_else(|| "gRPC configuration is missing".to_owned())?;
     let endpoint_url = resolve_websocket_value(&request.url, &context)?;
-    let proto = grpc_path_from_workspace(&root, &resolve_websocket_value(&config.proto, &context)?);
-    let includes = config
-        .includes
-        .iter()
-        .map(|include| {
-            Ok(grpc_path_from_workspace(
-                &root,
-                &resolve_websocket_value(include, &context)?,
-            ))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let schema = GrpcSchema::from_proto(&proto, &includes).map_err(|error| error.to_string())?;
+    let endpoint = build_grpc_endpoint(&endpoint_url, &transport, &root)?;
+    let started = std::time::Instant::now();
+    let channel = endpoint
+        .connect()
+        .await
+        .map_err(|error| format!("could not connect to gRPC endpoint {endpoint_url}: {error}"))?;
+    let schema = if config.reflection {
+        let host = resolve_websocket_value(&config.reflection_host, &context)?;
+        GrpcSchema::from_reflection(channel.clone(), host)
+            .await
+            .map_err(|error| {
+                format!("could not discover gRPC schema through reflection: {error}")
+            })?
+    } else {
+        let proto =
+            grpc_path_from_workspace(&root, &resolve_websocket_value(&config.proto, &context)?);
+        let includes = config
+            .includes
+            .iter()
+            .map(|include| {
+                Ok(grpc_path_from_workspace(
+                    &root,
+                    &resolve_websocket_value(include, &context)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        GrpcSchema::from_proto(&proto, &includes).map_err(|error| error.to_string())?
+    };
     let method_name = resolve_websocket_value(&config.method, &context)?;
     let method = schema
         .find_method(&method_name)
@@ -4461,12 +4513,6 @@ async fn execute_grpc_request(
     } else {
         Vec::new()
     };
-    let endpoint = build_grpc_endpoint(&endpoint_url, &transport, &root)?;
-    let started = std::time::Instant::now();
-    let channel = endpoint
-        .connect()
-        .await
-        .map_err(|error| format!("could not connect to gRPC endpoint {endpoint_url}: {error}"))?;
     let method_path = format!("/{}/{}", method.parent_service().full_name(), method.name());
     let path = http::uri::PathAndQuery::try_from(method_path.clone())
         .map_err(|error| format!("invalid gRPC method path: {error}"))?;
@@ -5109,6 +5155,8 @@ mod tests {
         app.request.url = "http://127.0.0.1:50051".to_owned();
         app.request.grpc = Some(GrpcRequest {
             proto: "proto/echo.proto".to_owned(),
+            reflection: false,
+            reflection_host: String::new(),
             includes: vec!["proto".to_owned(), "third_party".to_owned()],
             method: "/demo.Echo/Echo".to_owned(),
             metadata: vec![KeyValue::enabled("x-request-id", "{{requestId}}")],
@@ -5130,6 +5178,27 @@ mod tests {
         assert_eq!(reopened.request.grpc, request.grpc);
         assert_eq!(reopened.request.body, request.body);
         assert_eq!(reopened.editor_tab, EditorTab::Grpc);
+    }
+
+    #[test]
+    fn grpc_reflection_editor_round_trips_without_a_proto_path() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.grpc = Some(GrpcRequest {
+            proto: String::new(),
+            reflection: true,
+            reflection_host: "api.internal.example".to_owned(),
+            includes: Vec::new(),
+            method: "/demo.Echo/Echo".to_owned(),
+            metadata: Vec::new(),
+        });
+        app.load_request_editors();
+
+        assert!(app.grpc_reflection);
+        assert!(app.grpc_proto_path.is_empty());
+        assert_eq!(app.grpc_reflection_host, "api.internal.example");
+        let request = app.edited_request().expect("reflection editor state");
+        assert_eq!(request.grpc, app.request.grpc);
     }
 
     #[derive(Clone, PartialEq, prost::Message)]
@@ -5244,6 +5313,8 @@ mod tests {
         let mut request = Request::new("Echo gRPC", "POST", format!("http://{address}"));
         request.grpc = Some(GrpcRequest {
             proto: proto.to_string_lossy().into_owned(),
+            reflection: false,
+            reflection_host: String::new(),
             includes: Vec::new(),
             method: "/demo.Echo/Echo".to_owned(),
             metadata: vec![KeyValue::enabled("x-test", "local")],
@@ -5262,6 +5333,81 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&response.body).expect("response");
         assert_eq!(response.protocol, "gRPC");
         assert_eq!(body["response"]["message"], "echo:hello");
+
+        let _ = shutdown_tx.send(());
+        server.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn grpc_worker_discovers_a_schema_through_server_reflection() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let proto = directory.path().join("echo.proto");
+        std::fs::write(
+            &proto,
+            r#"
+                syntax = "proto3";
+                package demo;
+                message EchoRequest { string message = 1; }
+                message EchoResponse { string message = 1; }
+                service Echo {
+                    rpc Echo(EchoRequest) returns (EchoResponse);
+                }
+            "#,
+        )
+        .expect("proto");
+        let descriptors = protox::compile([&proto], vec![directory.path().to_path_buf()])
+            .expect("descriptor set");
+        let mut encoded = Vec::new();
+        descriptors
+            .encode(&mut encoded)
+            .expect("encode descriptors");
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let reflection = tonic_reflection::server::Builder::configure()
+                .register_encoded_file_descriptor_set(&encoded)
+                .build_v1()
+                .expect("reflection service");
+            tonic::transport::Server::builder()
+                .add_service(reflection)
+                .add_service(TestGrpcServer)
+                .serve_with_incoming_shutdown(
+                    tonic::transport::server::TcpIncoming::from(listener),
+                    async {
+                        let _ = shutdown_rx.await;
+                    },
+                )
+                .await
+                .expect("gRPC reflection server");
+        });
+
+        let mut request = Request::new("Reflected Echo", "POST", format!("http://{address}"));
+        request.grpc = Some(GrpcRequest {
+            proto: String::new(),
+            reflection: true,
+            reflection_host: String::new(),
+            includes: Vec::new(),
+            method: "/demo.Echo/Echo".to_owned(),
+            metadata: vec![KeyValue::enabled("x-test", "local")],
+        });
+        request.body = RequestBody::Json {
+            value: serde_json::json!({"message": "reflected"}),
+        };
+        let response = execute_grpc_request(
+            request,
+            VariableContext::default(),
+            TransportSettings::default(),
+            directory.path().to_path_buf(),
+        )
+        .await
+        .expect("reflected gRPC call");
+        let body: serde_json::Value = serde_json::from_slice(&response.body).expect("response");
+        assert_eq!(response.protocol, "gRPC");
+        assert_eq!(body["response"]["message"], "echo:reflected");
 
         let _ = shutdown_tx.send(());
         server.await.expect("server task");

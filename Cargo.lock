@@ -2994,12 +2994,14 @@ dependencies = [
  "postly-core",
  "prost",
  "prost-reflect",
+ "protox",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
  "tonic",
+ "tonic-reflection",
  "url",
 ]
 

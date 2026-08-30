@@ -46,10 +46,10 @@ cargo run -- grpc reflect https://grpc.internal.example:443 \
   --output-json
 ```
 
-Reflection is discovery only in the current CLI slice. Use a discovered method
-with `grpc call` once its local descriptor or generated request configuration is
-available; a future GUI slice will make the reflected schema directly
-selectable in the native workspace.
+Reflection is discovery only: it hydrates a dynamic descriptor pool in memory
+and does not generate source files. In the native workspace, enable **Discover
+schema through server reflection** in the gRPC tab, optionally provide a
+reflection host, select the method path and send the request normally.
 
 ## Call a unary or server-streaming method
 
