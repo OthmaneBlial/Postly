@@ -39,6 +39,8 @@ Implemented:
 - SSE parser plus progressive CLI/native GUI subscriptions with chunk-safe event decoding, event metadata, bounded GUI history, JSON-lines output and local streaming coverage.
 - WebSocket CLI and native GUI client for `ws://` and `wss://` with headers/auth, interactive text sends, text/binary/pong output, ping replies, bounded reconnects/history and local integration coverage.
 - native GUI HTTP, SSE and WebSocket workers support explicit cancellation, with cancellation-aware body/stream reads and local worker tests.
+- Native GUI `Scripts` tab edits and persists imported pre-request/test source;
+  execution remains explicit through the CLI runner.
 - native GUI Transport tab with persisted local timeout, HTTP(S) proxy, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE workflows.
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata and HTTPS webpki roots.
 - Persistable response assertions for status, headers, body text and JSON Pointer values, evaluated by the runner without Node.js.
@@ -58,7 +60,7 @@ Implemented:
 
 Not yet implemented:
 
-- Desktop GUI polish, richer response preview/syntax features and manual responsive/accessibility QA.
+- Desktop GUI polish, GUI script execution, richer response preview/syntax features and manual responsive/accessibility QA.
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.

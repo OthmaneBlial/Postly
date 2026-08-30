@@ -38,6 +38,7 @@ enum EditorTab {
     Cookies,
     Body,
     Auth,
+    Scripts,
     Assertions,
     Transport,
 }
@@ -266,6 +267,8 @@ pub struct PostlyApp {
     graphql_query: String,
     graphql_variables: String,
     graphql_operation_name: String,
+    pre_request_script: String,
+    test_script: String,
     assertion_json_text: Vec<String>,
     new_assertion_kind: AssertionKind,
     auth_kind: AuthKind,
@@ -345,6 +348,8 @@ impl PostlyApp {
             graphql_query: String::new(),
             graphql_variables: String::new(),
             graphql_operation_name: String::new(),
+            pre_request_script: String::new(),
+            test_script: String::new(),
             assertion_json_text: Vec::new(),
             new_assertion_kind: AssertionKind::Status,
             auth_kind: AuthKind::None,
@@ -519,6 +524,8 @@ impl PostlyApp {
                 self.body_text.clear();
             }
         }
+        self.pre_request_script = self.request.pre_request_script.clone().unwrap_or_default();
+        self.test_script = self.request.test_script.clone().unwrap_or_default();
         match &self.request.auth {
             Auth::None => {
                 self.auth_kind = AuthKind::None;
@@ -635,6 +642,10 @@ impl PostlyApp {
 
     fn edited_request(&self) -> Result<Request, String> {
         let mut request = self.request.clone();
+        request.pre_request_script =
+            (!self.pre_request_script.trim().is_empty()).then(|| self.pre_request_script.clone());
+        request.test_script =
+            (!self.test_script.trim().is_empty()).then(|| self.test_script.clone());
         request.body = match self.body_kind {
             BodyKind::None => RequestBody::None,
             BodyKind::Raw => RequestBody::Raw {
@@ -1713,6 +1724,7 @@ impl PostlyApp {
                         (EditorTab::Cookies, "Cookies"),
                         (EditorTab::Body, "Body"),
                         (EditorTab::Auth, "Auth"),
+                        (EditorTab::Scripts, "Scripts"),
                         (EditorTab::Assertions, "Assertions"),
                         (EditorTab::Transport, "Transport"),
                     ] {
@@ -1834,6 +1846,7 @@ impl PostlyApp {
                     }
                     EditorTab::Body => self.render_body(ui),
                     EditorTab::Auth => self.render_auth(ui),
+                    EditorTab::Scripts => self.render_scripts(ui),
                     EditorTab::Assertions => self.render_assertions(ui),
                     EditorTab::Transport => self.render_transport(ui),
                 }
@@ -2178,6 +2191,61 @@ impl PostlyApp {
             RichText::new("Stored locally at .postly/gui-settings.json, which is ignored by Git.")
                 .small()
                 .color(MUTED),
+        );
+    }
+
+    fn render_scripts(&mut self, ui: &mut egui::Ui) {
+        ui.heading(RichText::new("Scripts").color(Color32::WHITE));
+        ui.label(
+            RichText::new(
+                "Preserved Postman scripts are editable here. Execution remains explicit through the CLI runner with --scripts.",
+            )
+            .small()
+            .color(MUTED),
+        );
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("Pre-request script")
+                .strong()
+                .color(Color32::WHITE),
+        );
+        if ui
+            .add(
+                TextEdit::multiline(&mut self.pre_request_script)
+                    .font(TextStyle::Monospace)
+                    .desired_rows(9)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("pm.variables.set('token', 'value');"),
+            )
+            .changed()
+        {
+            self.dirty = true;
+        }
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new("Post-response / test script")
+                .strong()
+                .color(Color32::WHITE),
+        );
+        if ui
+            .add(
+                TextEdit::multiline(&mut self.test_script)
+                    .font(TextStyle::Monospace)
+                    .desired_rows(12)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("pm.test('status is 200', function () { ... });"),
+            )
+            .changed()
+        {
+            self.dirty = true;
+        }
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(
+                "The current script bridge is opt-in and requires Node.js. It is not a sandbox for hostile code; see docs/scripting.md.",
+            )
+            .small()
+            .color(MUTED),
         );
     }
 
@@ -3020,6 +3088,42 @@ mod tests {
         assert_eq!(request.method, "POST");
         assert!(matches!(request.body, RequestBody::Json { .. }));
         assert!(matches!(request.auth, Auth::Bearer { .. }));
+    }
+
+    #[test]
+    fn script_editor_round_trips_pre_request_and_test_sources() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "Scripted request".to_owned();
+        app.pre_request_script = "pm.variables.set('token', 'local');".to_owned();
+        app.test_script = "pm.test('status', function () { pm.response.to.be.ok; });".to_owned();
+
+        app.save_current().expect("save scripted request");
+        let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
+        assert_eq!(
+            reopened.request.pre_request_script.as_deref(),
+            Some("pm.variables.set('token', 'local');")
+        );
+        assert_eq!(
+            reopened.request.test_script.as_deref(),
+            Some("pm.test('status', function () { pm.response.to.be.ok; });")
+        );
+        assert_eq!(
+            reopened.pre_request_script,
+            reopened.request.pre_request_script.clone().unwrap()
+        );
+        assert_eq!(
+            reopened.test_script,
+            reopened.request.test_script.clone().unwrap()
+        );
+
+        let mut blanked = reopened;
+        blanked.test_script = "   ".to_owned();
+        assert!(blanked
+            .edited_request()
+            .expect("blank script is valid")
+            .test_script
+            .is_none());
     }
 
     #[test]

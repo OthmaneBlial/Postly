@@ -74,8 +74,8 @@ This is a working vertical slice, not a static UI mockup.
   interactive WebSockets and dynamic <code>.proto</code> gRPC calls for unary and all
   three streaming modes.
 - <strong>Native desktop workspace:</strong> a Rust/egui application using the same core,
-  with local history, request editing, cancellation and persisted local
-  Transport settings for HTTP/SSE.
+  with local history, request editing, a Scripts tab, cancellation and persisted
+  local Transport settings for HTTP/SSE.
 
 For the exact boundary of each feature, read the
 <a href="docs/compatibility.md">compatibility matrix</a> and the

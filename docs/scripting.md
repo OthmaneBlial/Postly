@@ -8,6 +8,11 @@ postly send ./project/collections/api/requests/health.postly.toml --scripts
 postly run ./project --scripts --reporter json
 ~~~
 
+The native workspace exposes the same sources in its `Scripts` tab. Saving a
+request writes the pre-request and post-response/test text back to the
+canonical `.postly.toml` file; the GUI currently edits and preserves scripts
+but does not execute them automatically.
+
 The current prototype is a Rust-controlled, no-shell Node.js bridge. It uses a
 short-lived `node:vm` context with a two-second synchronous execution limit.
 The supported compatibility slice includes:
