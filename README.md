@@ -190,6 +190,7 @@ postly send ./my-api/collections/my-api/requests/health.postly.toml \
 # Collection runner with machine-readable output
 postly run ./my-api --environment Local --reporter json
 postly run ./my-api --environment Local --reporter junit > postly-results.xml
+postly run ./my-api --folder auth --environment Local --reporter pretty
 
 # Protocol workflows
 postly graphql https://api.example.com/graphql --query 'query { health }'
@@ -314,7 +315,7 @@ marketing-only roadmap.
 
 - <a href="docs/architecture.md">Architecture</a>
 - <a href="docs/development.md">Development and local validation</a>
-- <a href="docs/collections.md">Collections</a>
+- <a href="docs/cli.md">CLI reference</a>
 - <a href="docs/collections.md">Collections and environments</a>
 - <a href="docs/scripting.md">Scripting and pm.*</a>
 - <a href="docs/history.md">History</a>

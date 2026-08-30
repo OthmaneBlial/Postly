@@ -254,6 +254,7 @@ struct WebsocketOptions {
 struct RunOptions<'a> {
     path: &'a Path,
     environment_name: Option<&'a str>,
+    folder: Option<&'a str>,
     fail_fast: bool,
     scripts: bool,
     timeout: u64,
@@ -557,6 +558,12 @@ enum Command {
         path: PathBuf,
         #[arg(long)]
         environment: Option<String>,
+        #[arg(
+            long,
+            value_name = "FOLDER",
+            help = "Run this folder and its nested requests only"
+        )]
+        folder: Option<String>,
         #[arg(long)]
         fail_fast: bool,
         #[arg(
@@ -996,6 +1003,7 @@ async fn main() -> Result<()> {
         Command::Run {
             path,
             environment,
+            folder,
             fail_fast,
             scripts,
             timeout,
@@ -1009,6 +1017,7 @@ async fn main() -> Result<()> {
             run_workspace(RunOptions {
                 path: &path,
                 environment_name: environment.as_deref(),
+                folder: folder.as_deref(),
                 fail_fast,
                 scripts,
                 timeout,
@@ -1941,8 +1950,21 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
     })?;
     let iterations = load_iteration_data(options.data_file)?;
     let mut summaries = Vec::new();
+    let mut matched_any_request = false;
     for collection in collections {
         let requests = workspace.requests(&collection)?;
+        let requests = if let Some(folder) = options.folder {
+            requests
+                .into_iter()
+                .filter(|(_, request)| request_belongs_to_folder(request, folder))
+                .collect::<Vec<_>>()
+        } else {
+            requests
+        };
+        if requests.is_empty() {
+            continue;
+        }
+        matched_any_request = true;
         let context = context_for_collection(
             &workspace,
             Some(&collection.collection),
@@ -1986,6 +2008,11 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
             break;
         }
     }
+    if let Some(folder) = options.folder {
+        if !matched_any_request {
+            bail!("no requests found in folder {folder:?}");
+        }
+    }
     match options.reporter {
         Reporter::Pretty => {}
         Reporter::Json => println!("{}", serde_json::to_string_pretty(&summaries)?),
@@ -1995,6 +2022,25 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
         bail!("collection run failed");
     }
     Ok(())
+}
+
+fn request_belongs_to_folder(request: &Request, requested_folder: &str) -> bool {
+    let requested_folder = normalize_folder(requested_folder);
+    if requested_folder.is_empty() {
+        return false;
+    }
+    let Some(actual_folder) = request.folder.as_deref() else {
+        return false;
+    };
+    let actual_folder = normalize_folder(actual_folder);
+    actual_folder == requested_folder
+        || actual_folder
+            .strip_prefix(&format!("{requested_folder}/"))
+            .is_some()
+}
+
+fn normalize_folder(folder: &str) -> String {
+    folder.replace('\\', "/").trim_matches('/').to_owned()
 }
 
 fn load_iteration_data(path: Option<&Path>) -> Result<Vec<postly_core::Variables>> {
@@ -2799,6 +2845,72 @@ mod tests {
         })
         .await
         .expect("WebSocket reconnect command");
+        server.await.expect("server");
+    }
+
+    #[test]
+    fn folder_filter_includes_nested_requests_and_normalizes_separators() {
+        let mut nested = Request::new("Nested", "GET", "https://example.test/nested");
+        nested.folder = Some("Auth/OAuth".to_owned());
+        let mut sibling = Request::new("Sibling", "GET", "https://example.test/sibling");
+        sibling.folder = Some("Users".to_owned());
+
+        assert!(request_belongs_to_folder(&nested, "Auth"));
+        assert!(request_belongs_to_folder(&nested, "/Auth\\"));
+        assert!(request_belongs_to_folder(&nested, "Auth/OAuth"));
+        assert!(!request_belongs_to_folder(&nested, "Aut"));
+        assert!(!request_belongs_to_folder(&sibling, "Auth"));
+    }
+
+    #[tokio::test]
+    async fn run_workspace_executes_only_the_requested_folder() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = Workspace::init(directory.path(), "Folder runner").expect("workspace");
+        let collection = workspace
+            .create_collection(&Collection::new("API"))
+            .expect("collection");
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("connection");
+            let mut request = [0_u8; 2048];
+            let length = socket.read(&mut request).await.expect("request");
+            assert!(String::from_utf8_lossy(&request[..length]).contains("GET /auth HTTP/1.1"));
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: 0\r\n\r\n")
+                .await
+                .expect("response");
+        });
+
+        let mut selected = Request::new("Auth request", "GET", format!("http://{address}/auth"));
+        selected.folder = Some("Auth/OAuth".to_owned());
+        workspace
+            .save_request(&collection, &selected)
+            .expect("selected");
+
+        let mut skipped = Request::new("Skipped request", "GET", "http://127.0.0.1:0/skipped");
+        skipped.folder = Some("Users".to_owned());
+        workspace
+            .save_request(&collection, &skipped)
+            .expect("skipped");
+
+        run_workspace(RunOptions {
+            path: directory.path(),
+            environment_name: None,
+            folder: Some("Auth"),
+            fail_fast: false,
+            scripts: false,
+            timeout: 10,
+            proxy: None,
+            ca_cert: None,
+            client_identity: None,
+            reporter: Reporter::Json,
+            data_file: None,
+        })
+        .await
+        .expect("folder run");
         server.await.expect("server");
     }
 }

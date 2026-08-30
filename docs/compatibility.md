@@ -16,7 +16,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | Postman pm.* runtime | partial tested subset, including scoped variables, iteration data, request headers and common response matchers | compatibility matrix and script tests |
 | Explicit response assertions | working core/runner slice | status/header/body/JSON Pointer runner integration test |
 | Native response viewer | working GUI slice | virtualized line rows, search, copy, local save and wrapping |
-| collection runner | sequential HTTP slice | CLI run |
+| collection runner | sequential HTTP slice with iteration data, reporters and folder selection | CLI run |
 | cURL import | common request slice | curl parser tests and CLI round-trip |
 | OpenAPI 3.0/3.1 import | JSON/YAML operation and local `$ref` slice | OpenAPI fixtures and importer tests |
 | GraphQL | structured core/CLI/GUI request editing and HTTP slice; schema explorer pending | GraphQL model, parser, GUI validation and local HTTP integration tests |

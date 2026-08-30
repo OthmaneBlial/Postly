@@ -51,6 +51,9 @@ Implemented:
 - Stateful in-memory cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
 - runner iteration data from JSON objects/arrays plus pretty, JSON and JUnit reporters.
+- CLI collection runs can target an exact folder and its nested request folders.
+- A dedicated CLI reference documents headless requests, folder runs, reports,
+  transport flags, protocol commands and exit-status behavior.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:
