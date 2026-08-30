@@ -6374,6 +6374,47 @@ mod tests {
     }
 
     #[test]
+    fn assertion_editor_round_trips_supported_native_assertions() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.assertions = vec![
+            Assertion::Status { expected: 201 },
+            Assertion::HeaderPresent {
+                name: "x-request-id".to_owned(),
+            },
+            Assertion::HeaderEquals {
+                name: "content-type".to_owned(),
+                expected: "application/json".to_owned(),
+            },
+            Assertion::BodyContains {
+                value: "created".to_owned(),
+            },
+            Assertion::JsonPointerEquals {
+                pointer: "/data/active".to_owned(),
+                expected: serde_json::Value::Bool(false),
+            },
+        ];
+        app.load_request_editors();
+        assert_eq!(app.assertion_json_text.len(), 5);
+        app.assertion_json_text[4] = "false".to_owned();
+
+        let edited = app.edited_request().expect("valid assertion editor state");
+        assert_eq!(edited.assertions, app.request.assertions);
+        assert_eq!(
+            edited.assertions[4],
+            Assertion::JsonPointerEquals {
+                pointer: "/data/active".to_owned(),
+                expected: serde_json::Value::Bool(false),
+            }
+        );
+
+        app.save_current().expect("save assertions");
+        let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
+        assert_eq!(reopened.request.assertions, edited.assertions);
+        assert_eq!(reopened.assertion_json_text[4], "false");
+    }
+
+    #[test]
     fn script_editor_round_trips_pre_request_and_test_sources() {
         let directory = tempfile::tempdir().expect("tempdir");
         let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");

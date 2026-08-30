@@ -118,7 +118,7 @@ Not yet implemented:
 - Desktop GUI polish, GUI script application parity, richer response preview/syntax features and manual responsive/accessibility QA.
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
-- Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.
+- Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
 - transactional workspace restore and broader multi-document crash recovery.
 - Authorization Code/PKCE, Device Code and refresh-token OAuth flows; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in the CLI.
 - OpenAPI cyclic/remote references and deeper protocol-specific GUI tooling.
@@ -146,5 +146,5 @@ cargo xtask check is the required validation command for this milestone. The CLI
 2. Prototype an embedded or isolated script runtime before enabling broader
    compatibility by default; keep the opt-in Node boundary explicit even with
    its resource guards.
-3. Extend the explicit assertion model with broader Postman-compatible cases and GUI coverage.
+3. Extend the explicit assertion model with broader Postman-compatible cases.
 4. Extend response preview features and complete desktop accessibility/responsive QA.

@@ -320,7 +320,7 @@ The highest-value next steps are:
 
 - broaden tested Postman `pm.*` compatibility while keeping the script boundary
   explicit and resource-limited;
-- finish deeper protocol-specific GUI tooling, assertions, response previews and
+- finish deeper protocol-specific GUI tooling, richer response previews and
   accessibility;
 - expand deterministic protocol fixtures, OpenAPI reference coverage and memory
   benchmarks;
