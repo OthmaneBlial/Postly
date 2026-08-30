@@ -1,0 +1,21 @@
+# Local research corpus; never commit third-party repositories.
+base/
+
+# Rust build output
+target/
+
+# Local development artifacts
+.cache/
+tmp/
+*.log
+bench-generated/
+
+# Secrets and machine-local configuration
+.env
+.env.local
+*.postly-env.local.toml
+
+# Editor / OS files
+.DS_Store
+.idea/
+.vscode/
