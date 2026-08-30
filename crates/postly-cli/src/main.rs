@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{self, IsTerminal, Read},
+    io::{self, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -12,7 +12,7 @@ use postly_core::{
     import_postman_collection, parse_graphql_response, parse_variables_json, run_requests, Auth,
     Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, HeaderEntry,
     HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions,
-    ScriptResult, ScriptTestResult, VariableContext, Workspace,
+    ScriptResult, ScriptTestResult, SseParser, VariableContext, Workspace,
 };
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
@@ -50,6 +50,17 @@ struct GraphqlOptions {
     variables: Vec<String>,
     variables_json: Option<String>,
     operation_name: Option<String>,
+    headers: Vec<String>,
+    bearer: Option<String>,
+    basic_user: Option<String>,
+    basic_password: Option<String>,
+    timeout: u64,
+    insecure: bool,
+    output_json: bool,
+}
+
+struct SseOptions {
+    endpoint: String,
     headers: Vec<String>,
     bearer: Option<String>,
     basic_user: Option<String>,
@@ -154,6 +165,24 @@ enum Command {
         #[arg(long)]
         basic_password: Option<String>,
         #[arg(long, default_value_t = 30)]
+        timeout: u64,
+        #[arg(long)]
+        insecure: bool,
+        #[arg(long)]
+        output_json: bool,
+    },
+    /// Subscribe to a Server-Sent Events endpoint until it closes.
+    Sse {
+        endpoint: String,
+        #[arg(short = 'H', long)]
+        headers: Vec<String>,
+        #[arg(long)]
+        bearer: Option<String>,
+        #[arg(long)]
+        basic_user: Option<String>,
+        #[arg(long)]
+        basic_password: Option<String>,
+        #[arg(long, default_value_t = 300)]
         timeout: u64,
         #[arg(long)]
         insecure: bool,
@@ -443,6 +472,28 @@ async fn main() -> Result<()> {
             })
             .await
         }
+        Command::Sse {
+            endpoint,
+            headers,
+            bearer,
+            basic_user,
+            basic_password,
+            timeout,
+            insecure,
+            output_json,
+        } => {
+            stream_sse(SseOptions {
+                endpoint,
+                headers,
+                bearer,
+                basic_user,
+                basic_password,
+                timeout,
+                insecure,
+                output_json,
+            })
+            .await
+        }
         Command::Send {
             file,
             environment,
@@ -627,6 +678,84 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
         };
         bail!("GraphQL response contains errors: {detail}");
     }
+    Ok(())
+}
+
+async fn stream_sse(options: SseOptions) -> Result<()> {
+    let mut request = Request::new("SSE CLI subscription", "GET", options.endpoint);
+    request.headers = parse_headers(&options.headers)?;
+    if !request
+        .headers
+        .iter()
+        .any(|header| header.enabled && header.key.eq_ignore_ascii_case("accept"))
+    {
+        request
+            .headers
+            .push(HeaderEntry::enabled("accept", "text/event-stream"));
+    }
+    request.auth = parse_auth_flags(options.bearer, options.basic_user, options.basic_password)?;
+
+    let engine = HttpEngine::new(&EngineOptions {
+        timeout: Duration::from_secs(options.timeout),
+        accept_invalid_certs: options.insecure,
+        ..EngineOptions::default()
+    })?;
+    let mut response = engine
+        .execute_stream(&request, &VariableContext::default())
+        .await?;
+    if response.status >= 400 {
+        let body = response.response.text().await.unwrap_or_default();
+        bail!(
+            "SSE endpoint returned {} {}{}",
+            response.status,
+            response.status_text,
+            if body.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", body.trim())
+            }
+        );
+    }
+    if !options.output_json {
+        println!(
+            "{} {} · {} · {}",
+            response.status,
+            response.status_text,
+            response.content_type.as_deref().unwrap_or("SSE"),
+            response.url
+        );
+    }
+
+    let mut parser = SseParser::default();
+    while let Some(chunk) = response.response.chunk().await? {
+        for event in parser.feed_bytes(&chunk)? {
+            print_sse_event(&event, options.output_json)?;
+        }
+    }
+    for event in parser.finish()? {
+        print_sse_event(&event, options.output_json)?;
+    }
+    Ok(())
+}
+
+fn print_sse_event(event: &postly_core::SseEvent, output_json: bool) -> Result<()> {
+    if output_json {
+        println!("{}", serde_json::to_string(event)?);
+    } else {
+        let event_name = event.event.as_deref().unwrap_or("message");
+        let event_id = event
+            .id
+            .as_deref()
+            .map(|id| format!(" · id={id}"))
+            .unwrap_or_default();
+        println!("event {event_name}{event_id}");
+        println!("{}", event.data);
+        if let Some(retry_ms) = event.retry_ms {
+            println!("retry: {retry_ms} ms");
+        }
+        println!();
+    }
+    io::stdout().flush()?;
     Ok(())
 }
 
@@ -1291,6 +1420,46 @@ mod tests {
         })
         .await
         .expect("GraphQL command");
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn sse_command_streams_events_from_a_local_endpoint() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("connection");
+            let mut request = [0_u8; 8192];
+            let length = socket.read(&mut request).await.expect("request");
+            let request = String::from_utf8_lossy(&request[..length]);
+            assert!(request.contains("GET /events HTTP/1.1"));
+            assert!(request.contains("accept: text/event-stream"));
+            let body = b"id: 1\nevent: update\ndata: {\"ok\":true}\n\nid: 2\ndata: done";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("headers");
+            socket.write_all(body).await.expect("events");
+        });
+
+        stream_sse(SseOptions {
+            endpoint: format!("http://{address}/events"),
+            headers: Vec::new(),
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            insecure: false,
+            output_json: true,
+        })
+        .await
+        .expect("SSE command");
         server.await.expect("server");
     }
 }

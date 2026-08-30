@@ -14,6 +14,7 @@ pub mod model;
 pub mod openapi;
 pub mod runner;
 pub mod scripting;
+pub mod sse;
 pub mod storage;
 pub mod variables;
 
@@ -26,11 +27,15 @@ pub use graphql::{
     validate_query as validate_graphql_query, GraphqlError, GraphqlRequest, GraphqlResponse,
 };
 pub use history::{HistoryEntry, HistoryFilter, HistoryOutcome};
-pub use http::{EngineOptions, HttpEngine, HttpError, HttpResponse, ResponseCookie, ResponseView};
+pub use http::{
+    EngineOptions, HttpEngine, HttpError, HttpResponse, HttpStreamResponse, ResponseCookie,
+    ResponseView,
+};
 pub use import::{import_environment, import_postman_collection, ImportReport};
 pub use model::*;
 pub use openapi::{import_openapi, OpenApiImportError, OpenApiImportReport};
 pub use runner::{run_requests, CancellationToken, RunnerItemResult, RunnerOptions, RunnerSummary};
 pub use scripting::{run_script, ScriptError, ScriptLog, ScriptResult, ScriptTestResult};
+pub use sse::{parse_sse, SseError, SseEvent, SseParser};
 pub use storage::{CollectionFiles, Workspace, WorkspaceError};
 pub use variables::{ResolvedText, VariableContext, VariableDiagnostic, VariableDiagnosticKind};

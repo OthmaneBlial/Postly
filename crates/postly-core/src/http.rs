@@ -83,6 +83,18 @@ pub struct HttpResponse {
     pub cookies: Vec<ResponseCookie>,
 }
 
+/// Response metadata plus a live body for protocols that deliver events over
+/// an HTTP connection, such as Server-Sent Events.
+pub struct HttpStreamResponse {
+    pub status: u16,
+    pub status_text: String,
+    pub headers: Vec<HeaderEntry>,
+    pub content_type: Option<String>,
+    pub protocol: String,
+    pub url: String,
+    pub response: reqwest::Response,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResponseCookie {
     pub name: String,
@@ -173,6 +185,84 @@ impl HttpEngine {
         request: &Request,
         context: &VariableContext,
     ) -> Result<HttpResponse, HttpError> {
+        let builder = self.prepare_builder(request, context).await?;
+        let started = std::time::Instant::now();
+        let response = builder.send().await.map_err(HttpError::Request)?;
+        let status = response.status();
+        let protocol = format!("{:?}", response.version());
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned);
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                HeaderEntry::enabled(name.as_str(), value.to_str().unwrap_or("<binary>"))
+            })
+            .collect();
+        let cookies = response
+            .headers()
+            .get_all(SET_COOKIE)
+            .iter()
+            .filter_map(parse_set_cookie)
+            .collect();
+        let final_url = response.url().to_string();
+        let body = response.bytes().await.map_err(HttpError::Request)?.to_vec();
+
+        Ok(HttpResponse {
+            status: status.as_u16(),
+            status_text: status.canonical_reason().unwrap_or_default().to_owned(),
+            headers,
+            body,
+            content_type,
+            duration_ms: started.elapsed().as_millis(),
+            protocol,
+            url: final_url,
+            cookies,
+        })
+    }
+
+    pub async fn execute_stream(
+        &self,
+        request: &Request,
+        context: &VariableContext,
+    ) -> Result<HttpStreamResponse, HttpError> {
+        let builder = self.prepare_builder(request, context).await?;
+        let response = builder.send().await.map_err(HttpError::Request)?;
+        let status = response.status();
+        let protocol = format!("{:?}", response.version());
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned);
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                HeaderEntry::enabled(name.as_str(), value.to_str().unwrap_or("<binary>"))
+            })
+            .collect();
+        let final_url = response.url().to_string();
+
+        Ok(HttpStreamResponse {
+            status: status.as_u16(),
+            status_text: status.canonical_reason().unwrap_or_default().to_owned(),
+            headers,
+            content_type,
+            protocol,
+            url: final_url,
+            response,
+        })
+    }
+
+    async fn prepare_builder(
+        &self,
+        request: &Request,
+        context: &VariableContext,
+    ) -> Result<reqwest::RequestBuilder, HttpError> {
         let resolved_url = context.resolve(&request.url);
         let mut diagnostics = resolved_url.diagnostics;
         resolve_pairs(&mut diagnostics, &request.query, context);
@@ -243,42 +333,7 @@ impl HttpEngine {
         builder = apply_auth(builder, &request.auth, context)?;
         builder = apply_body(builder, &request.body, context).await?;
 
-        let started = std::time::Instant::now();
-        let response = builder.send().await.map_err(HttpError::Request)?;
-        let status = response.status();
-        let protocol = format!("{:?}", response.version());
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .map(ToOwned::to_owned);
-        let headers = response
-            .headers()
-            .iter()
-            .map(|(name, value)| {
-                HeaderEntry::enabled(name.as_str(), value.to_str().unwrap_or("<binary>"))
-            })
-            .collect();
-        let cookies = response
-            .headers()
-            .get_all(SET_COOKIE)
-            .iter()
-            .filter_map(parse_set_cookie)
-            .collect();
-        let final_url = response.url().to_string();
-        let body = response.bytes().await.map_err(HttpError::Request)?.to_vec();
-
-        Ok(HttpResponse {
-            status: status.as_u16(),
-            status_text: status.canonical_reason().unwrap_or_default().to_owned(),
-            headers,
-            body,
-            content_type,
-            duration_ms: started.elapsed().as_millis(),
-            protocol,
-            url: final_url,
-            cookies,
-        })
+        Ok(builder)
     }
 }
 
