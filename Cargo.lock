@@ -2987,6 +2987,12 @@ dependencies = [
 [[package]]
 name = "postly-xtask"
 version = "0.1.0"
+dependencies = [
+ "postly-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "potential_utf"

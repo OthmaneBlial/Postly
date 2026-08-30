@@ -7,6 +7,7 @@ cargo xtask fmt
 cargo xtask lint
 cargo xtask test
 cargo xtask check
+cargo xtask bench
 ~~~
 
 For low-disk environments:
@@ -23,6 +24,10 @@ git status --ignored --short
 ~~~
 
 Do not place tokens, real environment values, customer data or private certificates in fixtures. Use local deterministic servers for network integration tests as the protocol surface grows.
+
+`cargo xtask bench` measures real local import and workspace/search operations.
+Keep generated JSON under the ignored `bench-generated/` directory and record
+machine, revision and methodology before sharing a result.
 
 The CLI environment command stores values locally and only prints the environment name and count, never the values:
 

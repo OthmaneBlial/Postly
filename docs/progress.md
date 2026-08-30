@@ -59,6 +59,9 @@ Implemented:
 - CLI collection runs can target an exact folder and its nested request folders.
 - A dedicated CLI reference documents headless requests, folder runs, reports,
   transport flags, protocol commands and exit-status behavior.
+- A local `cargo xtask bench` harness measures real Postman import and generated
+  1,000-request workspace open/search operations without publishing invented
+  competitor comparisons.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:
@@ -70,7 +73,8 @@ Not yet implemented:
 - OS keychain storage and crash recovery.
 - Authorization Code/PKCE, Device Code and refresh-token OAuth flows; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in the CLI.
 - OpenAPI cyclic/remote references, GraphQL schema explorer, gRPC reflection and gRPC GUI.
-- Local deterministic protocol test servers, fuzzing, benchmarks and packaging.
+- Local deterministic protocol test server tooling, fuzzing, cross-client/memory
+  benchmarks and packaging.
 
 ## Verification
 
