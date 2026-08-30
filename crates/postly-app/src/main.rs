@@ -93,6 +93,7 @@ pub struct PostlyApp {
     auth_secondary: String,
     api_key_location: ApiKeyLocation,
     response_tab: ResponseTab,
+    response_search: String,
     response: Option<HttpResponse>,
     response_error: Option<String>,
     pending: Option<Receiver<Result<HttpResponse, String>>>,
@@ -143,6 +144,7 @@ impl PostlyApp {
             auth_secondary: String::new(),
             api_key_location: ApiKeyLocation::Header,
             response_tab: ResponseTab::Pretty,
+            response_search: String::new(),
             response: None,
             response_error: None,
             pending: None,
@@ -299,6 +301,7 @@ impl PostlyApp {
     fn clear_response(&mut self) {
         self.response = None;
         self.response_error = None;
+        self.response_search.clear();
     }
 
     fn edited_request(&self) -> Result<Request, String> {
@@ -1033,6 +1036,18 @@ impl PostlyApp {
                         }
                     }
                 });
+                if self.response.is_some()
+                    && matches!(self.response_tab, ResponseTab::Pretty | ResponseTab::Raw)
+                {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Search").small().color(MUTED));
+                        ui.add(
+                            TextEdit::singleline(&mut self.response_search)
+                                .hint_text("find in response")
+                                .desired_width(220.0),
+                        );
+                    });
+                }
                 ui.separator();
                 if let Some(error) = &self.response_error {
                     ui.colored_label(Color32::from_rgb(240, 125, 105), error);
@@ -1057,6 +1072,35 @@ impl PostlyApp {
                     ResponseView::Raw
                 };
                 let mut text = response.formatted_body(view);
+                if !self.response_search.trim().is_empty() {
+                    let total = response_search_matches(&text, &self.response_search);
+                    let lines = response_search_lines(&text, &self.response_search);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "{} match{}",
+                                total,
+                                if total == 1 { "" } else { "es" }
+                            ))
+                            .small()
+                            .color(MUTED),
+                        );
+                        if lines.len() == 50 {
+                            ui.label(
+                                RichText::new("showing the first 50 matching lines")
+                                    .small()
+                                    .color(MUTED),
+                            );
+                        }
+                    });
+                    egui::ScrollArea::vertical()
+                        .max_height(96.0)
+                        .show(ui, |ui| {
+                            for (line_number, line) in lines {
+                                ui.monospace(format!("{line_number}: {line}"));
+                            }
+                        });
+                }
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -1166,6 +1210,29 @@ fn tab_button(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response 
         }))
         .fill(fill),
     )
+}
+
+fn response_search_matches(text: &str, query: &str) -> usize {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return 0;
+    }
+    text.lines()
+        .map(|line| line.to_lowercase().match_indices(&query).count())
+        .sum()
+}
+
+fn response_search_lines(text: &str, query: &str) -> Vec<(usize, String)> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| line.to_lowercase().contains(&query))
+        .take(50)
+        .map(|(line_number, line)| (line_number + 1, line.to_owned()))
+        .collect()
 }
 
 fn render_key_values(
@@ -1332,6 +1399,17 @@ mod tests {
         assert!(relocated_path.to_string_lossy().contains("users/read"));
         assert_eq!(app.requests.len(), 1);
         assert_eq!(app.requests[0].1.name, "List all users");
+    }
+
+    #[test]
+    fn response_search_is_case_insensitive_and_reports_occurrences() {
+        let body = "{\n  \"Name\": \"Ada\",\n  \"name\": \"Grace\"\n}";
+        assert_eq!(response_search_matches(body, "name"), 2);
+        assert_eq!(
+            response_search_lines(body, "ADA"),
+            vec![(2, "  \"Name\": \"Ada\",".to_owned())]
+        );
+        assert!(response_search_lines(body, "missing").is_empty());
     }
 
     #[test]
