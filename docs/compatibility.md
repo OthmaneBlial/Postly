@@ -8,6 +8,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | folders and request files | working slice | filesystem round-trip and importer tests |
 | variables and environments | working slice | variable precedence tests and environment import |
 | common headers, bodies and auth | working slice | model/import coverage |
+| HTTP(S) proxy routing | core and CLI slice; GUI setting and SOCKS pending | local proxy forwarding and invalid-proxy tests |
 | Postman Collection v2.1 export | working slice | export/import round-trip fixture |
 | Postman environment export | working slice | export serialization fixture |
 | Postman scripts | opt-in basic execution | Node bridge tests and migration docs |

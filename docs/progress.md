@@ -13,6 +13,7 @@ Implemented:
 - Deterministic recursive request discovery.
 - Variable scopes, precedence and undefined-variable diagnostics.
 - Native async HTTP execution with common body/auth/header/query behavior.
+- Explicit HTTP(S) proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, with invalid-URL diagnostics and a local proxy integration test.
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
 - Postman Collection v2.1 and environment export with a tested native round-trip.

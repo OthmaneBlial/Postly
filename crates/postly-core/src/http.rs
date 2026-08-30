@@ -18,6 +18,7 @@ pub struct EngineOptions {
     pub timeout: Duration,
     pub accept_invalid_certs: bool,
     pub max_redirects: usize,
+    pub proxy: Option<String>,
 }
 
 impl Default for EngineOptions {
@@ -26,6 +27,7 @@ impl Default for EngineOptions {
             timeout: Duration::from_secs(30),
             accept_invalid_certs: false,
             max_redirects: 10,
+            proxy: None,
         }
     }
 }
@@ -55,6 +57,8 @@ pub enum HttpError {
     },
     #[error("could not build HTTP client: {0}")]
     Client(#[source] reqwest::Error),
+    #[error("invalid HTTP proxy configuration: {0}")]
+    Proxy(#[source] reqwest::Error),
     #[error("HTTP request failed: {0}")]
     Request(#[source] reqwest::Error),
     #[error("variable resolution failed")]
@@ -151,13 +155,15 @@ impl HttpResponse {
 impl HttpEngine {
     pub fn new(options: &EngineOptions) -> Result<Self, HttpError> {
         let cookie_jar = Arc::new(Jar::default());
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .timeout(options.timeout)
             .danger_accept_invalid_certs(options.accept_invalid_certs)
             .redirect(reqwest::redirect::Policy::limited(options.max_redirects))
-            .cookie_provider(Arc::clone(&cookie_jar))
-            .build()
-            .map_err(HttpError::Client)?;
+            .cookie_provider(Arc::clone(&cookie_jar));
+        if let Some(proxy) = options.proxy.as_deref() {
+            builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(HttpError::Proxy)?);
+        }
+        let client = builder.build().map_err(HttpError::Client)?;
         Ok(Self { client, cookie_jar })
     }
 
@@ -678,6 +684,50 @@ mod tests {
             "{\n  \"ok\": true,\n  \"source\": \"local\"\n}"
         );
         assert!(response.duration_ms < 5_000);
+    }
+
+    #[tokio::test]
+    async fn routes_http_requests_through_an_explicit_proxy() {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("proxy listener");
+        let proxy_address = listener.local_addr().expect("proxy address");
+        let proxy = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("proxy connection");
+            let request = read_request_headers(&mut socket).await;
+            assert!(request.starts_with("GET http://example.test/through-proxy HTTP/1.1"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 10\r\n\r\nproxied-ok",
+                )
+                .await
+                .expect("proxy response");
+        });
+
+        let engine = HttpEngine::new(&EngineOptions {
+            proxy: Some(format!("http://{proxy_address}")),
+            ..EngineOptions::default()
+        })
+        .expect("engine");
+        let request = Request::new("Proxied", "GET", "http://example.test/through-proxy");
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("response through proxy");
+
+        proxy.await.expect("proxy");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "proxied-ok");
+    }
+
+    #[test]
+    fn rejects_an_invalid_proxy_before_building_the_client() {
+        let error = HttpEngine::new(&EngineOptions {
+            proxy: Some("not a proxy URL".to_owned()),
+            ..EngineOptions::default()
+        })
+        .expect_err("invalid proxy must fail");
+        assert!(matches!(error, HttpError::Proxy(_)));
     }
 
     #[tokio::test]

@@ -52,6 +52,7 @@ struct ImmediateRequestOptions {
     basic_user: Option<String>,
     basic_password: Option<String>,
     timeout: u64,
+    proxy: Option<String>,
     insecure: bool,
     output_json: bool,
 }
@@ -68,6 +69,7 @@ struct GraphqlOptions {
     basic_user: Option<String>,
     basic_password: Option<String>,
     timeout: u64,
+    proxy: Option<String>,
     insecure: bool,
     output_json: bool,
 }
@@ -226,6 +228,7 @@ struct SseOptions {
     basic_password: Option<String>,
     timeout: u64,
     reconnect: u32,
+    proxy: Option<String>,
     insecure: bool,
     output_json: bool,
 }
@@ -240,6 +243,17 @@ struct WebsocketOptions {
     timeout: u64,
     reconnect: u32,
     output_json: bool,
+}
+
+struct RunOptions<'a> {
+    path: &'a Path,
+    environment_name: Option<&'a str>,
+    fail_fast: bool,
+    scripts: bool,
+    timeout: u64,
+    proxy: Option<&'a str>,
+    reporter: Reporter,
+    data_file: Option<&'a Path>,
 }
 
 struct NewRequestOptions {
@@ -310,6 +324,12 @@ enum Command {
         basic_password: Option<String>,
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+        #[arg(
+            long,
+            value_name = "URL",
+            help = "Route the request through an HTTP(S) proxy"
+        )]
+        proxy: Option<String>,
         #[arg(long)]
         insecure: bool,
         #[arg(long)]
@@ -338,6 +358,12 @@ enum Command {
         basic_password: Option<String>,
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+        #[arg(
+            long,
+            value_name = "URL",
+            help = "Route the request through an HTTP(S) proxy"
+        )]
+        proxy: Option<String>,
         #[arg(long)]
         insecure: bool,
         #[arg(long)]
@@ -363,6 +389,12 @@ enum Command {
         timeout: u64,
         #[arg(long, default_value_t = 0)]
         reconnect: u32,
+        #[arg(
+            long,
+            value_name = "URL",
+            help = "Route the stream through an HTTP(S) proxy"
+        )]
+        proxy: Option<String>,
         #[arg(long)]
         insecure: bool,
         #[arg(long)]
@@ -403,6 +435,12 @@ enum Command {
         output_json: bool,
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+        #[arg(
+            long,
+            value_name = "URL",
+            help = "Route the request through an HTTP(S) proxy"
+        )]
+        proxy: Option<String>,
         #[arg(long)]
         insecure: bool,
     },
@@ -460,6 +498,12 @@ enum Command {
         scripts: bool,
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+        #[arg(
+            long,
+            value_name = "URL",
+            help = "Route collection requests through an HTTP(S) proxy"
+        )]
+        proxy: Option<String>,
         #[arg(long, value_enum, default_value_t = Reporter::Pretty)]
         reporter: Reporter,
         #[arg(long)]
@@ -659,6 +703,7 @@ async fn main() -> Result<()> {
             basic_user,
             basic_password,
             timeout,
+            proxy,
             insecure,
             output_json,
         } => {
@@ -673,6 +718,7 @@ async fn main() -> Result<()> {
                 basic_user,
                 basic_password,
                 timeout,
+                proxy,
                 insecure,
                 output_json,
             })
@@ -690,6 +736,7 @@ async fn main() -> Result<()> {
             basic_user,
             basic_password,
             timeout,
+            proxy,
             insecure,
             output_json,
         } => {
@@ -705,6 +752,7 @@ async fn main() -> Result<()> {
                 basic_user,
                 basic_password,
                 timeout,
+                proxy,
                 insecure,
                 output_json,
             })
@@ -755,6 +803,7 @@ async fn main() -> Result<()> {
             basic_password,
             timeout,
             reconnect,
+            proxy,
             insecure,
             output_json,
         } => {
@@ -766,6 +815,7 @@ async fn main() -> Result<()> {
                 basic_password,
                 timeout,
                 reconnect,
+                proxy,
                 insecure,
                 output_json,
             })
@@ -801,6 +851,7 @@ async fn main() -> Result<()> {
             scripts,
             output_json,
             timeout,
+            proxy,
             insecure,
         } => {
             send_saved_request(
@@ -808,6 +859,7 @@ async fn main() -> Result<()> {
                 environment.as_deref(),
                 scripts,
                 timeout,
+                proxy.as_deref(),
                 insecure,
                 output_json,
             )
@@ -851,23 +903,25 @@ async fn main() -> Result<()> {
             fail_fast,
             scripts,
             timeout,
+            proxy,
             reporter,
             data_file,
             output_json,
         } => {
-            run_workspace(
-                &path,
-                environment.as_deref(),
+            run_workspace(RunOptions {
+                path: &path,
+                environment_name: environment.as_deref(),
                 fail_fast,
                 scripts,
                 timeout,
-                if output_json {
+                proxy: proxy.as_deref(),
+                reporter: if output_json {
                     Reporter::Json
                 } else {
                     reporter
                 },
-                data_file.as_deref(),
-            )
+                data_file: data_file.as_deref(),
+            })
             .await
         }
     }
@@ -918,6 +972,7 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
         &request,
         VariableContext::default(),
         options.timeout,
+        options.proxy.as_deref(),
         options.insecure,
     )
     .await?;
@@ -948,6 +1003,7 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
         &request,
         VariableContext::default(),
         options.timeout,
+        options.proxy.as_deref(),
         options.insecure,
     )
     .await?;
@@ -1218,6 +1274,7 @@ async fn stream_sse(options: SseOptions) -> Result<()> {
     let engine = HttpEngine::new(&EngineOptions {
         timeout: Duration::from_secs(options.timeout),
         accept_invalid_certs: options.insecure,
+        proxy: options.proxy.clone(),
         ..EngineOptions::default()
     })?;
     let mut reconnects_used = 0;
@@ -1510,6 +1567,7 @@ async fn send_saved_request(
     environment_name: Option<&str>,
     scripts: bool,
     timeout: u64,
+    proxy: Option<&str>,
     insecure: bool,
     output_json: bool,
 ) -> Result<()> {
@@ -1532,7 +1590,7 @@ async fn send_saved_request(
         }
     }
     let started = Instant::now();
-    let result = execute(&request, context.clone(), timeout, insecure).await;
+    let result = execute(&request, context.clone(), timeout, proxy, insecure).await;
     let history_entry = match &result {
         Ok(response) => HistoryEntry::from_response(&request, response),
         Err(_) => HistoryEntry::from_error(&request, started.elapsed().as_millis() as u64),
@@ -1757,47 +1815,43 @@ fn list_history(path: &Path, options: HistoryOptions) -> Result<()> {
     Ok(())
 }
 
-async fn run_workspace(
-    path: &Path,
-    environment_name: Option<&str>,
-    fail_fast: bool,
-    scripts: bool,
-    timeout: u64,
-    reporter: Reporter,
-    data_file: Option<&Path>,
-) -> Result<()> {
-    let workspace = if path.join("postly.toml").is_file() {
-        Workspace::open(path)?
+async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
+    let workspace = if options.path.join("postly.toml").is_file() {
+        Workspace::open(options.path)?
     } else {
-        find_workspace(path)?
+        find_workspace(options.path)?
     };
     let collections = workspace.collections()?;
     if collections.is_empty() {
         bail!("no collections found in {}", workspace.root().display());
     }
     let engine = HttpEngine::new(&EngineOptions {
-        timeout: Duration::from_secs(timeout),
+        timeout: Duration::from_secs(options.timeout),
+        proxy: options.proxy.map(ToOwned::to_owned),
         ..EngineOptions::default()
     })?;
-    let iterations = load_iteration_data(data_file)?;
+    let iterations = load_iteration_data(options.data_file)?;
     let mut summaries = Vec::new();
     for collection in collections {
         let requests = workspace.requests(&collection)?;
-        let context =
-            context_for_collection(&workspace, Some(&collection.collection), environment_name)?;
+        let context = context_for_collection(
+            &workspace,
+            Some(&collection.collection),
+            options.environment_name,
+        )?;
         let summary = run_requests(
             &engine,
             &requests,
             &context,
             &RunnerOptions {
-                fail_fast,
-                scripts,
+                fail_fast: options.fail_fast,
+                scripts: options.scripts,
                 iterations: iterations.clone(),
                 ..RunnerOptions::default()
             },
         )
         .await;
-        if matches!(reporter, Reporter::Pretty) {
+        if matches!(options.reporter, Reporter::Pretty) {
             for result in &summary.results {
                 if let Some(status) = result.status {
                     println!(
@@ -1817,13 +1871,13 @@ async fn run_workspace(
                 }
             }
         }
-        let should_stop = fail_fast && summary.failed > 0;
+        let should_stop = options.fail_fast && summary.failed > 0;
         summaries.push(summary);
         if should_stop {
             break;
         }
     }
-    match reporter {
+    match options.reporter {
         Reporter::Pretty => {}
         Reporter::Json => println!("{}", serde_json::to_string_pretty(&summaries)?),
         Reporter::Junit => println!("{}", render_junit(&summaries)),
@@ -1917,11 +1971,13 @@ async fn execute(
     request: &Request,
     context: VariableContext,
     timeout: u64,
+    proxy: Option<&str>,
     insecure: bool,
 ) -> Result<postly_core::HttpResponse> {
     let engine = HttpEngine::new(&EngineOptions {
         timeout: Duration::from_secs(timeout),
         accept_invalid_certs: insecure,
+        proxy: proxy.map(ToOwned::to_owned),
         ..EngineOptions::default()
     })?;
     Ok(engine.execute(request, &context).await?)
@@ -2450,6 +2506,7 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            proxy: None,
             insecure: false,
             output_json: true,
         })
@@ -2491,6 +2548,7 @@ mod tests {
             basic_password: None,
             timeout: 10,
             reconnect: 0,
+            proxy: None,
             insecure: false,
             output_json: true,
         })
@@ -2539,6 +2597,7 @@ mod tests {
             basic_password: None,
             timeout: 10,
             reconnect: 1,
+            proxy: None,
             insecure: false,
             output_json: true,
         })
