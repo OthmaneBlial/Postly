@@ -10,13 +10,13 @@ use base64::Engine;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
-    export_postman_collection, export_postman_environment_with_store, import_curl_command,
-    import_environment, import_postman_collection, message_from_json, message_to_json,
-    parse_graphql_response, parse_graphql_schema, parse_variables_json, run_requests,
-    schema_introspection_query, Auth, Collection, EngineOptions, Environment, EnvironmentVariable,
-    GraphqlRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome,
-    HttpEngine, Request, RequestBody, ResponseExample, RunnerOptions, ScriptResult,
-    ScriptTestResult, SecretStore, SseParser, VariableContext, Workspace,
+    export_postman_collection, export_postman_environment_with_store, generate_code_snippet,
+    import_curl_command, import_environment, import_postman_collection, message_from_json,
+    message_to_json, parse_graphql_response, parse_graphql_schema, parse_variables_json,
+    run_requests, schema_introspection_query, Auth, Collection, EngineOptions, Environment,
+    EnvironmentVariable, GraphqlRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter,
+    HistoryOutcome, HttpEngine, Request, RequestBody, ResponseExample, RunnerOptions, ScriptResult,
+    ScriptTestResult, SecretStore, SnippetLanguage, SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -407,6 +407,33 @@ enum Reporter {
     Junit,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum SnippetLanguageArg {
+    Curl,
+    Javascript,
+    Python,
+    Rust,
+    Go,
+    Java,
+    Csharp,
+    Php,
+}
+
+impl From<SnippetLanguageArg> for SnippetLanguage {
+    fn from(language: SnippetLanguageArg) -> Self {
+        match language {
+            SnippetLanguageArg::Curl => Self::Curl,
+            SnippetLanguageArg::Javascript => Self::Javascript,
+            SnippetLanguageArg::Python => Self::Python,
+            SnippetLanguageArg::Rust => Self::Rust,
+            SnippetLanguageArg::Go => Self::Go,
+            SnippetLanguageArg::Java => Self::Java,
+            SnippetLanguageArg::Csharp => Self::Csharp,
+            SnippetLanguageArg::Php => Self::Php,
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Create an empty local Postly workspace.
@@ -659,6 +686,14 @@ enum Command {
         errors_only: bool,
         #[arg(long, help = "Clear local metadata-only history")]
         clear: bool,
+        #[arg(long)]
+        output_json: bool,
+    },
+    /// Generate a reviewable code snippet from a saved request.
+    Snippet {
+        file: PathBuf,
+        #[arg(short, long, value_enum, default_value_t = SnippetLanguageArg::Curl)]
+        language: SnippetLanguageArg,
         #[arg(long)]
         output_json: bool,
     },
@@ -1199,6 +1234,11 @@ async fn main() -> Result<()> {
                 output_json,
             },
         ),
+        Command::Snippet {
+            file,
+            language,
+            output_json,
+        } => print_snippet(&file, language.into(), output_json),
         Command::Mock {
             path,
             host,
@@ -1250,6 +1290,21 @@ fn init_workspace(path: &Path, name: &str) -> Result<()> {
     );
     println!("Created collection at {}", collection.directory.display());
     println!("No account or cloud service is required.");
+    Ok(())
+}
+
+fn print_snippet(path: &Path, language: SnippetLanguage, output_json: bool) -> Result<()> {
+    let workspace = find_workspace(path)?;
+    let request = workspace.load_request(path)?;
+    let snippet = generate_code_snippet(&request, language);
+    if output_json {
+        println!("{}", serde_json::to_string_pretty(&snippet)?);
+    } else {
+        for warning in &snippet.warnings {
+            eprintln!("warning: {warning}");
+        }
+        println!("{}", snippet.code);
+    }
     Ok(())
 }
 

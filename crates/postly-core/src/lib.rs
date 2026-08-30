@@ -4,6 +4,7 @@
 //! filesystem storage, Postman migration, and HTTP execution. UI clients and
 //! the CLI can therefore share the same behavior without a cloud service.
 
+pub mod codegen;
 pub mod curl;
 pub mod export;
 pub mod graphql;
@@ -20,6 +21,7 @@ pub mod sse;
 pub mod storage;
 pub mod variables;
 
+pub use codegen::{generate_code_snippet, CodeSnippet, SnippetLanguage};
 pub use curl::{
     export_curl_command, import_curl_command, parse_curl_command, CurlExportResult,
     CurlImportResult, CurlParseError,

@@ -59,6 +59,23 @@ postly send ./my-api/collections/my-api/requests/smoke/health.postly.toml \
 `request` is for an unsaved URL. `send` executes a saved request file and can
 run its preserved scripts with the explicit `--scripts` flag.
 
+## Generate code snippets
+
+Generate source from the canonical saved request model:
+
+~~~bash
+postly snippet ./my-api/collections/my-api/requests/health.postly.toml \
+  --language javascript
+postly snippet ./my-api/collections/my-api/requests/health.postly.toml \
+  --language python --output-json
+~~~
+
+Supported languages are curl, javascript, python, rust, go, java, csharp and
+php. Variables remain visible as {{placeholders}} and OAuth client-credential
+values are not fetched. Warnings are printed to stderr (or included in JSON
+output), so generated source stays reviewable before it is copied into another
+project. See the code-generation guide.
+
 ## Run collections and folders
 
 ~~~bash

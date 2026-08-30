@@ -75,6 +75,9 @@ This repository contains working vertical slices, not a static interface mockup.
   restoration.
 - **Migration:** Postman Collection v2.1 and environment import/export, OpenAPI
   3.0/3.1 JSON/YAML import with guarded local references, and cURL paste/copy.
+- **Code snippets:** generate reviewable cURL, JavaScript fetch, Python
+  requests, Rust reqwest, Go, Java, C# and PHP from the same saved request
+  model.
 - **Testing and automation:** response assertions, an opt-in Node.js script
   bridge, tested `pm.*` behavior, collection runs, folder selection, iteration
   data, fail-fast execution, pretty/JSON/JUnit reporters and a deterministic
@@ -189,6 +192,10 @@ postly run ./my-api --folder auth --environment Local --reporter junit > postly-
 # Search request metadata without indexing secrets or payloads
 postly search payments --workspace ./my-api --output-json
 
+# Generate a code snippet without materializing secret references
+postly snippet ./my-api/collections/my-api/requests/health.postly.toml \
+  --language python
+
 # Serve saved response examples locally for offline development
 postly mock ./my-api --port 3000
 ```
@@ -221,7 +228,8 @@ postly grpc call https://api.example.com:443 \
 See the focused guides for streaming semantics, TLS boundaries and current
 limitations: [GraphQL](docs/graphql.md), [SSE](docs/sse.md),
 [WebSockets](docs/websocket.md), [gRPC](docs/grpc.md) and the
-[local mock server](docs/mock-server.md).
+[local mock server](docs/mock-server.md). See also
+[code generation](docs/code-generation.md).
 
 ## A transparent security boundary
 
@@ -341,6 +349,8 @@ guarantees as a substitute for product evidence.
 - [WebSockets](docs/websocket.md)
 - [gRPC](docs/grpc.md)
 - [OpenAPI](docs/openapi.md)
+- [Code generation](docs/code-generation.md)
+- [Local mock server](docs/mock-server.md)
 - [Postman migration](docs/migration-from-postman.md)
 - [Privacy](docs/privacy.md)
 - [Compatibility status](docs/compatibility.md)

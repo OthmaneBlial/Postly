@@ -75,6 +75,9 @@ Implemented:
 - CLI collection runs can target an exact folder and its nested request folders.
 - A dedicated CLI reference documents headless requests, folder runs, reports,
   transport flags, protocol commands and exit-status behavior.
+- postly snippet generates reviewable cURL, JavaScript, Python, Rust, Go, Java,
+  C# and PHP source from the saved request model while preserving placeholders
+  and warning when credentials or unsupported body semantics need review.
 - A local `cargo xtask bench` harness measures real Postman import and generated
   1,000-request workspace open/search operations without publishing invented
   competitor comparisons.
