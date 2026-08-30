@@ -12,6 +12,7 @@ name = "postly-gui"
 path = "src/main.rs"
 
 [dependencies]
+chrono.workspace = true
 eframe.workspace = true
 postly-core = { path = "../postly-core" }
 serde_json.workspace = true

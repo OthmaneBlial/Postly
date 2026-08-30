@@ -31,7 +31,7 @@ Implemented:
 - response Pretty/Raw views now use virtualized line rows with optional wrapping, clipboard copy and workspace-local response snapshots.
 - OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, parameters, JSON bodies and auth placeholders.
 - Structured GraphQL core/CLI/GUI request model with variables, operation names, partial-data/error parsing, validated GUI editing and local HTTP integration coverage.
-- SSE parser and progressive CLI subscription with chunk-safe event decoding, JSON-lines output and local streaming integration coverage.
+- SSE parser plus progressive CLI/native GUI subscriptions with chunk-safe event decoding, event metadata, bounded GUI history, JSON-lines output and local streaming coverage.
 - WebSocket CLI client for `ws://` and `wss://` with headers/auth, text sends, binary/pong output, ping replies, bounded reconnects and local integration coverage.
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary and server-streaming CLI calls using protobuf JSON, metadata and HTTPS webpki roots.
 - Persistable response assertions for status, headers, body text and JSON Pointer values, evaluated by the runner without Node.js.
@@ -48,7 +48,7 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility.
 - Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.
 - OS keychain storage, persistent/manual cookie management and crash recovery.
-- OpenAPI external/cyclic references, GraphQL schema explorer, SSE reconnection/GUI console, WebSocket GUI/interactive console, gRPC reflection/client-bidirectional streaming and gRPC GUI.
+- OpenAPI external/cyclic references, GraphQL schema explorer, SSE reconnection, WebSocket GUI/interactive console, gRPC reflection/client-bidirectional streaming and gRPC GUI.
 - Local deterministic protocol test servers, fuzzing, benchmarks and packaging.
 
 ## Verification

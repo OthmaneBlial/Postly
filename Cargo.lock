@@ -2944,6 +2944,7 @@ dependencies = [
 name = "postly-app"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "eframe",
  "postly-core",
  "serde_json",

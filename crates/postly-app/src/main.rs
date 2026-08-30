@@ -1,15 +1,17 @@
 use std::{
+    collections::VecDeque,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
     time::Duration,
 };
 
+use chrono::Local;
 use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
 use postly_core::{
     ApiKeyLocation, Assertion, Auth, CollectionFiles, EngineOptions, Environment, HeaderEntry,
     HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, Request, RequestBody,
-    ResponseView, VariableContext, Workspace,
+    ResponseView, SseEvent, SseParser, VariableContext, Workspace,
 };
 
 const ACCENT: Color32 = Color32::from_rgb(91, 141, 239);
@@ -34,6 +36,28 @@ enum ResponseTab {
     Headers,
     Cookies,
     Timing,
+    SseEvents,
+}
+
+const MAX_SSE_EVENTS: usize = 500;
+
+#[derive(Debug, Clone)]
+struct ReceivedSseEvent {
+    event: SseEvent,
+    received_at: String,
+}
+
+#[derive(Debug)]
+enum SseStreamUpdate {
+    Connected {
+        status: u16,
+        status_text: String,
+        content_type: Option<String>,
+        protocol: String,
+        url: String,
+    },
+    Event(SseEvent),
+    Closed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +172,14 @@ pub struct PostlyApp {
     response_wrap: bool,
     pending: Option<Receiver<Result<HttpResponse, String>>>,
     pending_request: Option<Request>,
+    sse_pending: Option<Receiver<Result<SseStreamUpdate, String>>>,
+    sse_events: VecDeque<ReceivedSseEvent>,
+    sse_status: Option<(u16, String)>,
+    sse_content_type: Option<String>,
+    sse_protocol: Option<String>,
+    sse_url: Option<String>,
+    sse_started: bool,
+    sse_connected: bool,
     selected_environment: Option<String>,
     dirty: bool,
     status_message: String,
@@ -205,6 +237,14 @@ impl PostlyApp {
             response_wrap: false,
             pending: None,
             pending_request: None,
+            sse_pending: None,
+            sse_events: VecDeque::new(),
+            sse_status: None,
+            sse_content_type: None,
+            sse_protocol: None,
+            sse_url: None,
+            sse_started: false,
+            sse_connected: false,
             selected_environment: None,
             dirty: false,
             status_message,
@@ -381,6 +421,15 @@ impl PostlyApp {
         self.response = None;
         self.response_error = None;
         self.response_search.clear();
+        self.response_tab = ResponseTab::Pretty;
+        self.sse_pending = None;
+        self.sse_events.clear();
+        self.sse_status = None;
+        self.sse_content_type = None;
+        self.sse_protocol = None;
+        self.sse_url = None;
+        self.sse_started = false;
+        self.sse_connected = false;
     }
 
     fn save_current_response(&mut self) -> Result<(), String> {
@@ -546,7 +595,7 @@ impl PostlyApp {
     }
 
     fn send_current(&mut self) -> Result<(), String> {
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.sse_pending.is_some() {
             return Ok(());
         }
         let request = self.edited_request()?;
@@ -573,7 +622,100 @@ impl PostlyApp {
         Ok(())
     }
 
+    fn start_sse_current(&mut self) -> Result<(), String> {
+        if self.pending.is_some() || self.sse_pending.is_some() {
+            return Ok(());
+        }
+        let request = self.edited_request()?;
+        let context = self.context();
+        let engine = self.engine.clone();
+        let (sender, receiver) = mpsc::channel();
+        let error_sender = sender.clone();
+        thread::spawn(move || {
+            let result =
+                (|| {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| error.to_string())?;
+                    runtime.block_on(async move {
+                        let mut request = request;
+                        if !request.headers.iter().any(|header| {
+                            header.enabled && header.key.eq_ignore_ascii_case("accept")
+                        }) {
+                            request
+                                .headers
+                                .push(HeaderEntry::enabled("accept", "text/event-stream"));
+                        }
+                        let mut response = engine
+                            .execute_stream(&request, &context)
+                            .await
+                            .map_err(|error| error.to_string())?;
+                        if response.status >= 400 {
+                            let body = response.response.text().await.unwrap_or_default();
+                            return Err(format!(
+                                "SSE endpoint returned {} {}{}",
+                                response.status,
+                                response.status_text,
+                                if body.trim().is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(": {}", body.trim())
+                                }
+                            ));
+                        }
+                        sender
+                            .send(Ok(SseStreamUpdate::Connected {
+                                status: response.status,
+                                status_text: response.status_text.clone(),
+                                content_type: response.content_type.clone(),
+                                protocol: response.protocol.clone(),
+                                url: response.url.clone(),
+                            }))
+                            .map_err(|_| "SSE console was closed".to_owned())?;
+                        let mut parser = SseParser::default();
+                        while let Some(chunk) = response
+                            .response
+                            .chunk()
+                            .await
+                            .map_err(|error| error.to_string())?
+                        {
+                            for event in parser
+                                .feed_bytes(&chunk)
+                                .map_err(|error| error.to_string())?
+                            {
+                                sender
+                                    .send(Ok(SseStreamUpdate::Event(event)))
+                                    .map_err(|_| "SSE console was closed".to_owned())?;
+                            }
+                        }
+                        for event in parser.finish().map_err(|error| error.to_string())? {
+                            sender
+                                .send(Ok(SseStreamUpdate::Event(event)))
+                                .map_err(|_| "SSE console was closed".to_owned())?;
+                        }
+                        let _ = sender.send(Ok(SseStreamUpdate::Closed));
+                        Ok::<(), String>(())
+                    })
+                })();
+            if let Err(error) = result {
+                let _ = error_sender.send(Err(error));
+            }
+        });
+        self.clear_response();
+        self.sse_pending = Some(receiver);
+        self.sse_started = true;
+        self.status_message = "Connecting to SSE endpoint…".to_owned();
+        Ok(())
+    }
+
     fn poll_pending(&mut self) -> bool {
+        let http_pending = self.poll_http_pending();
+        let sse_pending = self.poll_sse_pending();
+        http_pending || sse_pending
+    }
+
+    fn poll_http_pending(&mut self) -> bool {
         let Some(receiver) = self.pending.as_ref() else {
             return false;
         };
@@ -613,6 +755,77 @@ impl PostlyApp {
             }
         }
         false
+    }
+
+    fn poll_sse_pending(&mut self) -> bool {
+        let mut finished = false;
+        loop {
+            let result = {
+                let Some(receiver) = self.sse_pending.as_ref() else {
+                    break;
+                };
+                receiver.try_recv()
+            };
+            match result {
+                Ok(Ok(SseStreamUpdate::Connected {
+                    status,
+                    status_text,
+                    content_type,
+                    protocol,
+                    url,
+                })) => {
+                    self.sse_status = Some((status, status_text.clone()));
+                    self.sse_content_type = content_type;
+                    self.sse_protocol = Some(protocol);
+                    self.sse_url = Some(url);
+                    self.sse_started = true;
+                    self.sse_connected = true;
+                    self.status_message = format!("SSE connected · {status} {status_text}");
+                }
+                Ok(Ok(SseStreamUpdate::Event(event))) => {
+                    self.sse_started = true;
+                    self.sse_events.push_back(ReceivedSseEvent {
+                        event,
+                        received_at: Local::now().format("%H:%M:%S").to_string(),
+                    });
+                    while self.sse_events.len() > MAX_SSE_EVENTS {
+                        self.sse_events.pop_front();
+                    }
+                    self.status_message =
+                        format!("SSE event received · {} retained", self.sse_events.len());
+                }
+                Ok(Ok(SseStreamUpdate::Closed)) => {
+                    self.sse_connected = false;
+                    self.status_message = format!(
+                        "SSE stream closed · {} event{}",
+                        self.sse_events.len(),
+                        if self.sse_events.len() == 1 { "" } else { "s" }
+                    );
+                    finished = true;
+                    break;
+                }
+                Ok(Err(error)) => {
+                    self.sse_connected = false;
+                    self.sse_started = true;
+                    self.status_message = "SSE stream failed".to_owned();
+                    self.response_error = Some(error);
+                    finished = true;
+                    break;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.sse_connected = false;
+                    self.status_message = "SSE stream worker stopped unexpectedly".to_owned();
+                    self.response_error = Some("SSE stream worker stopped unexpectedly".to_owned());
+                    finished = true;
+                    break;
+                }
+            }
+        }
+        if finished {
+            self.sse_pending = None;
+        }
+        self.sse_pending.is_some()
     }
 
     fn draw_navigator(&mut self, ui: &mut egui::Ui) {
@@ -822,9 +1035,11 @@ impl PostlyApp {
                 });
                 ui.add_space(7.0);
                 let mut send_clicked = false;
+                let mut stream_clicked = false;
                 let mut save_clicked = false;
                 let mut duplicate_clicked = false;
                 let mut delete_clicked = false;
+                let busy = self.pending.is_some() || self.sse_pending.is_some();
                 ui.horizontal(|ui| {
                     if ui
                         .add(
@@ -867,13 +1082,9 @@ impl PostlyApp {
                     }
                     if ui
                         .add_enabled(
-                            self.pending.is_none(),
-                            egui::Button::new(if self.pending.is_some() {
-                                "Sending…"
-                            } else {
-                                "Send  ⌘↵"
-                            })
-                            .fill(ACCENT),
+                            !busy,
+                            egui::Button::new(if busy { "Sending…" } else { "Send  ⌘↵" })
+                                .fill(ACCENT),
                         )
                         .clicked()
                     {
@@ -914,6 +1125,15 @@ impl PostlyApp {
                             self.editor_tab = tab;
                         }
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_enabled(!busy, egui::Button::new("Stream SSE"))
+                            .on_hover_text("Open the current request as a progressive SSE console")
+                            .clicked()
+                        {
+                            stream_clicked = true;
+                        }
+                    });
                 });
                 ui.add_space(3.0);
                 if save_clicked {
@@ -934,6 +1154,11 @@ impl PostlyApp {
                 if send_clicked {
                     if let Err(error) = self.send_current() {
                         self.status_message = format!("Send failed: {error}");
+                    }
+                }
+                if stream_clicked {
+                    if let Err(error) = self.start_sse_current() {
+                        self.status_message = format!("SSE start failed: {error}");
                     }
                 }
             });
@@ -1330,6 +1555,30 @@ impl PostlyApp {
                             }),
                         );
                     }
+                    if self.sse_started {
+                        let state = if self.sse_connected {
+                            "connected"
+                        } else {
+                            "closed"
+                        };
+                        let status = self
+                            .sse_status
+                            .as_ref()
+                            .map(|(code, text)| format!("{code} {text} · "))
+                            .unwrap_or_default();
+                        ui.label(
+                            RichText::new(format!(
+                                "SSE {state} · {status}{} event{}",
+                                self.sse_events.len(),
+                                if self.sse_events.len() == 1 { "" } else { "s" }
+                            ))
+                            .color(if self.sse_connected {
+                                Color32::from_rgb(100, 205, 145)
+                            } else {
+                                MUTED
+                            }),
+                        );
+                    }
                 });
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
@@ -1343,6 +1592,12 @@ impl PostlyApp {
                         if tab_button(ui, self.response_tab == tab, label).clicked() {
                             self.response_tab = tab;
                         }
+                    }
+                    if self.sse_started
+                        && tab_button(ui, self.response_tab == ResponseTab::SseEvents, "Events")
+                            .clicked()
+                    {
+                        self.response_tab = ResponseTab::SseEvents;
                     }
                 });
                 if self.response.is_some()
@@ -1377,14 +1632,71 @@ impl PostlyApp {
                 ui.separator();
                 if let Some(error) = &self.response_error {
                     ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+                    if self.sse_started {
+                        self.render_sse_content(ui);
+                    }
                 } else if let Some(response) = &self.response {
                     self.render_response_content(ui, response);
+                } else if self.sse_started {
+                    self.render_sse_content(ui);
                 } else if self.pending.is_some() {
                     ui.label(RichText::new("Waiting for the local HTTP engine…").color(MUTED));
                 } else {
                     ui.label(
                         RichText::new("Send a request to inspect its response here.").color(MUTED),
                     );
+                }
+            });
+    }
+
+    fn render_sse_content(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if let Some(content_type) = &self.sse_content_type {
+                ui.label(RichText::new(content_type).small().color(MUTED));
+            }
+            if let Some(protocol) = &self.sse_protocol {
+                ui.label(RichText::new(protocol).small().color(MUTED));
+            }
+            if let Some(url) = &self.sse_url {
+                ui.label(RichText::new(url).small().color(MUTED));
+            }
+        });
+        if self.sse_events.is_empty() {
+            ui.label(RichText::new("Waiting for SSE events…").color(MUTED));
+            return;
+        }
+        ui.add_space(5.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for (index, received) in self.sse_events.iter().enumerate() {
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("#{}", index + 1))
+                                    .strong()
+                                    .color(ACCENT),
+                            );
+                            ui.label(RichText::new(&received.received_at).small().color(MUTED));
+                            if let Some(event) = &received.event.event {
+                                ui.label(RichText::new(format!("event: {event}")));
+                            } else {
+                                ui.label(RichText::new("message").color(MUTED));
+                            }
+                            if let Some(id) = &received.event.id {
+                                ui.label(RichText::new(format!("id: {id}")));
+                            }
+                            if let Some(retry_ms) = received.event.retry_ms {
+                                ui.label(RichText::new(format!("retry: {retry_ms} ms")));
+                            }
+                        });
+                        ui.add_space(3.0);
+                        ui.add(
+                            egui::Label::new(RichText::new(&received.event.data).monospace())
+                                .wrap(),
+                        );
+                    });
+                    ui.add_space(4.0);
                 }
             });
     }
@@ -1519,6 +1831,7 @@ impl PostlyApp {
                 ui.label(format!("Response size: {} bytes", response.body.len()));
                 ui.label(format!("Final URL: {}", response.url));
             }
+            ResponseTab::SseEvents => self.render_sse_content(ui),
         }
     }
 }
@@ -1900,6 +2213,71 @@ mod tests {
         assert_eq!(
             app.request.id,
             history_entry.request_id.expect("request id")
+        );
+    }
+
+    #[test]
+    fn sse_worker_delivers_events_and_bounds_console_history() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("connection");
+            let mut request = [0_u8; 1024];
+            let length = stream.read(&mut request).expect("read");
+            assert!(String::from_utf8_lossy(&request[..length]).contains("GET /events HTTP/1.1"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\nid: 1\nevent: update\ndata: first\nretry: 1500\n\nid: 2\ndata: second\n\n",
+                )
+                .expect("write");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.url = format!("http://{address}/events");
+        app.start_sse_current().expect("start SSE");
+
+        let mut finished = false;
+        for _ in 0..200 {
+            if !app.poll_pending() {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.join().expect("server");
+        assert!(finished, "SSE worker did not finish");
+        assert_eq!(app.sse_events.len(), 2);
+        assert_eq!(app.sse_events[0].event.id.as_deref(), Some("1"));
+        assert_eq!(app.sse_events[0].event.event.as_deref(), Some("update"));
+        assert_eq!(app.sse_events[0].event.data, "first");
+        assert_eq!(app.sse_events[0].event.retry_ms, Some(1500));
+        assert!(!app.sse_events[0].received_at.is_empty());
+        assert_eq!(
+            app.sse_status.as_ref().map(|(status, _)| *status),
+            Some(200)
+        );
+        assert!(!app.sse_connected);
+
+        for index in 0..(MAX_SSE_EVENTS + 25) {
+            app.sse_events.push_back(ReceivedSseEvent {
+                event: SseEvent {
+                    id: Some(index.to_string()),
+                    event: None,
+                    data: index.to_string(),
+                    retry_ms: None,
+                },
+                received_at: "00:00:00".to_owned(),
+            });
+            while app.sse_events.len() > MAX_SSE_EVENTS {
+                app.sse_events.pop_front();
+            }
+        }
+        assert_eq!(app.sse_events.len(), MAX_SSE_EVENTS);
+        assert_eq!(
+            app.sse_events
+                .front()
+                .map(|event| event.event.id.as_deref()),
+            Some(Some("25"))
         );
     }
 }
