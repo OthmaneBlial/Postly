@@ -2929,6 +2929,7 @@ dependencies = [
  "postly-core",
  "prost",
  "prost-reflect",
+ "reqwest",
  "serde_json",
  "tempfile",
  "tokio",

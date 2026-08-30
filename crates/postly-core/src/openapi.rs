@@ -54,7 +54,19 @@ pub fn import_openapi(
         path: input_path.clone(),
         source,
     })?;
-    let document = parse_document(&input_path, &text)?;
+    import_openapi_text(&input_path, &text, output_directory)
+}
+
+/// Import an OpenAPI document already fetched by a caller, preserving the
+/// source label in the migration report. This is used by the CLI's explicit
+/// URL import path and keeps document parsing independent from network I/O.
+pub fn import_openapi_text(
+    source: impl AsRef<Path>,
+    text: &str,
+    output_directory: impl AsRef<Path>,
+) -> Result<OpenApiImportReport, OpenApiImportError> {
+    let input_path = source.as_ref().to_path_buf();
+    let document = parse_document(&input_path, text)?;
     let mut warnings = Vec::new();
     let document = expand_references(&document, &mut warnings);
     let root = document
@@ -198,7 +210,14 @@ fn parse_document(path: &Path, text: &str) -> Result<Value, OpenApiImportError> 
         let yaml = serde_yaml::from_str::<serde_yaml::Value>(text)?;
         Ok(serde_json::to_value(yaml)?)
     } else {
-        Ok(serde_json::from_str(text)?)
+        match serde_json::from_str(text) {
+            Ok(document) => Ok(document),
+            Err(json_error) => {
+                let yaml = serde_yaml::from_str::<serde_yaml::Value>(text)
+                    .map_err(|_| OpenApiImportError::Json(json_error))?;
+                Ok(serde_json::to_value(yaml)?)
+            }
+        }
     }
 }
 

@@ -66,7 +66,7 @@ This is a working vertical slice, not a static UI mockup.
   deterministic discovery, stable request identity, duplicate/delete/rename
   flows, global metadata search and bounded metadata-only history.
 - <strong>Migration:</strong> Postman Collection v2.1 import/export, environment import/
-  export, OpenAPI 3.0/3.1 JSON/YAML import and common cURL import.
+  export, OpenAPI 3.0/3.1 JSON/YAML file or URL import and common cURL import.
 - <strong>Testing and automation:</strong> explicit response assertions, opt-in Node.js
   script bridge, basic <code>pm.*</code>, collection runner, iteration data, pretty/JSON/
   JUnit reporters and deliberate exit behavior.

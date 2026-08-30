@@ -976,7 +976,7 @@ async fn main() -> Result<()> {
             })
             .await
         }
-        Command::Import { kind } => import_command(kind),
+        Command::Import { kind } => import_command(kind).await,
         Command::Export { kind } => export_command(kind),
         Command::Env { kind } => match kind {
             EnvKind::Set {
@@ -1762,14 +1762,19 @@ async fn send_saved_request(options: SendOptions<'_>) -> Result<()> {
     Ok(())
 }
 
-fn import_command(kind: ImportKind) -> Result<()> {
-    let report = match kind {
-        ImportKind::Collection { input, output } => import_postman_collection(input, output)?,
-        ImportKind::Environment { input, output } => import_environment(input, output)?,
-        ImportKind::Openapi { input, output } => {
-            let report = postly_core::import_openapi(input, output)?;
+async fn import_command(kind: ImportKind) -> Result<()> {
+    match kind {
+        ImportKind::Collection { input, output } => {
+            let report = import_postman_collection(input, output)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
-            return Ok(());
+        }
+        ImportKind::Environment { input, output } => {
+            let report = import_environment(input, output)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        ImportKind::Openapi { input, output } => {
+            let report = import_openapi_source(&input, &output).await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         ImportKind::Curl {
             command,
@@ -1779,11 +1784,49 @@ fn import_command(kind: ImportKind) -> Result<()> {
         } => {
             let result = import_curl_command(&command, output, &collection, &name)?;
             println!("{}", serde_json::to_string_pretty(&result)?);
-            return Ok(());
         }
-    };
-    println!("{}", serde_json::to_string_pretty(&report)?);
+    }
     Ok(())
+}
+
+const MAX_OPENAPI_DOWNLOAD_BYTES: usize = 16 * 1024 * 1024;
+
+async fn import_openapi_source(
+    input: &Path,
+    output: &Path,
+) -> Result<postly_core::OpenApiImportReport> {
+    let input_label = input.to_string_lossy().to_string();
+    let is_http_url = url::Url::parse(&input_label)
+        .map(|url| matches!(url.scheme(), "http" | "https"))
+        .unwrap_or(false);
+    if !is_http_url {
+        return Ok(postly_core::import_openapi(input, output)?);
+    }
+
+    let response = reqwest::Client::new()
+        .get(&input_label)
+        .send()
+        .await
+        .with_context(|| format!("could not fetch OpenAPI URL {input_label}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        bail!("OpenAPI URL returned HTTP {status}: {input_label}");
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_OPENAPI_DOWNLOAD_BYTES as u64)
+    {
+        bail!("OpenAPI URL response exceeds {MAX_OPENAPI_DOWNLOAD_BYTES} bytes");
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .context("could not read OpenAPI URL response")?;
+    if bytes.len() > MAX_OPENAPI_DOWNLOAD_BYTES {
+        bail!("OpenAPI URL response exceeds {MAX_OPENAPI_DOWNLOAD_BYTES} bytes");
+    }
+    let text = String::from_utf8(bytes.to_vec()).context("OpenAPI URL response is not UTF-8")?;
+    Ok(postly_core::import_openapi_text(input, &text, output)?)
 }
 
 fn export_command(kind: ExportKind) -> Result<()> {
@@ -2719,6 +2762,49 @@ mod tests {
         })
         .await
         .expect("GraphQL command");
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn imports_openapi_from_a_local_http_url_and_preserves_source_label() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("connection");
+            let mut request = [0_u8; 4096];
+            let length = socket.read(&mut request).await.expect("request");
+            let request = String::from_utf8_lossy(&request[..length]);
+            assert!(request.contains("GET /schema HTTP/1.1"));
+            let body = br#"openapi: 3.0.3
+info:
+  title: Remote API
+paths:
+  /health:
+    get:
+      operationId: health
+"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/yaml\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("headers");
+            socket.write_all(body).await.expect("OpenAPI document");
+        });
+
+        let output = tempfile::tempdir().expect("output");
+        let source = format!("http://{address}/schema");
+        let report = import_openapi_source(Path::new(&source), output.path())
+            .await
+            .expect("URL import");
+        assert_eq!(report.source, PathBuf::from(&source));
+        assert_eq!(report.imported_operations, 1);
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        assert_eq!(workspace.collections().expect("collections").len(), 1);
         server.await.expect("server");
     }
 

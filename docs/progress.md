@@ -36,6 +36,7 @@ Implemented:
 - response Pretty/Raw views now provide case-insensitive local search with occurrence counts and line snippets.
 - response Pretty/Raw views now use virtualized line rows with optional wrapping, clipboard copy and workspace-local response snapshots.
 - OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, parameters, JSON bodies and auth placeholders.
+- OpenAPI import accepts local files or explicit HTTP(S) URLs with a bounded download and source-preserving report.
 - Structured GraphQL core/CLI/GUI request model with variables, operation names, partial-data/error parsing, validated GUI editing and local HTTP integration coverage.
 - SSE parser plus progressive CLI/native GUI subscriptions with chunk-safe event decoding, event metadata, bounded GUI history, JSON-lines output and local streaming coverage.
 - WebSocket CLI and native GUI client for `ws://` and `wss://` with headers/auth, interactive text sends, text/binary/pong output, ping replies, bounded reconnects/history and local integration coverage.
