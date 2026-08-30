@@ -15,6 +15,7 @@ pub mod model;
 pub mod openapi;
 pub mod runner;
 pub mod scripting;
+pub mod secrets;
 pub mod sse;
 pub mod storage;
 pub mod variables;
@@ -24,7 +25,8 @@ pub use curl::{
     CurlImportResult, CurlParseError,
 };
 pub use export::{
-    export_postman_collection, export_postman_environment, ExportError, ExportReport,
+    export_postman_collection, export_postman_environment, export_postman_environment_with_store,
+    ExportError, ExportReport,
 };
 pub use graphql::{
     introspection_query, parse_response as parse_graphql_response,
@@ -46,6 +48,7 @@ pub use model::*;
 pub use openapi::{import_openapi, import_openapi_text, OpenApiImportError, OpenApiImportReport};
 pub use runner::{run_requests, CancellationToken, RunnerItemResult, RunnerOptions, RunnerSummary};
 pub use scripting::{run_script, ScriptError, ScriptLog, ScriptResult, ScriptTestResult};
+pub use secrets::{SecretReference, SecretStore, SecretStoreError};
 pub use sse::{parse_sse, SseError, SseEvent, SseParser};
 pub use storage::{CollectionFiles, RequestSearchResult, Workspace, WorkspaceError};
 pub use variables::{ResolvedText, VariableContext, VariableDiagnostic, VariableDiagnosticKind};

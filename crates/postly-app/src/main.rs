@@ -17,7 +17,7 @@ use postly_core::{
     ApiKeyLocation, Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions,
     Environment, GraphqlSchema, GrpcRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter,
     HttpEngine, HttpResponse, KeyValue, MultipartPart, Request, RequestBody, RequestSearchResult,
-    ResponseView, ScriptResult, SseEvent, SseParser, VariableContext, Workspace,
+    ResponseView, ScriptResult, SecretStore, SseEvent, SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -1335,7 +1335,7 @@ impl PostlyApp {
         Ok(())
     }
 
-    fn context(&self) -> VariableContext {
+    fn context(&self) -> Result<VariableContext, String> {
         let mut context = VariableContext::default();
         if let Some(collection) = self.collections.get(self.selected_collection) {
             context.collection = collection.collection.variables.clone();
@@ -1346,10 +1346,12 @@ impl PostlyApp {
                 .iter()
                 .find(|(_, environment)| &environment.name == name)
             {
-                context.environment = environment.enabled_values();
+                context.environment = SecretStore::for_workspace(self.workspace.root())
+                    .resolve_environment(environment)
+                    .map_err(|error| format!("could not resolve environment secret: {error}"))?;
             }
         }
-        context
+        Ok(context)
     }
 
     fn configured_engine(&mut self) -> Result<HttpEngine, String> {
@@ -1378,7 +1380,7 @@ impl PostlyApp {
         if request.grpc.is_some() {
             return self.start_grpc_current(request);
         }
-        let context = self.context();
+        let context = self.context()?;
         let engine = self.configured_engine()?;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
@@ -1419,7 +1421,7 @@ impl PostlyApp {
         {
             return Ok(());
         }
-        let context = self.context();
+        let context = self.context()?;
         let transport = self.transport.clone();
         let root = self.workspace.root().to_path_buf();
         let cancellation = CancellationToken::default();
@@ -1473,7 +1475,7 @@ impl PostlyApp {
                 })?),
             };
         let request = self.edited_request()?;
-        let context = self.context();
+        let context = self.context()?;
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
             let result = run_script(&script, &request, response.as_ref(), &context)
@@ -1503,7 +1505,7 @@ impl PostlyApp {
             variables: serde_json::json!({}),
             operation_name: Some("PostlySchemaIntrospection".to_owned()),
         };
-        let context = self.context();
+        let context = self.context()?;
         let engine = self.configured_engine()?;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
@@ -1547,7 +1549,7 @@ impl PostlyApp {
             return Ok(());
         }
         let request = self.edited_request()?;
-        let context = self.context();
+        let context = self.context()?;
         let engine = self.configured_engine()?;
         let reconnect_limit = self.sse_reconnect_limit;
         let cancellation = CancellationToken::default();
@@ -1719,7 +1721,7 @@ impl PostlyApp {
             return Ok(());
         }
         let request = self.edited_request()?;
-        let context = self.context();
+        let context = self.context()?;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
         let (command_sender, mut command_receiver) =

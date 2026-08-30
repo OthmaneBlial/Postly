@@ -32,12 +32,29 @@ Changing a saved request's name or folder also relocates its canonical file;
 the request UUID remains stable and the old path is removed only after the new
 file has been written successfully.
 
-Environment files may contain secrets. Postly ignores runtime environment files by default; keep local values there and commit a separate redacted template when sharing a project:
+Environment files can contain legacy plaintext values, but new --secret values
+are stored in the operating-system credential store. The Git-native file then
+contains only an opaque workspace-scoped reference. Postly ignores runtime
+environment files by default; commit a separate redacted template when sharing
+a project:
 
 ~~~text
 environments/staging.postly-env.toml
 environments/staging.example.toml
 ~~~
+
+Store a secret without writing its value to the environment file:
+
+~~~bash
+postly env set --workspace ./my-api --name Local \
+  --secret API_TOKEN="$API_TOKEN"
+~~~
+
+The keychain namespace is derived from the canonical workspace path. Moving or
+copying a workspace therefore requires setting its secrets again; a reference
+from another workspace is rejected. Older environment files without a
+secret_ref field remain readable and resolve their existing plaintext values
+for migration compatibility.
 
 The current CLI reads enabled environment values and resolves scopes in this order:
 

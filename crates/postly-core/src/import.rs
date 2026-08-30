@@ -195,6 +195,7 @@ pub fn import_environment(
                     value: value.to_owned(),
                     enabled,
                     secret,
+                    secret_ref: None,
                 },
             );
             if !enabled {

@@ -28,6 +28,9 @@ Implemented:
 - init, request, send, import, list and sequential run CLI commands.
 - new request creates and persists a saved request without editing files by hand.
 - env set creates local environments and saved requests resolve enabled environment variables.
+- postly env set --secret stores new environment secrets in the OS credential
+  store and persists only workspace-scoped opaque references; CLI and GUI
+  resolution share the same backend, while secure Postman export is explicit.
 - common cURL commands can be parsed and imported without shell execution.
 - Native GUI cURL paste import creates an unsaved draft, and the current request can be copied as a shell-quoted cURL command with explicit warnings for non-materialized auth.
 - saved-request executions can be recorded, searched, filtered, cleared and retained as bounded ignored metadata-only local history.
@@ -73,11 +76,12 @@ Implemented:
 
 Not yet implemented:
 
-- Desktop GUI polish, GUI script execution, richer response preview/syntax features and manual responsive/accessibility QA.
+- Desktop GUI polish, GUI script application parity, richer response preview/syntax features and manual responsive/accessibility QA.
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.
-- OS keychain storage and crash recovery.
+- secret migration from legacy plaintext environments, stdin-safe secret entry
+  and crash recovery.
 - Authorization Code/PKCE, Device Code and refresh-token OAuth flows; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in the CLI.
 - OpenAPI cyclic/remote references and gRPC reflection.
 - Local deterministic protocol test server tooling, fuzzing, cross-client/memory

@@ -10,12 +10,13 @@ use base64::Engine;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
-    export_postman_collection, export_postman_environment, import_curl_command, import_environment,
-    import_postman_collection, message_from_json, message_to_json, parse_graphql_response,
-    parse_graphql_schema, parse_variables_json, run_requests, schema_introspection_query, Auth,
-    Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, GrpcSchema,
-    HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody,
-    RunnerOptions, ScriptResult, ScriptTestResult, SseParser, VariableContext, Workspace,
+    export_postman_collection, export_postman_environment_with_store, import_curl_command,
+    import_environment, import_postman_collection, message_from_json, message_to_json,
+    parse_graphql_response, parse_graphql_schema, parse_variables_json, run_requests,
+    schema_introspection_query, Auth, Collection, EngineOptions, Environment, EnvironmentVariable,
+    GraphqlRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome,
+    HttpEngine, Request, RequestBody, RunnerOptions, ScriptResult, ScriptTestResult, SecretStore,
+    SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -575,6 +576,7 @@ enum Command {
         kind: ExportKind,
     },
     /// Create or update a local environment without printing its values.
+    /// `--secret` stores values in the operating-system keychain.
     Env {
         #[command(subcommand)]
         kind: EnvKind,
@@ -2089,7 +2091,9 @@ fn export_command(kind: ExportKind) -> Result<()> {
                 })
                 .with_context(|| format!("environment not found: {name}"))?
                 .1;
-            let report = export_postman_environment(&environment, output)?;
+            let secret_store = SecretStore::for_workspace(workspace.root());
+            let report =
+                export_postman_environment_with_store(&environment, &secret_store, output)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
     }
@@ -2103,6 +2107,7 @@ fn set_environment(
     secrets: &[String],
 ) -> Result<()> {
     let workspace = Workspace::open_or_init(workspace_path, "Postly workspace")?;
+    let secret_store = SecretStore::for_workspace(workspace.root());
     let mut environment = workspace
         .environments()?
         .into_iter()
@@ -2117,13 +2122,12 @@ fn set_environment(
     }
     for assignment in secrets {
         let (key, value) = parse_assignment(assignment)?;
+        let reference = secret_store
+            .set_environment_secret(name, key, value)
+            .with_context(|| format!("could not store secret variable {key} in the OS keychain"))?;
         environment.variables.insert(
             key.to_owned(),
-            EnvironmentVariable {
-                value: value.to_owned(),
-                enabled: true,
-                secret: true,
-            },
+            EnvironmentVariable::keychain(reference.into_string()),
         );
     }
     let path = workspace.save_environment(&environment)?;
@@ -2476,7 +2480,9 @@ fn context_for_collection(
                 environment.name == name || environment.name.eq_ignore_ascii_case(name)
             })
             .with_context(|| format!("environment not found: {name}"))?;
-        context.environment = environment.enabled_values();
+        context.environment = SecretStore::for_workspace(workspace.root())
+            .resolve_environment(&environment)
+            .with_context(|| format!("could not resolve secrets for environment {name}"))?;
     }
     Ok(context)
 }

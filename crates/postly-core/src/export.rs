@@ -9,6 +9,7 @@ use thiserror::Error;
 
 use crate::{
     model::{ApiKeyLocation, Auth, Collection, Environment, MultipartPart, Request, RequestBody},
+    secrets::{SecretStore, SecretStoreError},
     storage::{CollectionFiles, Workspace, WorkspaceError},
 };
 
@@ -18,6 +19,8 @@ pub enum ExportError {
     Workspace(#[from] WorkspaceError),
     #[error("could not serialize Postman export: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("could not resolve a keychain-backed environment secret: {0}")]
+    SecretStore(#[from] SecretStoreError),
     #[error("could not write export file {path}: {source}")]
     Write {
         path: PathBuf,
@@ -63,19 +66,54 @@ pub fn export_postman_environment(
     environment: &Environment,
     output: impl AsRef<Path>,
 ) -> Result<ExportReport, ExportError> {
+    export_postman_environment_values(environment, None, output)
+}
+
+/// Export an environment and explicitly resolve its keychain-backed values.
+/// Callers must opt into this form because the resulting Postman JSON contains
+/// plaintext secrets by design.
+pub fn export_postman_environment_with_store(
+    environment: &Environment,
+    secret_store: &SecretStore,
+    output: impl AsRef<Path>,
+) -> Result<ExportReport, ExportError> {
+    export_postman_environment_values(environment, Some(secret_store), output)
+}
+
+fn export_postman_environment_values(
+    environment: &Environment,
+    secret_store: Option<&SecretStore>,
+    output: impl AsRef<Path>,
+) -> Result<ExportReport, ExportError> {
     let output = output.as_ref().to_path_buf();
+    let mut warnings = Vec::new();
     let values = environment
         .variables
         .iter()
-        .map(|(key, variable)| {
-            json!({
+        .map(|(key, variable)| -> Result<_, ExportError> {
+            let value = match (variable.secret_ref.as_deref(), secret_store) {
+                (Some(reference), Some(store)) => {
+                    warnings.push(format!(
+                        "Export includes keychain-backed secret variable {key} by explicit request."
+                    ));
+                    store.get(reference)?
+                }
+                (Some(_), None) => {
+                    warnings.push(format!(
+                        "Keychain-backed secret variable {key} was exported with an empty value; use the explicit secure export path to include it."
+                    ));
+                    String::new()
+                }
+                (None, _) => variable.value.clone(),
+            };
+            Ok(json!({
                 "key": key,
-                "value": variable.value,
+                "value": value,
                 "enabled": variable.enabled,
                 "type": if variable.secret { "secret" } else { "default" },
-            })
+            }))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     write_json(
         &output,
         &json!({
@@ -90,7 +128,7 @@ pub fn export_postman_environment(
         output: output.display().to_string(),
         collection_name: Some(environment.name.clone()),
         exported_requests: 0,
-        warnings: Vec::new(),
+        warnings,
     })
 }
 
@@ -430,7 +468,7 @@ mod tests {
     use crate::{
         import_postman_collection,
         model::{HeaderEntry, KeyValue, ResponseExample},
-        Auth, Collection, EnvironmentVariable,
+        Auth, Collection, EnvironmentVariable, SecretStore,
     };
 
     #[test]
@@ -529,6 +567,7 @@ mod tests {
                 value: "secret".to_owned(),
                 enabled: true,
                 secret: true,
+                secret_ref: None,
             },
         );
         let path = directory.path().join("local.json");
@@ -538,6 +577,60 @@ mod tests {
                 .expect("json");
         assert_eq!(document["name"], "Local");
         assert_eq!(document["values"][0]["type"], "secret");
+    }
+
+    #[test]
+    fn redacts_keychain_references_without_an_explicit_secure_export() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = SecretStore::for_test(directory.path());
+        let reference = store
+            .set_environment_secret("Local", "token", "do-not-leak")
+            .expect("secret");
+        let mut environment = Environment::new("Local");
+        environment.variables.insert(
+            "token".to_owned(),
+            EnvironmentVariable::keychain(reference.into_string()),
+        );
+
+        let path = directory.path().join("redacted.json");
+        let report = export_postman_environment(&environment, &path).expect("export");
+        let document: Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("environment document"))
+                .expect("json");
+        assert_eq!(document["values"][0]["value"], "");
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("empty value")));
+        assert!(!fs::read_to_string(path)
+            .expect("environment document")
+            .contains("do-not-leak"));
+    }
+
+    #[test]
+    fn secure_environment_export_resolves_keychain_values_only_when_requested() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = SecretStore::for_test(directory.path());
+        let reference = store
+            .set_environment_secret("Local", "token", "explicit-export")
+            .expect("secret");
+        let mut environment = Environment::new("Local");
+        environment.variables.insert(
+            "token".to_owned(),
+            EnvironmentVariable::keychain(reference.into_string()),
+        );
+
+        let path = directory.path().join("secure.json");
+        let report = export_postman_environment_with_store(&environment, &store, &path)
+            .expect("secure export");
+        let document: Value =
+            serde_json::from_str(&fs::read_to_string(path).expect("environment document"))
+                .expect("json");
+        assert_eq!(document["values"][0]["value"], "explicit-export");
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("explicit request")));
     }
 
     #[test]

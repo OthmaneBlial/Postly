@@ -40,7 +40,7 @@ changing the default relationship with your data.
 | Postly principle | What it means in practice |
 | --- | --- |
 | <strong>No account</strong> | Core local requests work without signup or login. |
-| <strong>Local-first</strong> | Request data, environments and history stay in the local workspace. |
+| <strong>Local-first</strong> | Request data and canonical project files stay local; keychain-backed secrets stay in the OS credential store. |
 | <strong>Git-friendly</strong> | Collections are readable project files, with one request per file. |
 | <strong>Rust-powered</strong> | The core, HTTP engine, protocols, storage and CLI share native Rust code. |
 | <strong>Migration-minded</strong> | Postman Collection v2.1 and environment import include review diagnostics. |
@@ -57,7 +57,7 @@ This is a working vertical slice, not a static UI mockup.
   query parameters, duplicate headers, cookies, raw/JSON/form/multipart/file
   bodies, redirects, compression, timeouts, cancellation and an ignored local
   cookie jar for saved workspaces.
-- <strong>Authentication:</strong> Bearer, Basic, API-key and OAuth 2.0 Client Credentials auth with variable resolution.
+- <strong>Authentication:</strong> Bearer, Basic, API-key and OAuth 2.0 Client Credentials auth with variable resolution and keychain-backed environment secrets.
 - <strong>TLS and routing:</strong> explicit insecure-TLS opt-in, custom PEM CA bundles,
   combined PEM client identities, HTTP(S) proxy routing and actionable file
   diagnostics. HTTPS and mutual TLS are covered by local integration tests.
@@ -313,7 +313,7 @@ Git workflows, privacy and automation matter.
 Highest-value roadmap areas include:
 
 - broader Postman script and <code>pm.*</code> compatibility with a hardened runtime;
-- OS keychain integration and complete secret-handling workflows;
+- secret migration helpers, stdin-safe secret entry and complete secret-handling workflows;
 - richer Postman fixtures and executable compatibility scoring;
 - gRPC reflection and deeper protocol-specific GUI tooling;
 - tabs, accessibility and crash recovery;

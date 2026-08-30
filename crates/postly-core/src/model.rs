@@ -87,6 +87,10 @@ pub struct EnvironmentVariable {
     pub enabled: bool,
     #[serde(default)]
     pub secret: bool,
+    /// Opaque OS-keychain reference. When present, `value` is intentionally
+    /// empty so the secret never enters Git-native environment files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_ref: Option<String>,
 }
 
 impl EnvironmentVariable {
@@ -95,6 +99,16 @@ impl EnvironmentVariable {
             value: value.into(),
             enabled: true,
             secret: false,
+            secret_ref: None,
+        }
+    }
+
+    pub fn keychain(reference: impl Into<String>) -> Self {
+        Self {
+            value: String::new(),
+            enabled: true,
+            secret: true,
+            secret_ref: Some(reference.into()),
         }
     }
 }

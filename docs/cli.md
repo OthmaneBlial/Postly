@@ -95,9 +95,14 @@ postly run ./my-api --environment Local \
   --client-identity ./certs/client-identity.pem
 ~~~
 
-Environment values are stored in local ignored files. Certificate options
+Plain --set values are stored in the ignored environment file. --secret values
+are written to the OS credential store and the file stores only an opaque
+workspace-scoped reference; Postly fails rather than silently falling back to a
+new plaintext secret when the store is unavailable. The value can still be
+exposed by shell history or process arguments, so use a controlled shell for
+high-risk credentials. Certificate options
 read PEM files from disk; private-key contents are never command-line output
-or history data. `request`, `graphql`, `sse`, `send` and `run` accept the same
+or history data. Request, GraphQL, SSE, send and run accept the same
 HTTP proxy and certificate flags where the transport applies.
 
 Saved requests can use OAuth 2.0 Client Credentials without an account or
