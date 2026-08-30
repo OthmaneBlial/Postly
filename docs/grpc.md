@@ -1,6 +1,6 @@
 # gRPC
 
-Postly currently supports a local, descriptor-driven gRPC slice. It compiles a root `.proto` file in Rust, discovers services and methods, converts protobuf JSON into dynamic messages, and executes unary and server-streaming calls through Tonic.
+Postly currently supports a local, descriptor-driven gRPC slice. It compiles a root `.proto` file in Rust, discovers services and methods, converts protobuf JSON into dynamic messages, and executes unary, server-streaming, client-streaming and bidirectional calls through Tonic.
 
 ## Discover services and methods
 
@@ -34,4 +34,28 @@ cargo run -- grpc call http://127.0.0.1:50051 \
   --output-json
 ```
 
-Server responses are consumed progressively. With `--output-json`, Postly emits one JSON object per line with `method`, `stream_index` and `response`; human-readable output labels each message. Reflection, client/bidirectional streaming, custom CA files, client certificates, insecure TLS and GUI gRPC editing remain future slices.
+Server responses are consumed progressively. With `--output-json`, Postly emits one JSON object per line with `method`, `stream_index` and `response`; human-readable output labels each message. Reflection, custom CA files, client certificates, insecure TLS and GUI gRPC editing remain future slices.
+
+## Client and bidirectional streaming
+
+Client-streaming and bidirectional methods take a JSON array of protobuf request
+objects. The array is encoded as a finite client stream:
+
+```bash
+cargo run -- grpc call http://127.0.0.1:50051 \
+  --proto ./echo.proto \
+  --method demo.Echo/EchoClient \
+  --message '[{"message":"one"},{"message":"two"}]' \
+  --output-json
+
+cargo run -- grpc call http://127.0.0.1:50051 \
+  --proto ./echo.proto \
+  --method demo.Echo/EchoBidi \
+  --message-file ./messages.json \
+  --output-json
+```
+
+Client-streaming methods return one response and bidirectional methods emit
+one JSON object per response with `stream_index` and `input_count`. Reflection,
+custom CA files, client certificates, insecure TLS and GUI gRPC editing remain
+future slices.

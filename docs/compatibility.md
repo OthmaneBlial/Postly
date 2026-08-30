@@ -20,7 +20,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | GraphQL | structured core/CLI/GUI request editing and HTTP slice; schema explorer pending | GraphQL model, parser, GUI validation and local HTTP integration tests |
 | Server-Sent Events | CLI and native GUI streaming slice; reconnect pending | chunked parser tests, local streaming CLI integration test and GUI worker test |
 | WebSocket | CLI bidirectional `ws://`/`wss://` slice; GUI workspace pending | local echo integration test and tungstenite client |
-| gRPC | local `.proto` discovery and dynamic unary/server-streaming CLI slice; reflection/client-bidirectional streaming/GUI pending | protox descriptor tests and local tonic HTTP/2 unary/server-streaming integration test |
+| gRPC | local `.proto` discovery and dynamic unary/server/client/bidirectional streaming CLI slice; reflection/GUI pending | protox descriptor tests and local tonic HTTP/2 integration test for all four call modes |
 | Postman behavioral parity | not measured | no percentage claimed |
 
 Any future score must count semantic cases, exclude placeholders and retain failing fixtures as regressions.

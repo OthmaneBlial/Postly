@@ -146,6 +146,78 @@ impl tonic::codec::Decoder for DynamicGrpcDecoder {
     }
 }
 
+fn parse_grpc_stream_messages(
+    descriptor: MessageDescriptor,
+    input: &str,
+) -> Result<Vec<DynamicMessage>> {
+    let values: Vec<serde_json::Value> = serde_json::from_str(input)
+        .context("client-streaming gRPC input must be a JSON array of request objects")?;
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let raw = serde_json::to_string(&value)
+                .with_context(|| format!("could not serialize gRPC message {index}"))?;
+            message_from_json(descriptor.clone(), &raw)
+                .with_context(|| format!("invalid gRPC message at stream index {index}"))
+        })
+        .collect()
+}
+
+fn apply_grpc_metadata<T>(
+    request: &mut tonic::Request<T>,
+    options: &GrpcCallOptions,
+) -> Result<()> {
+    for raw in &options.metadata {
+        let (key, value) = raw
+            .split_once('=')
+            .with_context(|| format!("metadata must use key=value syntax: {raw}"))?;
+        let key = key.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            bail!("metadata key cannot be empty");
+        }
+        let key: tonic::metadata::MetadataKey<tonic::metadata::Ascii> = key
+            .parse()
+            .with_context(|| format!("invalid gRPC metadata key: {key}"))?;
+        let value: tonic::metadata::MetadataValue<tonic::metadata::Ascii> = value
+            .parse()
+            .with_context(|| format!("invalid ASCII gRPC metadata value for {key}"))?;
+        request.metadata_mut().insert(key, value);
+    }
+    match (
+        options.bearer.as_deref(),
+        options.basic_user.as_deref(),
+        options.basic_password.as_deref(),
+    ) {
+        (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
+            bail!("choose either --bearer or basic authentication")
+        }
+        (Some(token), None, None) => {
+            request.metadata_mut().insert(
+                "authorization",
+                format!("Bearer {token}")
+                    .parse()
+                    .context("invalid bearer token")?,
+            );
+        }
+        (None, Some(user), Some(password)) => {
+            let credentials =
+                base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));
+            request.metadata_mut().insert(
+                "authorization",
+                format!("Basic {credentials}")
+                    .parse()
+                    .context("invalid basic credentials")?,
+            );
+        }
+        (None, Some(_), None) | (None, None, Some(_)) => {
+            bail!("basic authentication requires --basic-user and --basic-password")
+        }
+        (None, None, None) => {}
+    }
+    Ok(())
+}
+
 struct SseOptions {
     endpoint: String,
     headers: Vec<String>,
@@ -435,7 +507,7 @@ enum GrpcKind {
         #[arg(long)]
         output_json: bool,
     },
-    /// Call a unary gRPC method using a protobuf JSON request object.
+    /// Call a gRPC method using a protobuf JSON request object or stream array.
     Call {
         endpoint: String,
         #[arg(long)]
@@ -950,21 +1022,27 @@ async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
     let method = schema
         .find_method(&options.method)
         .with_context(|| format!("gRPC method not found: {}", options.method))?;
-    if method.is_client_streaming() {
-        bail!(
-            "client-streaming gRPC methods are discovered but not callable in this slice: {}",
-            method.full_name()
-        );
-    }
 
-    let message = match (options.message, options.message_file) {
-        (Some(message), None) => message,
-        (None, Some(path)) => fs::read_to_string(&path)
+    let message = match (&options.message, &options.message_file) {
+        (Some(message), None) => message.clone(),
+        (None, Some(path)) => fs::read_to_string(path)
             .with_context(|| format!("could not read protobuf JSON file {}", path.display()))?,
+        (None, None) if method.is_client_streaming() => {
+            bail!("client-streaming gRPC methods require --message or --message-file")
+        }
         (None, None) => "{}".to_owned(),
         (Some(_), Some(_)) => bail!("choose either --message or --message-file"),
     };
-    let request_message = message_from_json(method.input(), &message)?;
+    let request_message = if method.is_client_streaming() {
+        None
+    } else {
+        Some(message_from_json(method.input(), &message)?)
+    };
+    let stream_messages = if method.is_client_streaming() {
+        parse_grpc_stream_messages(method.input(), &message)?
+    } else {
+        Vec::new()
+    };
 
     let endpoint_url = url::Url::parse(&options.endpoint)
         .with_context(|| format!("invalid gRPC endpoint: {}", options.endpoint))?;
@@ -989,55 +1067,76 @@ async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
         .connect()
         .await
         .with_context(|| format!("could not connect to gRPC endpoint {}", options.endpoint))?;
-    let mut request = tonic::Request::new(request_message);
-    for raw in options.metadata {
-        let (key, value) = raw
-            .split_once('=')
-            .with_context(|| format!("metadata must use key=value syntax: {raw}"))?;
-        let key = key.trim().to_ascii_lowercase();
-        if key.is_empty() {
-            bail!("metadata key cannot be empty");
-        }
-        let key: tonic::metadata::MetadataKey<tonic::metadata::Ascii> = key
-            .parse()
-            .with_context(|| format!("invalid gRPC metadata key: {key}"))?;
-        let value: tonic::metadata::MetadataValue<tonic::metadata::Ascii> = value
-            .parse()
-            .with_context(|| format!("invalid ASCII gRPC metadata value for {key}"))?;
-        request.metadata_mut().insert(key, value);
-    }
-    match (options.bearer, options.basic_user, options.basic_password) {
-        (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
-            bail!("choose either --bearer or basic authentication")
-        }
-        (Some(token), None, None) => {
-            request.metadata_mut().insert(
-                "authorization",
-                format!("Bearer {token}")
-                    .parse()
-                    .context("invalid bearer token")?,
-            );
-        }
-        (None, Some(user), Some(password)) => {
-            let credentials =
-                base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}"));
-            request.metadata_mut().insert(
-                "authorization",
-                format!("Basic {credentials}")
-                    .parse()
-                    .context("invalid basic credentials")?,
-            );
-        }
-        (None, Some(_), None) | (None, None, Some(_)) => {
-            bail!("basic authentication requires --basic-user and --basic-password")
-        }
-        (None, None, None) => {}
-    }
-
     let method_path = format!("/{}/{}", method.parent_service().full_name(), method.name());
     let path = http::uri::PathAndQuery::try_from(method_path.clone())?;
     let mut grpc = tonic::client::Grpc::new(channel);
     grpc.ready().await?;
+    if method.is_client_streaming() {
+        let input_count = stream_messages.len();
+        let mut request = tonic::Request::new(futures_util::stream::iter(stream_messages));
+        apply_grpc_metadata(&mut request, &options)?;
+        if method.is_server_streaming() {
+            let response = grpc
+                .streaming(
+                    request,
+                    path,
+                    DynamicGrpcCodec {
+                        output: method.output(),
+                    },
+                )
+                .await?;
+            let mut stream = response.into_inner();
+            let mut index = 0_u64;
+            while let Some(message) = stream.message().await? {
+                let message = message_to_json(&message)?;
+                if options.output_json {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&json!({
+                            "method": method_path,
+                            "stream_index": index,
+                            "input_count": input_count,
+                            "response": message,
+                        }))?
+                    );
+                } else {
+                    println!("gRPC {method_path} · message {index}");
+                    println!("{}", serde_json::to_string_pretty(&message)?);
+                }
+                index = index.saturating_add(1);
+            }
+        } else {
+            let response = grpc
+                .client_streaming(
+                    request,
+                    path,
+                    DynamicGrpcCodec {
+                        output: method.output(),
+                    },
+                )
+                .await?;
+            let response_message = message_to_json(&response.into_inner())?;
+            if options.output_json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "method": method_path,
+                        "input_count": input_count,
+                        "output": method.output().full_name(),
+                        "response": response_message,
+                    }))?
+                );
+            } else {
+                println!("gRPC {method_path} · {input_count} input messages");
+                println!("{}", serde_json::to_string_pretty(&response_message)?);
+            }
+        }
+        return Ok(());
+    }
+    let mut request = tonic::Request::new(
+        request_message.expect("non-client-streaming methods have a unary request message"),
+    );
+    apply_grpc_metadata(&mut request, &options)?;
     if method.is_server_streaming() {
         let response = grpc
             .server_streaming(
@@ -2023,6 +2122,71 @@ mod tests {
     }
 
     #[derive(Clone, Default)]
+    struct TestGrpcClientStreamingService;
+
+    impl tonic::server::ClientStreamingService<EchoRequest> for TestGrpcClientStreamingService {
+        type Response = EchoResponse;
+        type Future = tonic::codegen::BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+
+        fn call(&mut self, request: tonic::Request<tonic::Streaming<EchoRequest>>) -> Self::Future {
+            assert_eq!(
+                request
+                    .metadata()
+                    .get("x-test")
+                    .and_then(|value| value.to_str().ok()),
+                Some("local")
+            );
+            let mut stream = request.into_inner();
+            Box::pin(async move {
+                let mut messages = Vec::new();
+                while let Some(message) = stream.message().await? {
+                    messages.push(message.message);
+                }
+                Ok(tonic::Response::new(EchoResponse {
+                    message: format!("client:{}", messages.join(",")),
+                }))
+            })
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct TestGrpcBidiStreamingService;
+
+    impl tonic::server::StreamingService<EchoRequest> for TestGrpcBidiStreamingService {
+        type Response = EchoResponse;
+        type ResponseStream =
+            Pin<Box<dyn futures_util::Stream<Item = Result<EchoResponse, tonic::Status>> + Send>>;
+        type Future =
+            tonic::codegen::BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+
+        fn call(&mut self, request: tonic::Request<tonic::Streaming<EchoRequest>>) -> Self::Future {
+            assert_eq!(
+                request
+                    .metadata()
+                    .get("x-test")
+                    .and_then(|value| value.to_str().ok()),
+                Some("local")
+            );
+            let mut stream = request.into_inner();
+            Box::pin(async move {
+                let mut messages = Vec::new();
+                while let Some(message) = stream.message().await? {
+                    messages.push(message.message);
+                }
+                #[allow(clippy::result_large_err)]
+                let responses = messages.into_iter().enumerate().map(|(index, message)| {
+                    Ok(EchoResponse {
+                        message: format!("bidi:{message}:{}", index + 1),
+                    })
+                });
+                let response_stream: Self::ResponseStream =
+                    Box::pin(futures_util::stream::iter(responses));
+                Ok(tonic::Response::new(response_stream))
+            })
+        }
+    }
+
+    #[derive(Clone, Default)]
     struct TestGrpcServer;
 
     impl tonic::server::NamedService for TestGrpcServer {
@@ -2051,6 +2215,18 @@ mod tests {
                         .server_streaming(TestGrpcStreamingService, request)
                         .await)
                 })
+            } else if request.uri().path() == "/demo.Echo/EchoClient" {
+                Box::pin(async move {
+                    let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
+                    Ok(grpc
+                        .client_streaming(TestGrpcClientStreamingService, request)
+                        .await)
+                })
+            } else if request.uri().path() == "/demo.Echo/EchoBidi" {
+                Box::pin(async move {
+                    let mut grpc = tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
+                    Ok(grpc.streaming(TestGrpcBidiStreamingService, request).await)
+                })
             } else {
                 Box::pin(async move {
                     let mut response = http::Response::new(tonic::body::Body::empty());
@@ -2075,6 +2251,8 @@ mod tests {
                 service Echo {
                     rpc Echo(EchoRequest) returns (EchoResponse);
                     rpc EchoStream(EchoRequest) returns (stream EchoResponse);
+                    rpc EchoClient(stream EchoRequest) returns (EchoResponse);
+                    rpc EchoBidi(stream EchoRequest) returns (stream EchoResponse);
                 }
             "#,
         )
@@ -2131,6 +2309,40 @@ mod tests {
         })
         .await
         .expect("gRPC server-streaming command");
+
+        call_grpc(GrpcCallOptions {
+            endpoint: format!("http://{address}"),
+            proto: directory.path().join("echo.proto"),
+            includes: Vec::new(),
+            method: "/demo.Echo/EchoClient".to_owned(),
+            message: Some(r#"[{"message":"one"},{"message":"two"}]"#.to_owned()),
+            message_file: None,
+            metadata: vec!["x-test=local".to_owned()],
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            output_json: true,
+        })
+        .await
+        .expect("gRPC client-streaming command");
+
+        call_grpc(GrpcCallOptions {
+            endpoint: format!("http://{address}"),
+            proto: directory.path().join("echo.proto"),
+            includes: Vec::new(),
+            method: "/demo.Echo/EchoBidi".to_owned(),
+            message: Some(r#"[{"message":"one"},{"message":"two"}]"#.to_owned()),
+            message_file: None,
+            metadata: vec!["x-test=local".to_owned()],
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            output_json: true,
+        })
+        .await
+        .expect("gRPC bidirectional-streaming command");
 
         shutdown_tx.send(()).expect("shutdown");
         server.await.expect("server task");
