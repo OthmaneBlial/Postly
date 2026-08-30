@@ -100,6 +100,54 @@ struct GrpcCallOptions {
     output_json: bool,
 }
 
+fn configure_grpc_endpoint(
+    endpoint_value: &str,
+    timeout: u64,
+    ca_cert: Option<&Path>,
+    client_identity: Option<&Path>,
+) -> Result<tonic::transport::Endpoint> {
+    let endpoint_url = url::Url::parse(endpoint_value)
+        .with_context(|| format!("invalid gRPC endpoint: {endpoint_value}"))?;
+    let mut endpoint = tonic::transport::Endpoint::from_shared(endpoint_value.to_owned())?
+        .timeout(Duration::from_secs(timeout));
+    match endpoint_url.scheme() {
+        "http" => {
+            if ca_cert.is_some() || client_identity.is_some() {
+                bail!("gRPC CA and client identity options require an https:// endpoint");
+            }
+        }
+        "https" => {
+            let domain = endpoint_url
+                .host_str()
+                .context("HTTPS gRPC endpoint has no hostname")?;
+            let mut tls = tonic::transport::ClientTlsConfig::new()
+                .domain_name(domain)
+                .with_webpki_roots();
+            if let Some(path) = ca_cert {
+                let pem = fs::read(path).with_context(|| {
+                    format!("could not read gRPC CA certificate {}", path.display())
+                })?;
+                if pem.is_empty() {
+                    bail!("gRPC CA certificate {} is empty", path.display());
+                }
+                tls = tls.ca_certificate(tonic::transport::Certificate::from_pem(pem));
+            }
+            if let Some(path) = client_identity {
+                let pem = fs::read(path).with_context(|| {
+                    format!("could not read gRPC client identity {}", path.display())
+                })?;
+                if pem.is_empty() {
+                    bail!("gRPC client identity {} is empty", path.display());
+                }
+                tls = tls.identity(tonic::transport::Identity::from_pem(&pem, &pem));
+            }
+            endpoint = endpoint.tls_config(tls)?;
+        }
+        scheme => bail!("gRPC endpoint must use http:// or https://, got {scheme}://"),
+    }
+    Ok(endpoint)
+}
+
 #[derive(Debug, Args)]
 struct GrpcTlsArgs {
     #[arg(
@@ -723,6 +771,19 @@ struct GrpcCallCommand {
     output_json: bool,
 }
 
+#[derive(Debug, Args)]
+struct GrpcReflectCommand {
+    endpoint: String,
+    #[arg(long, help = "Host value sent to the reflection service")]
+    host: Option<String>,
+    #[arg(long, default_value_t = 30)]
+    timeout: u64,
+    #[command(flatten)]
+    tls: Box<GrpcTlsArgs>,
+    #[arg(long)]
+    output_json: bool,
+}
+
 #[derive(Debug, Subcommand)]
 enum GrpcKind {
     /// Compile a local .proto file and list its services and methods.
@@ -735,6 +796,8 @@ enum GrpcKind {
     },
     /// Call a gRPC method using a protobuf JSON request object or stream array.
     Call(Box<GrpcCallCommand>),
+    /// Discover services and methods through the server reflection protocol.
+    Reflect(Box<GrpcReflectCommand>),
 }
 
 #[derive(Debug, Subcommand)]
@@ -976,6 +1039,7 @@ async fn main() -> Result<()> {
                 })
                 .await
             }
+            GrpcKind::Reflect(command) => reflect_grpc(*command).await,
         },
         Command::Sse {
             endpoint,
@@ -1395,6 +1459,61 @@ fn describe_grpc(proto: &Path, includes: &[PathBuf], output_json: bool) -> Resul
     Ok(())
 }
 
+async fn reflect_grpc(options: GrpcReflectCommand) -> Result<()> {
+    let endpoint_url = url::Url::parse(&options.endpoint)
+        .with_context(|| format!("invalid gRPC endpoint: {}", options.endpoint))?;
+    let host = options.host.unwrap_or_default();
+    let endpoint = configure_grpc_endpoint(
+        &options.endpoint,
+        options.timeout,
+        options.tls.ca_cert.as_deref(),
+        options.tls.client_identity.as_deref(),
+    )?;
+    let channel = endpoint
+        .connect()
+        .await
+        .with_context(|| format!("could not connect to gRPC endpoint {}", options.endpoint))?;
+    let schema = GrpcSchema::from_reflection(channel, host.clone())
+        .await
+        .with_context(|| format!("could not reflect gRPC endpoint {}", options.endpoint))?;
+    let services = schema.services();
+    if options.output_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "endpoint": endpoint_url.as_str(),
+                "host": host,
+                "source": schema.source(),
+                "files": schema.files(),
+                "services": services,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!("gRPC reflection: {}", options.endpoint);
+    if services.is_empty() {
+        println!("No services found.");
+        return Ok(());
+    }
+    for service in services {
+        println!("{}", service.full_name);
+        for method in service.methods {
+            let streaming = match (method.client_streaming, method.server_streaming) {
+                (false, false) => "unary",
+                (false, true) => "server-streaming",
+                (true, false) => "client-streaming",
+                (true, true) => "bidi-streaming",
+            };
+            println!(
+                "  {}  [{}]  {} -> {}",
+                method.path, streaming, method.input, method.output
+            );
+        }
+    }
+    Ok(())
+}
+
 async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
     let schema = GrpcSchema::from_proto(&options.proto, &options.includes)
         .with_context(|| format!("could not load protobuf schema {}", options.proto.display()))?;
@@ -1423,46 +1542,12 @@ async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
         Vec::new()
     };
 
-    let endpoint_url = url::Url::parse(&options.endpoint)
-        .with_context(|| format!("invalid gRPC endpoint: {}", options.endpoint))?;
-    let mut endpoint = tonic::transport::Endpoint::from_shared(options.endpoint.clone())?
-        .timeout(Duration::from_secs(options.timeout));
-    match endpoint_url.scheme() {
-        "http" => {
-            if options.ca_cert.is_some() || options.client_identity.is_some() {
-                bail!("gRPC CA and client identity options require an https:// endpoint");
-            }
-        }
-        "https" => {
-            let domain = endpoint_url
-                .host_str()
-                .context("HTTPS gRPC endpoint has no hostname")?;
-            let mut tls = tonic::transport::ClientTlsConfig::new()
-                .domain_name(domain)
-                .with_webpki_roots();
-            if let Some(path) = options.ca_cert.as_deref() {
-                let pem = fs::read(path).with_context(|| {
-                    format!("could not read gRPC CA certificate {}", path.display())
-                })?;
-                if pem.is_empty() {
-                    bail!("gRPC CA certificate {} is empty", path.display());
-                }
-                tls = tls.ca_certificate(tonic::transport::Certificate::from_pem(pem));
-            }
-            if let Some(path) = options.client_identity.as_deref() {
-                let pem = fs::read(path).with_context(|| {
-                    format!("could not read gRPC client identity {}", path.display())
-                })?;
-                if pem.is_empty() {
-                    bail!("gRPC client identity {} is empty", path.display());
-                }
-                tls = tls.identity(tonic::transport::Identity::from_pem(&pem, &pem));
-            }
-            endpoint = endpoint.tls_config(tls)?;
-        }
-        scheme => bail!("gRPC endpoint must use http:// or https://, got {scheme}://"),
-    }
-
+    let endpoint = configure_grpc_endpoint(
+        &options.endpoint,
+        options.timeout,
+        options.ca_cert.as_deref(),
+        options.client_identity.as_deref(),
+    )?;
     let channel = endpoint
         .connect()
         .await

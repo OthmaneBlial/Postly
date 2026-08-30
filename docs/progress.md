@@ -54,6 +54,7 @@ Implemented:
 - Native GUI Body tab editors for URL-encoded fields, multipart text/file parts and binary file uploads, with disabled entries and optional content types preserved.
 - Native GUI command palette with searchable request actions and keyboard shortcuts for new, save, send, cancel, response clearing and wrapping.
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs and combined PEM client identities; explicit insecure TLS remains pending.
+- CLI gRPC server reflection discovery supports protocol v1 with a v1alpha fallback, keeps reflected descriptors in memory and reports services, methods and streaming shapes as text or JSON.
 - Native GUI gRPC requests now persist proto/include paths, method paths and metadata, edit protobuf JSON bodies, and execute unary plus finite streaming shapes through the same dynamic descriptor model; GUI unary worker coverage is backed by a local tonic HTTP/2 server.
 - Persistable response assertions for status, headers, body text and JSON Pointer values, evaluated by the runner without Node.js.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
@@ -86,7 +87,7 @@ Not yet implemented:
 - secret migration from legacy plaintext environments, stdin-safe secret entry
   and crash recovery.
 - Authorization Code/PKCE, Device Code and refresh-token OAuth flows; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in the CLI.
-- OpenAPI cyclic/remote references and gRPC reflection.
+- OpenAPI cyclic/remote references and native GUI selection of reflected gRPC schemas.
 - Local deterministic protocol test server tooling, cross-client/memory
   benchmarks and deeper packaging/release validation.
 
@@ -95,8 +96,10 @@ Not yet implemented:
 The GraphQL schema slice adds core parser coverage for roots, nested type
 references, arguments and malformed introspection, a local HTTP CLI test, and a
 native GUI worker test that confirms schemas stay out of request history. The
-gRPC GUI slice adds persisted request configuration and a local unary worker
-round-trip through a dynamic `.proto` descriptor.
+gRPC reflection adds a local tonic server test covering service discovery and
+descriptor hydration; the CLI exposes the same discovery path with verified
+HTTP(S) transport. The gRPC GUI slice adds persisted request configuration and a
+local unary worker round-trip through a dynamic `.proto` descriptor.
 
 cargo xtask check is the required validation command for this milestone. The CLI was exercised against deterministic local HTTP servers: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, an environment created with env set resolved two variables into a saved request, a cURL command was imported and sent with HTTP 201, OpenAPI YAML generated two requests, an OpenAPI YAML document was fetched from a local HTTP URL, same-directory external references were resolved while source traversal and cycles were reported, an imported Postman test executed through the opt-in Node bridge, a two-request cookie exchange verified jar reuse plus response metadata, a manual cookie round-trip verified the ignored local jar and file-size guard, a GraphQL query with variables was sent through the structured CLI command, an SSE stream was decoded progressively from a local endpoint and reconnected with `Last-Event-ID`, WebSocket echo and bounded reconnect tests completed real handshake/send/receive/close cycles, gRPC unary/server/client/bidirectional calls completed against a local tonic HTTP/2 server and a separate local mutual-TLS gRPC call verified custom CA plus client identity, an OAuth 2.0 Client Credentials exchange fetched one token and reused it for two API requests, history filters/clear/retention were tested, workspace metadata search was exercised across collections without matching secrets, and a native collection was exported and imported back with its request semantics. The HTTP core also completes local encrypted HTTPS with a custom CA and mutual TLS with a client identity, while invalid certificate paths/material fail before network I/O. The native app has state tests for JSON/auth/GraphQL/OAuth/script editing, workspace search, async local HTTP/SSE/WebSocket workers, bounded event/message history, history reopen, cancellation during body/stream reads and SSE reconnection; native window interaction still needs manual desktop QA. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts. The complete workspace check now passes locally; packaging, external review and manual desktop QA remain separate gates.
 

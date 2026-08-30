@@ -11,6 +11,7 @@ description = "Local-first Rust core for Postly"
 base64.workspace = true
 chrono.workspace = true
 cookie_store.workspace = true
+futures-util.workspace = true
 http.workspace = true
 keyring.workspace = true
 prost-reflect.workspace = true
@@ -22,6 +23,8 @@ serde_yaml.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tonic.workspace = true
+tonic-reflection.workspace = true
 toml.workspace = true
 tracing.workspace = true
 url.workspace = true
@@ -32,3 +35,5 @@ rustls.workspace = true
 rustls-pemfile.workspace = true
 tempfile.workspace = true
 tokio-rustls.workspace = true
+tonic-reflection = { workspace = true, features = ["server"] }
+tokio-stream = { version = "0.1", default-features = false, features = ["net"] }

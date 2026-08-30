@@ -264,7 +264,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
  "x11rb",
 ]
 
@@ -3010,6 +3010,7 @@ dependencies = [
  "base64",
  "chrono",
  "cookie_store",
+ "futures-util",
  "http",
  "keyring",
  "prost-reflect",
@@ -3025,7 +3026,10 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",
+ "tokio-stream",
  "toml",
+ "tonic",
+ "tonic-reflection",
  "tracing",
  "url",
  "uuid",
@@ -4294,6 +4298,19 @@ dependencies = [
  "tower-service",
  "tracing",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "tonic-reflection"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9687bd5bfeafebdded2356950f278bba8226f0b32109537c4253406e09aafe1"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tokio",
+ "tokio-stream",
+ "tonic",
 ]
 
 [[package]]

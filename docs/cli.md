@@ -125,9 +125,16 @@ postly graphql https://api.example.com/graphql --query 'query { health }'
 postly sse https://api.example.com/events --reconnect 3
 postly websocket wss://api.example.com/socket --send '{"type":"ping"}'
 postly grpc describe ./api.proto
+postly grpc reflect https://api.example.com:443 --output-json
 postly grpc call https://api.example.com --proto ./api.proto \
   --method /demo.Echo/Echo --message '{"message":"hello"}'
 ~~~
+
+`grpc reflect` connects to a server reflection endpoint, tries protocol v1
+then v1alpha, and prints the discovered services and methods. `--host` sets the
+reflection host field; `--ca-cert` and `--client-identity` configure verified
+HTTPS just like `grpc call`. Reflected descriptors stay in memory and are not
+written to the workspace.
 
 See the protocol pages for streaming behavior, TLS boundaries and current
 limitations:

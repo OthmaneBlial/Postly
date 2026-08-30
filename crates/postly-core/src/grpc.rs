@@ -1,15 +1,16 @@
 //! Dynamic protobuf schema loading and gRPC service discovery.
 //!
-//! The first gRPC slice deliberately works from local `.proto` files. It keeps
-//! descriptors in memory so the CLI and future GUI can share service, method
-//! and JSON message handling without generating source code or invoking a
-//! system `protoc` binary.
+//! Descriptor handling stays in memory so the CLI and native GUI can share
+//! service, method and JSON message handling for local `.proto` files and
+//! servers exposing the standard reflection protocol.
 
 use std::path::{Path, PathBuf};
 
+use futures_util::stream;
 use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor, MethodDescriptor};
 use serde::Serialize;
 use thiserror::Error;
+use tonic_reflection::pb::{v1, v1alpha};
 
 /// Errors raised while loading a protobuf schema or converting a dynamic message.
 #[derive(Debug, Error)]
@@ -23,6 +24,21 @@ pub enum GrpcError {
     /// The supplied protobuf JSON message is invalid for its descriptor.
     #[error("invalid protobuf JSON message: {0}")]
     Json(#[from] serde_json::Error),
+    /// The reflection service returned a transport-level error.
+    #[error("gRPC reflection request failed: {0}")]
+    ReflectionStatus(#[source] Box<tonic::Status>),
+    /// The reflection service returned an incomplete or unsupported response.
+    #[error("invalid gRPC reflection response: {0}")]
+    ReflectionResponse(String),
+    /// A descriptor returned by reflection could not be decoded.
+    #[error("invalid reflected protobuf descriptor: {0}")]
+    ReflectedDescriptor(String),
+}
+
+impl From<tonic::Status> for GrpcError {
+    fn from(error: tonic::Status) -> Self {
+        Self::ReflectionStatus(Box::new(error))
+    }
 }
 
 /// A discovered gRPC service and its methods.
@@ -83,6 +99,57 @@ impl GrpcSchema {
         })
     }
 
+    /// Build a schema from the serialized FileDescriptorProto values returned
+    /// by the gRPC reflection service.
+    pub fn from_descriptor_protos(
+        descriptors: impl IntoIterator<Item = Vec<u8>>,
+        source: impl Into<PathBuf>,
+    ) -> Result<Self, GrpcError> {
+        use prost_reflect::prost::Message;
+
+        let files = descriptors
+            .into_iter()
+            .map(|bytes| {
+                prost_reflect::prost_types::FileDescriptorProto::decode(bytes.as_slice())
+                    .map_err(|error| GrpcError::ReflectedDescriptor(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if files.is_empty() {
+            return Err(GrpcError::ReflectionResponse(
+                "server returned no file descriptors".to_owned(),
+            ));
+        }
+        let pool = DescriptorPool::from_file_descriptor_set(
+            prost_reflect::prost_types::FileDescriptorSet { file: files },
+        )?;
+        Ok(Self {
+            pool,
+            source: source.into(),
+        })
+    }
+
+    /// Discover services and message descriptors through gRPC reflection.
+    ///
+    /// The v1 protocol is attempted first, with a v1alpha fallback for older
+    /// servers. The supplied channel is cloned internally so the caller can
+    /// reuse it for the eventual dynamic method call.
+    pub async fn from_reflection(
+        channel: tonic::transport::Channel,
+        host: impl Into<String>,
+    ) -> Result<Self, GrpcError> {
+        let host = host.into();
+        match reflect_v1(channel.clone(), &host).await {
+            Ok(schema) => Ok(schema),
+            Err(v1_error) => reflect_v1alpha(channel, &host)
+                .await
+                .map_err(|v1alpha_error| {
+                    GrpcError::ReflectionResponse(format!(
+                        "v1 failed: {v1_error}; v1alpha failed: {v1alpha_error}"
+                    ))
+                }),
+        }
+    }
+
     /// Return the source `.proto` path used to build this schema.
     pub fn source(&self) -> &Path {
         &self.source
@@ -130,6 +197,218 @@ impl GrpcSchema {
             })
         })
     }
+}
+
+async fn reflect_v1(
+    channel: tonic::transport::Channel,
+    host: &str,
+) -> Result<GrpcSchema, GrpcError> {
+    let mut client = v1::server_reflection_client::ServerReflectionClient::new(channel);
+    let services = match reflection_v1_response(
+        &mut client,
+        v1::ServerReflectionRequest {
+            host: host.to_owned(),
+            message_request: Some(v1::server_reflection_request::MessageRequest::ListServices(
+                String::new(),
+            )),
+        },
+    )
+    .await?
+    .message_response
+    {
+        Some(v1::server_reflection_response::MessageResponse::ListServicesResponse(services)) => {
+            services
+                .service
+                .into_iter()
+                .map(|service| service.name)
+                .collect::<Vec<_>>()
+        }
+        Some(v1::server_reflection_response::MessageResponse::ErrorResponse(error)) => {
+            return Err(GrpcError::ReflectionResponse(format!(
+                "server error {}: {}",
+                error.error_code, error.error_message
+            )))
+        }
+        Some(other) => {
+            return Err(GrpcError::ReflectionResponse(format!(
+                "expected ListServicesResponse, received {other:?}"
+            )))
+        }
+        None => {
+            return Err(GrpcError::ReflectionResponse(
+                "server returned no message response for ListServices".to_owned(),
+            ))
+        }
+    };
+    if services.is_empty() {
+        return Err(GrpcError::ReflectionResponse(
+            "server returned no gRPC services".to_owned(),
+        ));
+    }
+
+    let mut descriptors = Vec::new();
+    for service in services {
+        let response = reflection_v1_response(
+            &mut client,
+            v1::ServerReflectionRequest {
+                host: host.to_owned(),
+                message_request: Some(
+                    v1::server_reflection_request::MessageRequest::FileContainingSymbol(service),
+                ),
+            },
+        )
+        .await?;
+        match response.message_response {
+            Some(v1::server_reflection_response::MessageResponse::FileDescriptorResponse(
+                response,
+            )) => descriptors.extend(response.file_descriptor_proto),
+            Some(v1::server_reflection_response::MessageResponse::ErrorResponse(error)) => {
+                return Err(GrpcError::ReflectionResponse(format!(
+                    "server error {}: {}",
+                    error.error_code, error.error_message
+                )))
+            }
+            Some(other) => {
+                return Err(GrpcError::ReflectionResponse(format!(
+                    "expected FileDescriptorResponse, received {other:?}"
+                )))
+            }
+            None => {
+                return Err(GrpcError::ReflectionResponse(
+                    "server returned no descriptor response".to_owned(),
+                ))
+            }
+        }
+    }
+    GrpcSchema::from_descriptor_protos(
+        descriptors,
+        format!(
+            "reflection://{}",
+            if host.is_empty() { "server" } else { host }
+        ),
+    )
+}
+
+async fn reflection_v1_response(
+    client: &mut v1::server_reflection_client::ServerReflectionClient<tonic::transport::Channel>,
+    request: v1::ServerReflectionRequest,
+) -> Result<v1::ServerReflectionResponse, GrpcError> {
+    let response = client
+        .server_reflection_info(stream::iter(vec![request]))
+        .await?;
+    let mut stream = response.into_inner();
+    stream
+        .message()
+        .await?
+        .ok_or_else(|| GrpcError::ReflectionResponse("reflection stream ended early".to_owned()))
+}
+
+async fn reflect_v1alpha(
+    channel: tonic::transport::Channel,
+    host: &str,
+) -> Result<GrpcSchema, GrpcError> {
+    let mut client = v1alpha::server_reflection_client::ServerReflectionClient::new(channel);
+    let services = match reflection_v1alpha_response(
+        &mut client,
+        v1alpha::ServerReflectionRequest {
+            host: host.to_owned(),
+            message_request: Some(
+                v1alpha::server_reflection_request::MessageRequest::ListServices(String::new()),
+            ),
+        },
+    )
+    .await?
+    .message_response
+    {
+        Some(v1alpha::server_reflection_response::MessageResponse::ListServicesResponse(
+            services,
+        )) => services
+            .service
+            .into_iter()
+            .map(|service| service.name)
+            .collect::<Vec<_>>(),
+        Some(v1alpha::server_reflection_response::MessageResponse::ErrorResponse(error)) => {
+            return Err(GrpcError::ReflectionResponse(format!(
+                "server error {}: {}",
+                error.error_code, error.error_message
+            )))
+        }
+        Some(other) => {
+            return Err(GrpcError::ReflectionResponse(format!(
+                "expected ListServicesResponse, received {other:?}"
+            )))
+        }
+        None => {
+            return Err(GrpcError::ReflectionResponse(
+                "server returned no message response for ListServices".to_owned(),
+            ))
+        }
+    };
+    if services.is_empty() {
+        return Err(GrpcError::ReflectionResponse(
+            "server returned no gRPC services".to_owned(),
+        ));
+    }
+
+    let mut descriptors = Vec::new();
+    for service in services {
+        let response = reflection_v1alpha_response(
+            &mut client,
+            v1alpha::ServerReflectionRequest {
+                host: host.to_owned(),
+                message_request: Some(
+                    v1alpha::server_reflection_request::MessageRequest::FileContainingSymbol(
+                        service,
+                    ),
+                ),
+            },
+        )
+        .await?;
+        match response.message_response {
+            Some(v1alpha::server_reflection_response::MessageResponse::FileDescriptorResponse(
+                response,
+            )) => descriptors.extend(response.file_descriptor_proto),
+            Some(v1alpha::server_reflection_response::MessageResponse::ErrorResponse(error)) => {
+                return Err(GrpcError::ReflectionResponse(format!(
+                    "server error {}: {}",
+                    error.error_code, error.error_message
+                )))
+            }
+            Some(other) => {
+                return Err(GrpcError::ReflectionResponse(format!(
+                    "expected FileDescriptorResponse, received {other:?}"
+                )))
+            }
+            None => {
+                return Err(GrpcError::ReflectionResponse(
+                    "server returned no descriptor response".to_owned(),
+                ))
+            }
+        }
+    }
+    GrpcSchema::from_descriptor_protos(
+        descriptors,
+        format!(
+            "reflection://{}",
+            if host.is_empty() { "server" } else { host }
+        ),
+    )
+}
+
+async fn reflection_v1alpha_response(
+    client: &mut v1alpha::server_reflection_client::ServerReflectionClient<
+        tonic::transport::Channel,
+    >,
+    request: v1alpha::ServerReflectionRequest,
+) -> Result<v1alpha::ServerReflectionResponse, GrpcError> {
+    let response = client
+        .server_reflection_info(stream::iter(vec![request]))
+        .await?;
+    let mut stream = response.into_inner();
+    stream
+        .message()
+        .await?
+        .ok_or_else(|| GrpcError::ReflectionResponse("reflection stream ended early".to_owned()))
 }
 
 /// Decode a protobuf JSON object into a dynamically typed message.
@@ -186,5 +465,70 @@ mod tests {
             message_to_json(&request).expect("json"),
             serde_json::json!({"message": "hello"})
         );
+    }
+
+    #[tokio::test]
+    async fn discovers_services_through_v1_reflection() {
+        use prost_reflect::prost::Message;
+        use tokio_stream::wrappers::TcpListenerStream;
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let proto = directory.path().join("echo.proto");
+        std::fs::write(
+            &proto,
+            r#"
+                syntax = "proto3";
+                package demo;
+
+                message EchoRequest { string message = 1; }
+                message EchoResponse { string message = 1; }
+
+                service Echo {
+                    rpc Echo(EchoRequest) returns (EchoResponse);
+                }
+            "#,
+        )
+        .expect("proto");
+        let descriptors = protox::compile([&proto], vec![directory.path().to_path_buf()])
+            .expect("descriptor set");
+        let mut encoded = Vec::new();
+        descriptors
+            .encode(&mut encoded)
+            .expect("encode descriptors");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let endpoint = format!("http://{}", listener.local_addr().expect("address"));
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let reflection = tonic_reflection::server::Builder::configure()
+                .register_encoded_file_descriptor_set(&encoded)
+                .build_v1()
+                .expect("reflection service");
+            tonic::transport::Server::builder()
+                .add_service(reflection)
+                .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async {
+                    let _ = shutdown_receiver.await;
+                })
+                .await
+                .expect("server");
+        });
+
+        let channel = tonic::transport::Endpoint::from_shared(endpoint)
+            .expect("endpoint")
+            .connect()
+            .await
+            .expect("channel");
+        let schema = GrpcSchema::from_reflection(channel, "")
+            .await
+            .expect("reflected schema");
+        let method = schema.find_method("/demo.Echo/Echo").expect("method");
+        assert_eq!(method.input().full_name(), "demo.EchoRequest");
+        assert_eq!(method.output().full_name(), "demo.EchoResponse");
+        assert!(schema.files().iter().any(|file| file == "echo.proto"));
+
+        shutdown_sender.send(()).expect("shutdown");
+        server.await.expect("server task");
     }
 }
