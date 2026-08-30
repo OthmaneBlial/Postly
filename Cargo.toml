@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/postly-app",
     "crates/postly-core",
     "crates/postly-cli",
     "crates/postly-xtask",
@@ -19,6 +20,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6.0"
+eframe = { version = "0.36.1", default-features = false, features = ["accesskit", "default_fonts", "glow"] }
 http = "1.3"
 reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "json", "multipart", "rustls-tls", "gzip", "brotli", "deflate", "stream"] }
 serde = { version = "1.0", features = ["derive"] }

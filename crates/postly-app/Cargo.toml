@@ -1,0 +1,21 @@
+[package]
+name = "postly-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Postly's native Rust desktop request workspace"
+
+[[bin]]
+name = "postly-gui"
+path = "src/main.rs"
+
+[dependencies]
+eframe.workspace = true
+postly-core = { path = "../postly-core" }
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

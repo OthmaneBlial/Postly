@@ -197,6 +197,14 @@ impl Workspace {
         Ok(path)
     }
 
+    pub fn update_request(
+        &self,
+        path: impl AsRef<Path>,
+        request: &Request,
+    ) -> Result<(), WorkspaceError> {
+        self.write_toml(path.as_ref(), request)
+    }
+
     pub fn load_request(&self, path: impl AsRef<Path>) -> Result<Request, WorkspaceError> {
         read_toml(path.as_ref())
     }
@@ -426,6 +434,13 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].1.url, request.url);
         assert!(path.to_string_lossy().contains("users/read"));
+
+        request.name = "List all users".to_owned();
+        reopened
+            .update_request(&path, &request)
+            .expect("update request");
+        let updated = reopened.load_request(&path).expect("updated request");
+        assert_eq!(updated.name, "List all users");
     }
 
     #[test]

@@ -4,7 +4,7 @@ Updated: 2026-08-30
 
 ## Current milestone
 
-Foundation plus a first real CLI/core vertical slice.
+Foundation plus a first native desktop/CLI/core vertical slice.
 
 Implemented:
 
@@ -22,13 +22,14 @@ Implemented:
 - env set creates local environments and saved requests resolve enabled environment variables.
 - common cURL commands can be parsed and imported without shell execution.
 - saved-request executions can be recorded and listed as ignored metadata-only local history.
+- native `postly-gui` request workspace with async send, editor tabs and response views.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
 - runner iteration data from JSON objects/arrays plus pretty, JSON and JUnit reporters.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:
 
-- Desktop GUI and polished response editor.
+- Desktop GUI polish, large-response virtualization and richer response editor.
 - Script runtime and pm.* compatibility.
 - Postman tests/assertions and richer collection-runner semantics.
 - OS keychain storage, crash recovery and richer history controls.
@@ -37,11 +38,11 @@ Not yet implemented:
 
 ## Verification
 
-cargo xtask check passed during this milestone with format, strict Clippy and 12 tests. The CLI was exercised against a deterministic local HTTP server: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, an environment created with env set resolved two variables into a saved request, and a cURL command was imported and sent with HTTP 201. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts.
+cargo xtask check is the required validation command for this milestone. The CLI was exercised against a deterministic local HTTP server: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, an environment created with env set resolved two variables into a saved request, and a cURL command was imported and sent with HTTP 201. The native app compiles with the same core and has state tests for JSON/auth editing; native window interaction still needs manual desktop QA. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts.
 
 ## Next highest-value work
 
 1. Add importer fixtures for more Postman body/auth/URL variants.
-2. Prototype a Rust-first desktop UI against the same core.
-3. Add script runtime research and an ADR before claiming any script compatibility.
-4. Add OpenAPI import and a safe, explicit test/assertion model.
+2. Add script runtime research and an ADR before claiming any script compatibility.
+3. Add OpenAPI import and a safe, explicit test/assertion model.
+4. Add large-response handling, search and desktop accessibility QA.

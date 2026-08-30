@@ -18,6 +18,7 @@ Postly is an open-source, Rust-first API development workspace designed around l
 - Postman Collection v2.1 and environment import with a migration report.
 - Headless commands for immediate requests, saved requests and sequential collection runs.
 - Metadata-only local history for saved request executions (`postly history`).
+- A native Rust desktop request workspace (`postly-gui`) using the same core.
 - No GitHub Actions; validation is designed to run locally with cargo xtask check.
 
 ## Quick start
@@ -29,6 +30,7 @@ cargo run -- env set --workspace ./my-api --name Local --set baseUrl=https://exa
 cargo run -- request https://httpbin.org/get
 cargo run -- list ./my-api
 cargo run -- history ./my-api --limit 10
+cargo run -p postly-app -- ./my-api
 ~~~
 
 Import an existing Postman export:

@@ -7,6 +7,7 @@ The repository is a Cargo workspace with three packages:
 - postly-core: durable models, variable resolution, filesystem storage, Postman import, HTTP execution and runner orchestration.
 - postly: the CLI, intentionally thin over the core.
 - postly-xtask: local formatting, linting and test orchestration.
+- postly-app: native desktop presentation and asynchronous interaction with the core.
 
 The core is the product boundary. A future desktop UI must call the same request, persistence and runner services instead of reimplementing request behavior in a frontend.
 
@@ -26,7 +27,7 @@ Request files carry stable UUIDs, readable names and all supported request seman
 ## Runtime flow
 
 ~~~text
-CLI or UI
+CLI or native UI
   -> VariableContext
   -> Request model
   -> HttpEngine
@@ -38,4 +39,4 @@ The HTTP engine uses a bounded timeout and redirect policy. Insecure certificate
 
 ## Next decisions
 
-The GUI framework, embedded scripting runtime, OS secret storage, history database and advanced protocol crates remain open until small prototypes and cross-platform validation produce evidence. See ADR-0001 for the initial GUI decision criteria.
+The embedded scripting runtime, OS secret storage and advanced protocol crates remain open until small prototypes and cross-platform validation produce evidence. The first GUI decision is recorded in ADR-0002; it deliberately keeps the core independent from `egui`/`eframe`.
