@@ -28,6 +28,11 @@ If no content type is saved, Postly sends `text/plain; charset=utf-8`. A saved
 contain CR/LF are skipped to avoid response-header injection. Unknown routes
 return a generic `404` JSON response and do not echo the requested URL.
 
+After sending a saved request in the desktop app, use **Save as example** in the
+response toolbar to add or replace a named fixture in that request. The app
+requires the request to be saved first and rejects binary response bodies for
+this text-based fixture format.
+
 The mock server is local-only by default (`127.0.0.1`), does not contact a
 Postly service, and does not mutate request files, environments or history.
 It is an HTTP fixture server, not a full simulation of authentication,

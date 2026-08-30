@@ -17,8 +17,8 @@ use postly_core::{
     ApiKeyLocation, Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions,
     Environment, EnvironmentVariable, GraphqlSchema, GrpcRequest, GrpcSchema, HeaderEntry,
     HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, MultipartPart, Request,
-    RequestBody, RequestSearchResult, ResponseView, ScriptResult, SecretStore, SseEvent, SseParser,
-    VariableContext, Workspace,
+    RequestBody, RequestSearchResult, ResponseExample, ResponseView, ScriptResult, SecretStore,
+    SseEvent, SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -375,6 +375,7 @@ const GUI_TABS_FILE: &str = ".postly/gui-tabs.json";
 const RECOVERY_FILE: &str = ".postly/recovery.json";
 const RECOVERY_VERSION: u8 = 1;
 const MAX_RECOVERY_BYTES: usize = 4 * 1024 * 1024;
+const MAX_RESPONSE_EXAMPLE_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -610,6 +611,9 @@ pub struct PostlyApp {
     curl_import_open: bool,
     curl_import_text: String,
     curl_import_error: Option<String>,
+    response_example_editor_open: bool,
+    response_example_name: String,
+    response_example_error: Option<String>,
     environment_editor_open: bool,
     environment_editor_path: Option<PathBuf>,
     environment_editor_name: String,
@@ -727,6 +731,9 @@ impl PostlyApp {
             curl_import_open: false,
             curl_import_text: String::new(),
             curl_import_error: None,
+            response_example_editor_open: false,
+            response_example_name: String::new(),
+            response_example_error: None,
             environment_editor_open: false,
             environment_editor_path: None,
             environment_editor_name: String::new(),
@@ -1861,6 +1868,73 @@ impl PostlyApp {
         }
         std::fs::write(&path, response.body_text()).map_err(|error| error.to_string())?;
         self.status_message = format!("Response saved locally — {}", path.display());
+        Ok(())
+    }
+
+    fn open_response_example_editor(&mut self) {
+        let status = self
+            .response
+            .as_ref()
+            .map(|response| format!("{} {}", response.status, response.status_text))
+            .unwrap_or_else(|| "Response".to_owned());
+        self.response_example_name = format!("{status} example");
+        self.response_example_error = None;
+        self.response_example_editor_open = true;
+    }
+
+    fn save_response_example(&mut self) -> Result<(), String> {
+        let path = self
+            .request_path
+            .clone()
+            .ok_or_else(|| "save the request before adding a response example".to_owned())?;
+        let response = self
+            .response
+            .as_ref()
+            .ok_or_else(|| "no response to save as an example".to_owned())?;
+        if response.body.len() > MAX_RESPONSE_EXAMPLE_BYTES {
+            return Err(format!(
+                "response example exceeds the {} MiB safety limit",
+                MAX_RESPONSE_EXAMPLE_BYTES / (1024 * 1024)
+            ));
+        }
+        let name = self.response_example_name.trim().to_owned();
+        if name.is_empty() {
+            return Err("response example name cannot be empty".to_owned());
+        }
+        let body = String::from_utf8(response.body.clone())
+            .map_err(|_| "binary responses cannot be stored as text examples".to_owned())?;
+        let mut request = self.edited_request()?;
+        let example = ResponseExample {
+            name: name.clone(),
+            status: Some(response.status),
+            headers: response.headers.clone(),
+            body: Some(body),
+            delay_ms: 0,
+        };
+        if let Some(existing) = request.examples.iter_mut().find(|item| item.name == name) {
+            *existing = example;
+        } else {
+            request.examples.push(example);
+        }
+        let collection = self
+            .collections
+            .get(self.selected_collection)
+            .ok_or_else(|| "no collection selected".to_owned())?;
+        let new_path = self
+            .workspace
+            .relocate_request(&path, collection, &request)
+            .map_err(|error| error.to_string())?;
+        self.request = request;
+        self.request_path = Some(new_path.clone());
+        self.dirty = false;
+        self.recovery_restored = false;
+        self.recovery_last_saved = None;
+        self.sync_active_tab()?;
+        self.tabs_settings_dirty = true;
+        remove_recovery_snapshot(self.workspace.root())?;
+        self.refresh_requests(Some(&new_path))?;
+        self.refresh_workspace_search();
+        self.status_message = format!("Response example saved locally — {name}");
         Ok(())
     }
 
@@ -3406,6 +3480,69 @@ impl PostlyApp {
         }
     }
 
+    fn draw_response_example_editor(&mut self, ctx: &egui::Context) {
+        if !self.response_example_editor_open {
+            return;
+        }
+        let mut save_clicked = false;
+        let mut cancel_clicked = false;
+        egui::Window::new("Save response example")
+            .collapsible(false)
+            .resizable(false)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new(
+                        "This stores the response body and headers in the request file for local mocks and migration.",
+                    )
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label("Example name");
+                    ui.add(
+                        TextEdit::singleline(&mut self.response_example_name)
+                            .desired_width(340.0),
+                    );
+                });
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(
+                        "Response examples are canonical project data; check them for credentials or personal data before committing.",
+                    )
+                    .small()
+                    .color(Color32::from_rgb(235, 180, 80)),
+                );
+                if let Some(error) = &self.response_example_error {
+                    ui.add_space(6.0);
+                    ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save example").clicked() {
+                        save_clicked = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel_clicked = true;
+                    }
+                });
+            });
+        if cancel_clicked {
+            self.response_example_editor_open = false;
+            self.response_example_error = None;
+        }
+        if save_clicked {
+            match self.save_response_example() {
+                Ok(()) => {
+                    self.response_example_editor_open = false;
+                    self.response_example_error = None;
+                }
+                Err(error) => self.response_example_error = Some(error),
+            }
+        }
+    }
+
     fn draw_environment_editor(&mut self, ctx: &egui::Context) {
         if !self.environment_editor_open {
             return;
@@ -4875,6 +5012,18 @@ impl PostlyApp {
                                 self.status_message = format!("Save failed: {error}");
                             }
                         }
+                        if ui
+                            .add_enabled(
+                                self.request_path.is_some(),
+                                egui::Button::new("Save as example"),
+                            )
+                            .on_hover_text(
+                                "Save the response into this request's canonical examples",
+                            )
+                            .clicked()
+                        {
+                            self.open_response_example_editor();
+                        }
                         ui.checkbox(&mut self.response_wrap, "Wrap");
                     });
                 }
@@ -5914,6 +6063,7 @@ impl eframe::App for PostlyApp {
         self.draw_editor(ui);
         self.draw_command_palette(&ctx);
         self.draw_curl_import_dialog(&ctx);
+        self.draw_response_example_editor(&ctx);
         self.draw_environment_editor(&ctx);
         if let Err(error) = self.sync_active_tab() {
             self.status_message = format!("Draft not retained in tab state: {error}");
@@ -6964,6 +7114,37 @@ mod tests {
             std::fs::read_to_string(entries[0].path()).expect("saved response"),
             r#"{"ok":true}"#
         );
+    }
+
+    #[test]
+    fn response_can_be_saved_as_a_canonical_mock_example() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "List users".to_owned();
+        app.request.url = "{{baseUrl}}/users".to_owned();
+        app.save_current().expect("save request");
+        app.response = Some(HttpResponse {
+            status: 201,
+            status_text: "Created".to_owned(),
+            headers: vec![HeaderEntry::enabled("content-type", "application/json")],
+            body: br#"{"id":1}"#.to_vec(),
+            response_size: 8,
+            content_type: Some("application/json".to_owned()),
+            duration_ms: 12,
+            protocol: "HTTP/1.1".to_owned(),
+            url: "https://example.test/users".to_owned(),
+            cookies: Vec::new(),
+        });
+        app.response_example_name = "Created user".to_owned();
+
+        app.save_response_example().expect("save example");
+
+        let path = app.request_path.clone().expect("saved request path");
+        let saved = app.workspace.load_request(path).expect("saved request");
+        assert_eq!(saved.examples.len(), 1);
+        assert_eq!(saved.examples[0].name, "Created user");
+        assert_eq!(saved.examples[0].status, Some(201));
+        assert_eq!(saved.examples[0].body.as_deref(), Some(r#"{"id":1}"#));
     }
 
     #[test]

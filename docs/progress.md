@@ -100,6 +100,8 @@ Implemented:
   before display.
 - Native GUI appearance supports persisted dark, light and system themes while
   deriving secondary text, panels and headings from the active egui palette.
+- Native GUI responses can be saved as named canonical response examples for
+  local mocks, with a bounded UTF-8 body check and explicit secret-data warning.
 - `postly mock` serves saved response examples through a deterministic local HTTP
   server, with method/path routing, response headers and bodies, status codes,
   bounded request-header parsing, optional per-example delay and `--once` mode.
