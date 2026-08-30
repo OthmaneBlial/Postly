@@ -31,6 +31,7 @@ Implemented:
 - OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, parameters, JSON bodies and auth placeholders.
 - Structured GraphQL core/CLI/GUI request model with variables, operation names, partial-data/error parsing, validated GUI editing and local HTTP integration coverage.
 - SSE parser and progressive CLI subscription with chunk-safe event decoding, JSON-lines output and local streaming integration coverage.
+- WebSocket CLI client for `ws://` and `wss://` with headers/auth, text sends, binary/pong output, ping replies and local echo integration coverage.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
 - Common response assertions now cover headers, cookies, status health, numeric/type/regex and negated expectations.
 - Stateful in-memory cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing.
@@ -44,12 +45,12 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility.
 - Postman tests/assertions beyond the current basic runner slice.
 - OS keychain storage, persistent/manual cookie management and crash recovery.
-- OpenAPI external/cyclic references, GraphQL schema explorer, SSE reconnection/GUI console, WebSockets and gRPC.
+- OpenAPI external/cyclic references, GraphQL schema explorer, SSE reconnection/GUI console, WebSocket GUI/interactive console and gRPC.
 - Local deterministic protocol test servers, fuzzing, benchmarks and packaging.
 
 ## Verification
 
-cargo xtask check is the required validation command for this milestone. The CLI was exercised against deterministic local HTTP servers: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, an environment created with env set resolved two variables into a saved request, a cURL command was imported and sent with HTTP 201, OpenAPI YAML generated two requests, an imported Postman test executed through the opt-in Node bridge, a two-request cookie exchange verified jar reuse plus response metadata, a GraphQL query with variables was sent through the structured CLI command, an SSE stream was decoded progressively from a local endpoint, history filters/clear/retention were tested, and a native collection was exported and imported back with its request semantics. The native app compiles with the same core and has state tests for JSON/auth/GraphQL editing plus an async local-response and history-reopen test; native window interaction still needs manual desktop QA. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts. A complete workspace check was retried but remains constrained by the available disk space; core/CLI tests and the native app check/clippy pass independently.
+cargo xtask check is the required validation command for this milestone. The CLI was exercised against deterministic local HTTP servers: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, an environment created with env set resolved two variables into a saved request, a cURL command was imported and sent with HTTP 201, OpenAPI YAML generated two requests, an imported Postman test executed through the opt-in Node bridge, a two-request cookie exchange verified jar reuse plus response metadata, a GraphQL query with variables was sent through the structured CLI command, an SSE stream was decoded progressively from a local endpoint, a WebSocket echo completed a real handshake/send/receive/close cycle, history filters/clear/retention were tested, and a native collection was exported and imported back with its request semantics. The native app compiles with the same core and has state tests for JSON/auth/GraphQL editing plus an async local-response and history-reopen test; native window interaction still needs manual desktop QA. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts. A complete workspace check was retried but remains constrained by the available disk space; core/CLI tests and the native app check/clippy pass independently.
 
 ## Next highest-value work
 

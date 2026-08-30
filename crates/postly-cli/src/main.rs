@@ -6,7 +6,9 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use base64::Engine;
 use clap::{Parser, Subcommand, ValueEnum};
+use futures_util::{SinkExt, StreamExt};
 use postly_core::{
     export_postman_collection, export_postman_environment, import_curl_command, import_environment,
     import_postman_collection, parse_graphql_response, parse_variables_json, run_requests, Auth,
@@ -15,6 +17,14 @@ use postly_core::{
     ScriptResult, ScriptTestResult, SseParser, VariableContext, Workspace,
 };
 use serde_json::json;
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{
+        client::IntoClientRequest,
+        http::{header::HeaderName, HeaderValue},
+        Message,
+    },
+};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -67,6 +77,17 @@ struct SseOptions {
     basic_password: Option<String>,
     timeout: u64,
     insecure: bool,
+    output_json: bool,
+}
+
+struct WebsocketOptions {
+    endpoint: String,
+    send: Vec<String>,
+    headers: Vec<String>,
+    bearer: Option<String>,
+    basic_user: Option<String>,
+    basic_password: Option<String>,
+    timeout: u64,
     output_json: bool,
 }
 
@@ -186,6 +207,25 @@ enum Command {
         timeout: u64,
         #[arg(long)]
         insecure: bool,
+        #[arg(long)]
+        output_json: bool,
+    },
+    /// Connect to a WebSocket endpoint, send optional text messages and read until close.
+    #[command(alias = "ws")]
+    Websocket {
+        endpoint: String,
+        #[arg(long = "send")]
+        send: Vec<String>,
+        #[arg(short = 'H', long)]
+        headers: Vec<String>,
+        #[arg(long)]
+        bearer: Option<String>,
+        #[arg(long)]
+        basic_user: Option<String>,
+        #[arg(long)]
+        basic_password: Option<String>,
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
         #[arg(long)]
         output_json: bool,
     },
@@ -494,6 +534,28 @@ async fn main() -> Result<()> {
             })
             .await
         }
+        Command::Websocket {
+            endpoint,
+            send,
+            headers,
+            bearer,
+            basic_user,
+            basic_password,
+            timeout,
+            output_json,
+        } => {
+            run_websocket(WebsocketOptions {
+                endpoint,
+                send,
+                headers,
+                bearer,
+                basic_user,
+                basic_password,
+                timeout,
+                output_json,
+            })
+            .await
+        }
         Command::Send {
             file,
             environment,
@@ -735,6 +797,94 @@ async fn stream_sse(options: SseOptions) -> Result<()> {
     for event in parser.finish()? {
         print_sse_event(&event, options.output_json)?;
     }
+    Ok(())
+}
+
+async fn run_websocket(options: WebsocketOptions) -> Result<()> {
+    let mut websocket_request = options
+        .endpoint
+        .into_client_request()
+        .context("WebSocket endpoint must be a valid ws:// or wss:// URL")?;
+    for header in parse_headers(&options.headers)? {
+        let name = HeaderName::from_bytes(header.key.as_bytes())
+            .with_context(|| format!("invalid WebSocket header name: {}", header.key))?;
+        let value = HeaderValue::from_str(&header.value)
+            .with_context(|| format!("invalid WebSocket header value: {}", header.key))?;
+        websocket_request.headers_mut().insert(name, value);
+    }
+    match parse_auth_flags(options.bearer, options.basic_user, options.basic_password)? {
+        Auth::None => {}
+        Auth::Bearer { token } => {
+            let value = HeaderValue::from_str(&format!("Bearer {token}"))?;
+            websocket_request
+                .headers_mut()
+                .insert(HeaderName::from_static("authorization"), value);
+        }
+        Auth::Basic { username, password } => {
+            let credentials =
+                base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+            let value = HeaderValue::from_str(&format!("Basic {credentials}"))?;
+            websocket_request
+                .headers_mut()
+                .insert(HeaderName::from_static("authorization"), value);
+        }
+        Auth::ApiKey { .. } => unreachable!("CLI auth flags do not create API keys"),
+    }
+
+    let (mut socket, response) = connect_async(websocket_request).await?;
+    if !options.output_json {
+        println!("WebSocket connected · {}", response.status());
+    }
+    for message in options.send {
+        socket.send(Message::text(message)).await?;
+    }
+
+    loop {
+        let next = tokio::time::timeout(Duration::from_secs(options.timeout), socket.next())
+            .await
+            .with_context(|| {
+                format!(
+                    "no WebSocket message received within {} seconds",
+                    options.timeout
+                )
+            })?;
+        let Some(message) = next else {
+            break;
+        };
+        match message? {
+            Message::Text(text) => {
+                print_websocket_message("text", text.to_string(), options.output_json)?
+            }
+            Message::Binary(bytes) => print_websocket_message(
+                "binary",
+                base64::engine::general_purpose::STANDARD.encode(bytes),
+                options.output_json,
+            )?,
+            Message::Ping(bytes) => {
+                socket.send(Message::Pong(bytes)).await?;
+            }
+            Message::Pong(bytes) => print_websocket_message(
+                "pong",
+                base64::engine::general_purpose::STANDARD.encode(bytes),
+                options.output_json,
+            )?,
+            Message::Close(_) => break,
+            Message::Frame(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn print_websocket_message(kind: &str, data: String, output_json: bool) -> Result<()> {
+    if output_json {
+        println!(
+            "{}",
+            serde_json::to_string(&json!({"type": kind, "data": data}))?
+        );
+    } else {
+        println!("{kind}: {data}");
+    }
+    io::stdout().flush()?;
     Ok(())
 }
 
@@ -1460,6 +1610,43 @@ mod tests {
         })
         .await
         .expect("SSE command");
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn websocket_command_sends_text_and_receives_a_message() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("connection");
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("WebSocket handshake");
+            match socket.next().await.expect("message").expect("frame") {
+                Message::Text(text) => assert_eq!(text.to_string(), "hello"),
+                message => panic!("expected text message, got {message:?}"),
+            }
+            socket
+                .send(Message::text("echo: hello"))
+                .await
+                .expect("echo");
+            socket.send(Message::Close(None)).await.expect("close");
+        });
+
+        run_websocket(WebsocketOptions {
+            endpoint: format!("ws://{address}/socket"),
+            send: vec!["hello".to_owned()],
+            headers: Vec::new(),
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            output_json: true,
+        })
+        .await
+        .expect("WebSocket command");
         server.await.expect("server");
     }
 }
