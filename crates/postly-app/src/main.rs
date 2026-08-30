@@ -40,6 +40,7 @@ enum BodyKind {
     None,
     Raw,
     Json,
+    Graphql,
     Advanced,
 }
 
@@ -49,6 +50,7 @@ impl BodyKind {
             Self::None => "None",
             Self::Raw => "Raw text",
             Self::Json => "JSON",
+            Self::Graphql => "GraphQL",
             Self::Advanced => "Advanced body",
         }
     }
@@ -88,6 +90,9 @@ pub struct PostlyApp {
     editor_tab: EditorTab,
     body_kind: BodyKind,
     body_text: String,
+    graphql_query: String,
+    graphql_variables: String,
+    graphql_operation_name: String,
     auth_kind: AuthKind,
     auth_primary: String,
     auth_secondary: String,
@@ -139,6 +144,9 @@ impl PostlyApp {
             editor_tab: EditorTab::Params,
             body_kind: BodyKind::None,
             body_text: String::new(),
+            graphql_query: String::new(),
+            graphql_variables: String::new(),
+            graphql_operation_name: String::new(),
             auth_kind: AuthKind::None,
             auth_primary: String::new(),
             auth_secondary: String::new(),
@@ -259,8 +267,19 @@ impl PostlyApp {
                 self.body_kind = BodyKind::Json;
                 self.body_text = serde_json::to_string_pretty(value).unwrap_or_default();
             }
-            RequestBody::Graphql { .. }
-            | RequestBody::FormUrlEncoded { .. }
+            RequestBody::Graphql {
+                query,
+                variables,
+                operation_name,
+            } => {
+                self.body_kind = BodyKind::Graphql;
+                self.graphql_query.clone_from(query);
+                self.graphql_variables =
+                    serde_json::to_string_pretty(variables).unwrap_or_else(|_| "{}".to_owned());
+                self.graphql_operation_name = operation_name.clone().unwrap_or_default();
+                self.body_text.clear();
+            }
+            RequestBody::FormUrlEncoded { .. }
             | RequestBody::Multipart { .. }
             | RequestBody::BinaryFile { .. } => {
                 self.body_kind = BodyKind::Advanced;
@@ -317,6 +336,18 @@ impl PostlyApp {
                 value: serde_json::from_str(&self.body_text)
                     .map_err(|error| format!("JSON body is invalid: {error}"))?,
             },
+            BodyKind::Graphql => {
+                postly_core::validate_graphql_query(&self.graphql_query)
+                    .map_err(|error| format!("GraphQL query is invalid: {error}"))?;
+                let variables = postly_core::parse_variables_json(&self.graphql_variables)
+                    .map_err(|error| format!("GraphQL variables are invalid: {error}"))?;
+                RequestBody::Graphql {
+                    query: self.graphql_query.clone(),
+                    variables,
+                    operation_name: (!self.graphql_operation_name.trim().is_empty())
+                        .then(|| self.graphql_operation_name.clone()),
+                }
+            }
             BodyKind::Advanced => request.body,
         };
         request.auth = match self.auth_kind {
@@ -869,7 +900,12 @@ impl PostlyApp {
             .selected_text(self.body_kind.label())
             .width(180.0)
             .show_ui(ui, |ui| {
-                for kind in [BodyKind::None, BodyKind::Raw, BodyKind::Json] {
+                for kind in [
+                    BodyKind::None,
+                    BodyKind::Raw,
+                    BodyKind::Json,
+                    BodyKind::Graphql,
+                ] {
                     ui.selectable_value(&mut self.body_kind, kind, kind.label());
                 }
                 if previous == BodyKind::Advanced {
@@ -883,6 +919,14 @@ impl PostlyApp {
             }
             if self.body_kind == BodyKind::Json && self.body_text.is_empty() {
                 self.body_text = "{}".to_owned();
+            }
+            if self.body_kind == BodyKind::Graphql {
+                if self.graphql_query.is_empty() {
+                    self.graphql_query = "query Example {\n  field\n}".to_owned();
+                }
+                if self.graphql_variables.is_empty() {
+                    self.graphql_variables = "{}".to_owned();
+                }
             }
         }
         ui.add_space(10.0);
@@ -908,8 +952,68 @@ impl PostlyApp {
                     self.dirty = true;
                 }
             }
+            BodyKind::Graphql => {
+                ui.label(
+                    RichText::new(
+                        "The query is sent as a standard JSON GraphQL envelope. Variables must be an object.",
+                    )
+                    .small()
+                    .color(MUTED),
+                );
+                ui.add_space(8.0);
+                ui.label(RichText::new("Query").strong().color(Color32::WHITE));
+                if ui
+                    .add(
+                        TextEdit::multiline(&mut self.graphql_query)
+                            .font(TextStyle::Monospace)
+                            .desired_rows(10)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("query Example {\n  field\n}"),
+                    )
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("Operation name (optional)")
+                        .strong()
+                        .color(Color32::WHITE),
+                );
+                if ui
+                    .add(
+                        TextEdit::singleline(&mut self.graphql_operation_name).desired_width(320.0),
+                    )
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("Variables (JSON object)")
+                        .strong()
+                        .color(Color32::WHITE),
+                );
+                if ui
+                    .add(
+                        TextEdit::multiline(&mut self.graphql_variables)
+                            .font(TextStyle::Monospace)
+                            .desired_rows(7)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("{\n  \"id\": \"42\"\n}"),
+                    )
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+            }
             BodyKind::Advanced => {
-                ui.label(RichText::new("This imported body is preserved by the core model. Its dedicated editor is next.").color(MUTED));
+                ui.label(
+                    RichText::new(
+                        "This imported body is preserved by the core model. Its dedicated editor is next.",
+                    )
+                    .color(MUTED),
+                );
             }
         }
     }
@@ -1365,6 +1469,46 @@ mod tests {
 
         let error = app.edited_request().expect_err("invalid JSON must fail");
         assert!(error.contains("JSON body is invalid"));
+    }
+
+    #[test]
+    fn graphql_editor_round_trips_query_variables_and_operation_name() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.body = RequestBody::Graphql {
+            query: "query User($id: ID!) { user(id: $id) { id } }".to_owned(),
+            variables: serde_json::json!({"id": "42"}),
+            operation_name: Some("User".to_owned()),
+        };
+        app.load_request_editors();
+
+        assert_eq!(app.body_kind, BodyKind::Graphql);
+        app.graphql_query = "query User($id: ID!) { user(id: $id) { name } }".to_owned();
+        app.graphql_variables = r#"{"id":"43"}"#.to_owned();
+        let request = app.edited_request().expect("valid GraphQL editor state");
+
+        assert_eq!(
+            request.body,
+            RequestBody::Graphql {
+                query: "query User($id: ID!) { user(id: $id) { name } }".to_owned(),
+                variables: serde_json::json!({"id": "43"}),
+                operation_name: Some("User".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn graphql_editor_rejects_non_object_variables_before_network_work() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.body_kind = BodyKind::Graphql;
+        app.graphql_query = "query Example { field }".to_owned();
+        app.graphql_variables = "[1, 2]".to_owned();
+
+        let error = app
+            .edited_request()
+            .expect_err("GraphQL variables must be an object");
+        assert!(error.contains("GraphQL variables are invalid"));
     }
 
     #[test]

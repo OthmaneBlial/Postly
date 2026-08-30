@@ -29,7 +29,7 @@ Implemented:
 - saved request rename/folder changes relocate the canonical file while preserving request identity.
 - response Pretty/Raw views now provide case-insensitive local search with occurrence counts and line snippets.
 - OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, parameters, JSON bodies and auth placeholders.
-- Structured GraphQL core/CLI request model with variables, operation names, partial-data/error parsing and local HTTP integration coverage.
+- Structured GraphQL core/CLI/GUI request model with variables, operation names, partial-data/error parsing, validated GUI editing and local HTTP integration coverage.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
 - Common response assertions now cover headers, cookies, status health, numeric/type/regex and negated expectations.
 - Stateful in-memory cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing.
@@ -43,7 +43,7 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility.
 - Postman tests/assertions beyond the current basic runner slice.
 - OS keychain storage, persistent/manual cookie management and crash recovery.
-- OpenAPI external/cyclic references, GraphQL GUI/schema explorer, WebSockets, SSE and gRPC.
+- OpenAPI external/cyclic references, GraphQL schema explorer, WebSockets, SSE and gRPC.
 - Local deterministic protocol test servers, fuzzing, benchmarks and packaging.
 
 ## Verification

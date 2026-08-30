@@ -15,7 +15,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | collection runner | sequential HTTP slice | CLI run |
 | cURL import | common request slice | curl parser tests and CLI round-trip |
 | OpenAPI 3.0/3.1 import | JSON/YAML operation and local `$ref` slice | OpenAPI fixtures and importer tests |
-| GraphQL | structured core/CLI HTTP slice; GUI/schema explorer pending | GraphQL model, parser and local HTTP integration tests |
+| GraphQL | structured core/CLI/GUI request editing and HTTP slice; schema explorer pending | GraphQL model, parser, GUI validation and local HTTP integration tests |
 | Postman behavioral parity | not measured | no percentage claimed |
 
 Any future score must count semantic cases, exclude placeholders and retain failing fixtures as regressions.

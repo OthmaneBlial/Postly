@@ -19,6 +19,7 @@ CLI rules as regular HTTP requests.
 
 The response parser preserves partial `data` and structured `errors`, and the
 CLI exits non-zero when the GraphQL envelope contains errors even if HTTP
-returned status 200. Schema introspection and a dedicated GUI query editor
-remain planned; imported Postman GraphQL bodies are preserved as structured
-GraphQL data and explicitly marked for review.
+returned status 200. The native GUI exposes the query, variables JSON and
+optional operation name in the Body tab, validating them before save or send.
+Schema introspection remains planned; imported Postman GraphQL bodies are
+preserved as structured GraphQL data and explicitly marked for review.
