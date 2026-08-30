@@ -44,6 +44,13 @@ postly request https://api.example.com/users \
   --bearer "$API_TOKEN" \
   --output-json
 
+postly request https://api.example.com/private/users \
+  --oauth-token-url https://auth.example.com/oauth/token \
+  --oauth-client-id postly-local \
+  --oauth-client-secret "$OAUTH_CLIENT_SECRET" \
+  --oauth-scope read:users \
+  --output-json
+
 postly send ./my-api/collections/my-api/requests/smoke/health.postly.toml \
   --environment Local \
   --output-json

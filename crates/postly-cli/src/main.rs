@@ -51,6 +51,10 @@ struct ImmediateRequestOptions {
     bearer: Option<String>,
     basic_user: Option<String>,
     basic_password: Option<String>,
+    oauth_token_url: Option<String>,
+    oauth_client_id: Option<String>,
+    oauth_client_secret: Option<String>,
+    oauth_scope: Option<String>,
     timeout: u64,
     proxy: Option<String>,
     ca_cert: Option<PathBuf>,
@@ -318,6 +322,22 @@ struct NewRequestOptions {
     bearer: Option<String>,
     basic_user: Option<String>,
     basic_password: Option<String>,
+    oauth_token_url: Option<String>,
+    oauth_client_id: Option<String>,
+    oauth_client_secret: Option<String>,
+    oauth_scope: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct OAuthCliArgs {
+    #[arg(long, value_name = "URL", help = "OAuth 2.0 token endpoint")]
+    oauth_token_url: Option<String>,
+    #[arg(long, value_name = "ID", help = "OAuth 2.0 client ID")]
+    oauth_client_id: Option<String>,
+    #[arg(long, value_name = "SECRET", help = "OAuth 2.0 client secret")]
+    oauth_client_secret: Option<String>,
+    #[arg(long, value_name = "SCOPE", help = "Optional OAuth 2.0 scope")]
+    oauth_scope: Option<String>,
 }
 
 struct HistoryOptions {
@@ -370,6 +390,8 @@ enum Command {
         basic_user: Option<String>,
         #[arg(long)]
         basic_password: Option<String>,
+        #[command(flatten)]
+        oauth: Box<OAuthCliArgs>,
         #[arg(long, default_value_t = 30)]
         timeout: u64,
         #[arg(
@@ -663,6 +685,8 @@ enum NewKind {
         basic_user: Option<String>,
         #[arg(long)]
         basic_password: Option<String>,
+        #[command(flatten)]
+        oauth: Box<OAuthCliArgs>,
     },
 }
 
@@ -803,6 +827,7 @@ async fn main() -> Result<()> {
                 bearer,
                 basic_user,
                 basic_password,
+                oauth,
             } => create_request(NewRequestOptions {
                 workspace,
                 collection,
@@ -817,6 +842,10 @@ async fn main() -> Result<()> {
                 bearer,
                 basic_user,
                 basic_password,
+                oauth_token_url: oauth.oauth_token_url,
+                oauth_client_id: oauth.oauth_client_id,
+                oauth_client_secret: oauth.oauth_client_secret,
+                oauth_scope: oauth.oauth_scope,
             }),
         },
         Command::Request {
@@ -829,6 +858,7 @@ async fn main() -> Result<()> {
             bearer,
             basic_user,
             basic_password,
+            oauth,
             timeout,
             proxy,
             ca_cert,
@@ -846,6 +876,10 @@ async fn main() -> Result<()> {
                 bearer,
                 basic_user,
                 basic_password,
+                oauth_token_url: oauth.oauth_token_url,
+                oauth_client_id: oauth.oauth_client_id,
+                oauth_client_secret: oauth.oauth_client_secret,
+                oauth_scope: oauth.oauth_scope,
                 timeout,
                 proxy,
                 ca_cert,
@@ -1113,7 +1147,15 @@ fn create_request(options: NewRequestOptions) -> Result<()> {
     request.folder = options.folder;
     request.query = parse_pairs_flags(&options.query)?;
     request.headers = parse_headers(&options.headers)?;
-    request.auth = parse_auth_flags(options.bearer, options.basic_user, options.basic_password)?;
+    request.auth = parse_auth_flags_with_oauth(
+        options.bearer,
+        options.basic_user,
+        options.basic_password,
+        options.oauth_token_url,
+        options.oauth_client_id,
+        options.oauth_client_secret,
+        options.oauth_scope,
+    )?;
     request.body = parse_cli_body(options.data, options.json_body)?;
     let path = workspace.save_request(&collection, &request)?;
     println!("Saved request at {}", path.display());
@@ -1124,7 +1166,15 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
     let mut request = Request::new("CLI request", options.method, options.url);
     request.query = parse_pairs_flags(&options.query)?;
     request.headers = parse_headers(&options.headers)?;
-    request.auth = parse_auth_flags(options.bearer, options.basic_user, options.basic_password)?;
+    request.auth = parse_auth_flags_with_oauth(
+        options.bearer,
+        options.basic_user,
+        options.basic_password,
+        options.oauth_token_url,
+        options.oauth_client_id,
+        options.oauth_client_secret,
+        options.oauth_scope,
+    )?;
     request.body = parse_cli_body(options.data, options.json_body)?;
     let response = execute(
         &request,
@@ -2372,6 +2422,37 @@ fn parse_auth_flags(
     basic_user: Option<String>,
     basic_password: Option<String>,
 ) -> Result<Auth> {
+    parse_auth_flags_with_oauth(bearer, basic_user, basic_password, None, None, None, None)
+}
+
+fn parse_auth_flags_with_oauth(
+    bearer: Option<String>,
+    basic_user: Option<String>,
+    basic_password: Option<String>,
+    oauth_token_url: Option<String>,
+    oauth_client_id: Option<String>,
+    oauth_client_secret: Option<String>,
+    oauth_scope: Option<String>,
+) -> Result<Auth> {
+    if oauth_token_url.is_some()
+        || oauth_client_id.is_some()
+        || oauth_client_secret.is_some()
+        || oauth_scope.is_some()
+    {
+        if bearer.is_some() || basic_user.is_some() || basic_password.is_some() {
+            bail!("choose either bearer/basic authentication or OAuth 2.0 client credentials");
+        }
+        let token_url = oauth_token_url.context("--oauth-token-url is required for OAuth 2.0")?;
+        let client_id = oauth_client_id.context("--oauth-client-id is required for OAuth 2.0")?;
+        let client_secret =
+            oauth_client_secret.context("--oauth-client-secret is required for OAuth 2.0")?;
+        return Ok(Auth::OAuth2ClientCredentials {
+            token_url,
+            client_id,
+            client_secret,
+            scope: oauth_scope,
+        });
+    }
     match (bearer, basic_user, basic_password) {
         (Some(token), None, None) => Ok(Auth::Bearer { token }),
         (None, Some(username), password) => Ok(Auth::Basic {
@@ -2491,6 +2572,40 @@ mod tests {
     const TEST_SERVER_KEY_PEM: &str = include_str!("../../postly-core/testdata/tls/server-key.pem");
     const TEST_CLIENT_CERT_PEM: &str = include_str!("../../postly-core/testdata/tls/client.pem");
     const TEST_CLIENT_KEY_PEM: &str = include_str!("../../postly-core/testdata/tls/client-key.pem");
+
+    #[test]
+    fn parses_oauth_client_credentials_cli_flags() {
+        let auth = parse_auth_flags_with_oauth(
+            None,
+            None,
+            None,
+            Some("https://auth.example.test/token".to_owned()),
+            Some("postly".to_owned()),
+            Some("secret".to_owned()),
+            Some("read:users".to_owned()),
+        )
+        .expect("OAuth flags");
+        assert_eq!(
+            auth,
+            Auth::OAuth2ClientCredentials {
+                token_url: "https://auth.example.test/token".to_owned(),
+                client_id: "postly".to_owned(),
+                client_secret: "secret".to_owned(),
+                scope: Some("read:users".to_owned()),
+            }
+        );
+        let error = parse_auth_flags_with_oauth(
+            None,
+            None,
+            None,
+            Some("https://auth.example.test/token".to_owned()),
+            Some("postly".to_owned()),
+            None,
+            None,
+        )
+        .expect_err("incomplete OAuth flags");
+        assert!(error.to_string().contains("--oauth-client-secret"));
+    }
 
     #[derive(Clone, PartialEq, prost::Message)]
     struct EchoRequest {
