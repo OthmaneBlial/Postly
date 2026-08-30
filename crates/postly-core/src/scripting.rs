@@ -1,6 +1,8 @@
 use std::{
-    io::Write,
-    process::{Command, Stdio},
+    io::{self, Read, Write},
+    process::{Child, Command, Output, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +29,8 @@ pub enum ScriptError {
     InvalidRequest(#[source] serde_json::Error),
     #[error("script is too large to execute safely (maximum {maximum_bytes} bytes)")]
     TooLarge { maximum_bytes: usize },
+    #[error("script process exceeded the {timeout_seconds}-second execution limit")]
+    Timeout { timeout_seconds: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -204,15 +208,14 @@ pub fn run_script(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(ScriptError::NodeUnavailable)?;
-    child
-        .stdin
-        .take()
-        .expect("script child stdin was requested")
+    let mut stdin = child.stdin.take().ok_or_else(|| {
+        ScriptError::Execution("Node script process did not expose stdin.".to_owned())
+    })?;
+    stdin
         .write_all(&payload)
         .map_err(ScriptError::NodeUnavailable)?;
-    let output = child
-        .wait_with_output()
-        .map_err(ScriptError::NodeUnavailable)?;
+    drop(stdin);
+    let output = wait_for_child(child)?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(ScriptError::Execution(if message.is_empty() {
@@ -239,6 +242,61 @@ pub fn run_script(
 }
 
 const MAX_SCRIPT_BYTES: usize = 512 * 1024;
+const SCRIPT_TIMEOUT: Duration = Duration::from_secs(3);
+#[cfg(test)]
+const MAX_LOG_ENTRIES: usize = 200;
+#[cfg(test)]
+const MAX_LOG_MESSAGE_BYTES: usize = 4096;
+#[cfg(test)]
+const MAX_TEST_ENTRIES: usize = 1000;
+
+fn wait_for_child(mut child: Child) -> Result<Output, ScriptError> {
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ScriptError::Execution("Node script process did not expose stdout.".to_owned())
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| {
+        ScriptError::Execution("Node script process did not expose stderr.".to_owned())
+    })?;
+    let stdout_reader = thread::spawn(move || read_pipe(stdout));
+    let stderr_reader = thread::spawn(move || read_pipe(stderr));
+    let deadline = Instant::now() + SCRIPT_TIMEOUT;
+    loop {
+        match child.try_wait().map_err(ScriptError::NodeUnavailable)? {
+            Some(status) => {
+                let stdout = join_pipe(stdout_reader)?;
+                let stderr = join_pipe(stderr_reader)?;
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = join_pipe(stdout_reader);
+                let _ = join_pipe(stderr_reader);
+                return Err(ScriptError::Timeout {
+                    timeout_seconds: SCRIPT_TIMEOUT.as_secs(),
+                });
+            }
+            None => thread::sleep(Duration::from_millis(10)),
+        }
+    }
+}
+
+fn read_pipe(mut pipe: impl Read) -> io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    pipe.read_to_end(&mut output)?;
+    Ok(output)
+}
+
+fn join_pipe(reader: thread::JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8>, ScriptError> {
+    reader
+        .join()
+        .map_err(|_| ScriptError::Execution("script output reader panicked.".to_owned()))?
+        .map_err(ScriptError::NodeUnavailable)
+}
 
 const NODE_HARNESS: &str = r##"
 const vm = require("node:vm");
@@ -249,6 +307,9 @@ changes.globals = {};
 const removals = { environment: [], collection: [], globals: [], runtime: [] };
 const tests = [];
 const logs = [];
+const MAX_LOG_ENTRIES = 200;
+const MAX_LOG_MESSAGE_BYTES = 4096;
+const MAX_TEST_ENTRIES = 1000;
 const values = input.variables || {};
 
 function text(value) {
@@ -442,10 +503,36 @@ if (responseData) {
 }
 
 const scriptConsole = {
-  log: (...args) => logs.push({ level: "log", message: args.map(text).join(" ") }),
-  warn: (...args) => logs.push({ level: "warn", message: args.map(text).join(" ") }),
-  error: (...args) => logs.push({ level: "error", message: args.map(text).join(" ") })
+  log: (...args) => captureLog("log", args),
+  warn: (...args) => captureLog("warn", args),
+  error: (...args) => captureLog("error", args)
 };
+
+function captureLog(level, args) {
+  if (logs.length >= MAX_LOG_ENTRIES) return;
+  const message = args.map((value) => text(value).slice(0, MAX_LOG_MESSAGE_BYTES)).join(" ");
+  logs.push({ level, message: message.slice(0, MAX_LOG_MESSAGE_BYTES) });
+}
+
+function recordTest(name, callback) {
+  if (tests.length >= MAX_TEST_ENTRIES) {
+    return;
+  }
+  if (tests.length === MAX_TEST_ENTRIES - 1) {
+    tests.push({
+      name: "Postly script test limit",
+      passed: false,
+      error: "The script exceeded the maximum of " + MAX_TEST_ENTRIES + " tests."
+    });
+    return;
+  }
+  try {
+    callback();
+    tests.push({ name: text(name), passed: true });
+  } catch (error) {
+    tests.push({ name: text(name), passed: false, error: text(error && (error.stack || error.message || error)) });
+  }
+}
 
 const pm = {
   environment,
@@ -455,14 +542,7 @@ const pm = {
   variables: runtime,
   request,
   response,
-  test: (name, callback) => {
-    try {
-      callback();
-      tests.push({ name: text(name), passed: true });
-    } catch (error) {
-      tests.push({ name: text(name), passed: false, error: text(error && (error.stack || error.message || error)) });
-    }
-  },
+  test: recordTest,
   expect
 };
 
@@ -662,5 +742,50 @@ mod tests {
         )
         .expect_err("oversized script should be rejected");
         assert!(matches!(error, ScriptError::TooLarge { .. }));
+    }
+
+    #[test]
+    fn bounds_script_logs_and_test_results() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let request = Request::new("Bounded output", "GET", "https://example.test");
+        let result = run_script(
+            r#"
+                for (let index = 0; index < 250; index += 1) {
+                    console.log("x".repeat(10000));
+                }
+                for (let index = 0; index < 1005; index += 1) {
+                    pm.test("test " + index, function () {});
+                }
+            "#,
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("bounded script");
+
+        assert_eq!(result.logs.len(), MAX_LOG_ENTRIES);
+        assert!(result
+            .logs
+            .iter()
+            .all(|log| log.message.len() <= MAX_LOG_MESSAGE_BYTES));
+        assert_eq!(result.tests.len(), MAX_TEST_ENTRIES);
+        assert!(!result.tests.last().expect("test limit marker").passed);
+    }
+
+    #[test]
+    fn kills_a_long_lived_node_process() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let child = Command::new("node")
+            .args(["-e", "setInterval(() => {}, 1000);"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("long-lived node process");
+        let error = wait_for_child(child).expect_err("long-lived child should be terminated");
+        assert!(matches!(error, ScriptError::Timeout { .. }));
     }
 }

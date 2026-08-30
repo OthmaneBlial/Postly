@@ -27,7 +27,9 @@ header mutation, response inspection, `pm.test`, `pm.expect` and captured
 console methods. Source larger than 512 KiB is rejected before spawning Node;
 `NODE_OPTIONS` and `NODE_PATH` are removed from the child environment. Variable
 updates and unsets are applied to the current execution session and are not
-silently written back to environment files.
+silently written back to environment files. The Rust worker also enforces a
+three-second process deadline, while the harness caps captured logs at 200
+entries of 4 KiB each and test results at 1,000 entries.
 
 ## Security boundary
 

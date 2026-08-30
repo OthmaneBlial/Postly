@@ -45,7 +45,8 @@ Implemented:
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
 - Script compatibility boundary now carries explicit variable unsets, globals,
   read-only iteration data, request header mutations and bounded source size;
-  the child environment removes Node module injection variables.
+  the child environment removes Node module injection variables, and the
+  worker bounds process duration plus captured logs and test results.
 - Common response assertions now cover headers, cookies, status health, numeric/type/regex and negated expectations.
 - Stateful in-memory cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.

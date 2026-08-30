@@ -26,7 +26,10 @@ The supported compatibility slice includes:
 Script output is kept local. CLI output reports assertions but deliberately
 does not print captured console logs, because a script can log a secret. The
 bridge rejects source larger than 512 KiB and removes `NODE_OPTIONS` and
-`NODE_PATH` from the child environment, but it does not provide a security
-boundary for hostile code. Filesystem, network and process permissions still
-require a future embedded-runtime or isolated-worker decision.
+`NODE_PATH` from the child environment. The Rust worker also enforces a
+three-second process deadline; captured output is capped at 200 log entries of
+4 KiB each and 1,000 test results. These limits are resource guards, not a
+security boundary for hostile code. Filesystem, network and process
+permissions still require a future embedded-runtime or isolated-worker
+decision.
 `pm.sendRequest`, OAuth helpers and broad Postman parity remain planned.
