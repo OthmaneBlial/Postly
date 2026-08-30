@@ -1,6 +1,6 @@
 # Compatibility status
 
-Compatibility numbers are not published until they come from executable fixtures. The current evidence is the fixture in compat/postman-import/ and the importer unit coverage.
+Compatibility numbers are not published until they come from executable fixtures. The current evidence is the fixtures in compat/postman-import/ and the importer unit coverage, including structured URL/body/auth variants and explicit review warnings.
 
 | Area | Status | Evidence |
 | --- | --- | --- |

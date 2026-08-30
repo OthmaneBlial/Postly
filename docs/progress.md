@@ -16,6 +16,7 @@ Implemented:
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
 - Postman Collection v2.1 and environment export with a tested native round-trip.
+- Postman importer regression fixture for structured URLs, disabled/non-text values, form bodies, file parts, API-key query auth and GraphQL review warnings.
 - collection/folder/request script source preservation and a truthful pm.* compatibility matrix.
 - collection and folder authentication inheritance is materialized into imported request files.
 - init, request, send, import, list and sequential run CLI commands.

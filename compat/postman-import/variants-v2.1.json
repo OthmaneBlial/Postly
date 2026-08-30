@@ -1,0 +1,109 @@
+{
+  "info": {
+    "name": "Postly Postman variants fixture",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://api.example.test" }
+  ],
+  "item": [
+    {
+      "name": "Structured URLs",
+      "item": [
+        {
+          "name": "Search users",
+          "request": {
+            "method": "GET",
+            "url": {
+              "protocol": "https",
+              "host": ["api", "example", "test"],
+              "path": ["users", "search"],
+              "query": [
+                { "key": "q", "value": "Ada", "disabled": false },
+                { "key": "page", "value": 2, "disabled": true }
+              ]
+            },
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "X-Trace", "value": "off", "disabled": true }
+            ],
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                { "key": "key", "value": "api_key" },
+                { "key": "value", "value": "{{apiKey}}" },
+                { "key": "in", "value": "query" }
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "filter", "value": "active" },
+                { "key": "ignored", "value": true, "disabled": true }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "No content",
+              "code": 204,
+              "header": [{ "key": "X-Result", "value": "empty" }],
+              "body": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Upload avatar",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/avatars",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "caption", "value": "Ada", "type": "text" },
+            { "key": "avatar", "type": "file", "src": "./fixtures/avatar.png" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "GraphQL review",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/graphql",
+        "body": {
+          "mode": "graphql",
+          "graphql": {
+            "query": "query Users { users { id name } }",
+            "variables": "{}"
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "unknown",
+          "script": { "type": "text/javascript", "exec": ["console.log('review');"] }
+        }
+      ]
+    },
+    {
+      "name": "XML payload",
+      "request": {
+        "method": "PUT",
+        "url": {
+          "raw": "{{baseUrl}}/users/42",
+          "host": "api.example.test",
+          "path": "users/42"
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "<user><name>Ada</name></user>",
+          "options": { "raw": { "language": "xml" } }
+        }
+      }
+    }
+  ]
+}

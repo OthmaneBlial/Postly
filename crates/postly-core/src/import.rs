@@ -361,29 +361,40 @@ fn parse_event_scripts(item: &Value, subject: &str, report: &mut ImportReport) -
 
 fn parse_url(value: Option<&Value>) -> Option<String> {
     match value? {
-        Value::String(url) => Some(url.clone()),
+        Value::String(url) if !url.trim().is_empty() => Some(url.clone()),
         Value::Object(object) => {
             if let Some(raw) = object.get("raw").and_then(Value::as_str) {
-                return Some(raw.to_owned());
+                if !raw.trim().is_empty() {
+                    return Some(raw.to_owned());
+                }
             }
             let protocol = object.get("protocol").and_then(Value::as_str)?;
-            let host = object.get("host").and_then(Value::as_array)?;
-            let mut url = format!(
-                "{protocol}://{}",
-                host.iter()
+            let host = match object.get("host")? {
+                Value::Array(host) => host
+                    .iter()
                     .filter_map(Value::as_str)
                     .collect::<Vec<_>>()
-                    .join(".")
-            );
-            if let Some(path) = object.get("path").and_then(Value::as_array) {
+                    .join("."),
+                Value::String(host) => host.clone(),
+                _ => return None,
+            };
+            if host.is_empty() {
+                return None;
+            }
+            let mut url = format!("{protocol}://{host}");
+            if let Some(path) = object.get("path") {
                 url.push('/');
-                url.push_str(
-                    &path
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .collect::<Vec<_>>()
-                        .join("/"),
-                );
+                match path {
+                    Value::Array(path) => url.push_str(
+                        &path
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join("/"),
+                    ),
+                    Value::String(path) => url.push_str(path),
+                    _ => {}
+                }
             }
             Some(url)
         }
@@ -422,8 +433,8 @@ fn parse_body(name: &str, value: Option<&Value>, report: &mut ImportReport) -> R
         "urlencoded" => RequestBody::FormUrlEncoded {
             fields: parse_pairs(body.get("urlencoded")),
         },
-        "formdata" => RequestBody::Multipart {
-            parts: body
+        "formdata" => {
+            let parts = body
                 .get("formdata")
                 .and_then(Value::as_array)
                 .map(|parts| {
@@ -437,11 +448,7 @@ fn parse_body(name: &str, value: Option<&Value>, report: &mut ImportReport) -> R
                                 .map(ToOwned::to_owned);
                             Some(MultipartPart {
                                 name,
-                                value: part
-                                    .get("value")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_owned(),
+                                value: string_value(part.get("value")).unwrap_or_default(),
                                 file_path,
                                 content_type: part
                                     .get("type")
@@ -453,10 +460,16 @@ fn parse_body(name: &str, value: Option<&Value>, report: &mut ImportReport) -> R
                                     .unwrap_or(false),
                             })
                         })
-                        .collect()
+                        .collect::<Vec<_>>()
                 })
-                .unwrap_or_default(),
-        },
+                .unwrap_or_default();
+            if parts.iter().any(|part| part.file_path.is_some()) {
+                report.warn(format!(
+                    "Request {name} imports a file body via multipart; verify the relative paths."
+                ));
+            }
+            RequestBody::Multipart { parts }
+        }
         "file" => {
             let path = body
                 .pointer("/file/src")
@@ -477,7 +490,7 @@ fn parse_body(name: &str, value: Option<&Value>, report: &mut ImportReport) -> R
                     .get("graphql")
                     .map(ToString::to_string)
                     .unwrap_or_default(),
-                content_type: Some("application/json".to_owned()),
+                content_type: Some("application/graphql+json".to_owned()),
             }
         }
         "none" => RequestBody::None,
@@ -502,11 +515,7 @@ fn parse_pairs(value: Option<&Value>) -> Vec<KeyValue> {
                 .filter_map(|pair| {
                     Some(KeyValue {
                         key: pair.get("key").and_then(Value::as_str)?.to_owned(),
-                        value: pair
-                            .get("value")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
+                        value: string_value(pair.get("value")).unwrap_or_default(),
                         enabled: !pair
                             .get("disabled")
                             .and_then(Value::as_bool)
@@ -554,9 +563,16 @@ fn auth_value(value: Option<&Value>, key: &str) -> String {
                 .iter()
                 .find(|entry| entry.get("key").and_then(Value::as_str) == Some(key))
         })
-        .and_then(|entry| entry.get("value").and_then(Value::as_str))
+        .and_then(|entry| string_value(entry.get("value")))
         .unwrap_or_default()
-        .to_owned()
+}
+
+fn string_value(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(value) => Some(value.clone()),
+        Value::Null => None,
+        value => Some(value.to_string()),
+    }
 }
 
 fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExample> {
@@ -628,6 +644,18 @@ fn description_text(value: &Value) -> Option<String> {
 fn request_needs_review(request: &Request) -> bool {
     request.url.is_empty()
         || matches!(request.body, RequestBody::BinaryFile { .. })
+        || matches!(
+            &request.body,
+            RequestBody::Multipart { parts }
+                if parts.iter().any(|part| part.file_path.is_some())
+        )
+        || matches!(
+            &request.body,
+            RequestBody::Raw {
+                content_type: Some(content_type),
+                ..
+            } if content_type == "application/graphql+json"
+        )
         || request.pre_request_script.is_some()
         || request.test_script.is_some()
 }
@@ -692,5 +720,75 @@ mod tests {
         let (_, environment) = workspace.environments().expect("environments").remove(0);
         assert!(environment.variables["accessToken"].secret);
         assert!(!environment.variables["disabledValue"].enabled);
+    }
+
+    #[test]
+    fn imports_postman_url_body_and_review_variants_without_silent_loss() {
+        let output = tempfile::tempdir().expect("output");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../compat/postman-import/variants-v2.1.json");
+
+        let report = import_postman_collection(&fixture, output.path()).expect("import");
+        assert_eq!(report.imported_requests, 4);
+        assert_eq!(report.fully_supported_requests, 2);
+        assert_eq!(report.manual_review_requests, 2);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("file body")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("GraphQL")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("unsupported event type unknown")));
+
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let collection = workspace.collections().expect("collections").remove(0);
+        let requests = workspace.requests(&collection).expect("requests");
+
+        let search = requests
+            .iter()
+            .find(|(_, request)| request.name == "Search users")
+            .expect("search request");
+        assert_eq!(search.1.folder.as_deref(), Some("Structured URLs"));
+        assert_eq!(search.1.url, "https://api.example.test/users/search");
+        assert_eq!(search.1.query[0], KeyValue::enabled("q", "Ada"));
+        assert_eq!(
+            search.1.query[1],
+            KeyValue {
+                key: "page".to_owned(),
+                value: "2".to_owned(),
+                enabled: false,
+            }
+        );
+        assert!(matches!(
+            &search.1.auth,
+            Auth::ApiKey {
+                location: ApiKeyLocation::Query,
+                ..
+            }
+        ));
+        assert!(matches!(&search.1.body, RequestBody::FormUrlEncoded { .. }));
+
+        let upload = requests
+            .iter()
+            .find(|(_, request)| request.name == "Upload avatar")
+            .expect("upload request");
+        assert!(matches!(upload.1.body, RequestBody::Multipart { .. }));
+
+        let graphql = requests
+            .iter()
+            .find(|(_, request)| request.name == "GraphQL review")
+            .expect("graphql request");
+        assert!(matches!(
+            &graphql.1.body,
+            RequestBody::Raw {
+                content_type: Some(ref content_type),
+                ..
+            } if content_type == "application/graphql+json"
+        ));
     }
 }
