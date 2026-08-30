@@ -1343,8 +1343,12 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
         println!(
-            "{} {} · {} ms · {}",
-            response.status, response.status_text, response.duration_ms, response.protocol
+            "{} {} · {} ms · {} bytes · {}",
+            response.status,
+            response.status_text,
+            response.duration_ms,
+            response.response_size,
+            response.protocol
         );
         println!("{}", serde_json::to_string_pretty(&graphql)?);
     }
@@ -2851,6 +2855,7 @@ fn print_response_with_tests(
             "status_text": response.status_text,
             "headers": response.headers,
             "content_type": response.content_type,
+            "response_size": response.response_size,
             "duration_ms": response.duration_ms,
             "protocol": response.protocol,
             "url": response.url,

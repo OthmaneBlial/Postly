@@ -741,6 +741,7 @@ mod tests {
                     status_text: "OK".to_owned(),
                     headers: Vec::new(),
                     body: Vec::new(),
+                    response_size: 0,
                     content_type: None,
                     duration_ms: 8,
                     protocol: "HTTP/1.1".to_owned(),

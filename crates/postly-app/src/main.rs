@@ -4149,7 +4149,7 @@ impl PostlyApp {
             ResponseTab::Timing => {
                 ui.label(format!("Total duration: {} ms", response.duration_ms));
                 ui.label(format!("Protocol: {}", response.protocol));
-                ui.label(format!("Response size: {} bytes", response.body.len()));
+                ui.label(format!("Response size: {} bytes", response.response_size));
                 ui.label(format!("Final URL: {}", response.url));
             }
             ResponseTab::SseEvents => self.render_sse_content(ui),
@@ -4619,11 +4619,13 @@ async fn execute_grpc_request(
         }
     };
     let body = serde_json::to_vec_pretty(&body).map_err(|error| error.to_string())?;
+    let response_size = body.len();
     Ok(HttpResponse {
         status: 200,
         status_text: "OK".to_owned(),
         headers: Vec::new(),
         body,
+        response_size,
         content_type: Some("application/json".to_owned()),
         duration_ms: started.elapsed().as_millis(),
         protocol: "gRPC".to_owned(),
@@ -5465,6 +5467,7 @@ mod tests {
             status_text: "OK".to_owned(),
             headers: vec![HeaderEntry::enabled("content-type", "application/json")],
             body: br#"{"ok":true}"#.to_vec(),
+            response_size: 11,
             content_type: Some("application/json".to_owned()),
             duration_ms: 4,
             protocol: "HTTP/1.1".to_owned(),

@@ -649,6 +649,7 @@ mod tests {
                 "application/json",
             )],
             body: br#"{"ok":true}"#.to_vec(),
+            response_size: 11,
             content_type: Some("application/json".to_owned()),
             duration_ms: 4,
             protocol: "HTTP/1.1".to_owned(),

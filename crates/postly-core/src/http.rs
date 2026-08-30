@@ -279,6 +279,9 @@ pub struct HttpResponse {
     pub status_text: String,
     pub headers: Vec<HeaderEntry>,
     pub body: Vec<u8>,
+    /// Number of bytes received in the response body.
+    #[serde(default)]
+    pub response_size: usize,
     pub content_type: Option<String>,
     pub duration_ms: u128,
     pub protocol: String,
@@ -492,12 +495,14 @@ impl HttpEngine {
             .collect();
         let final_url = response.url().to_string();
         let body = response.bytes().await.map_err(HttpError::Request)?.to_vec();
+        let response_size = body.len();
 
         Ok(HttpResponse {
             status: status.as_u16(),
             status_text: status.canonical_reason().unwrap_or_default().to_owned(),
             headers,
             body,
+            response_size,
             content_type,
             duration_ms: started.elapsed().as_millis(),
             protocol,
@@ -1216,6 +1221,7 @@ mod tests {
 
         server.await.expect("TLS server");
         assert_eq!(response.status, 200);
+        assert_eq!(response.response_size, response.body.len());
         assert_eq!(response.body_text(), "tls-ok");
     }
 
@@ -1381,6 +1387,7 @@ mod tests {
             headers: Vec::new(),
             cookies: Vec::new(),
             body: br#"<root><item id="1">one</item><item>two</item></root>"#.to_vec(),
+            response_size: 52,
             content_type: Some("application/xml".to_owned()),
             protocol: "HTTP/1.1".to_owned(),
             url: "http://example.test".to_owned(),
