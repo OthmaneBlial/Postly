@@ -66,7 +66,8 @@ This repository contains working vertical slices, not a static interface mockup.
   proxy routing, with actionable diagnostics.
 - **Response inspection:** Pretty/Raw views with JSON and well-formed XML
   formatting, status/headers/cookies/protocol/duration, local search, wrapping,
-  clipboard copy, virtualized rendering and ignored local response snapshots.
+  clipboard copy, virtualized rendering, an in-app developer console and
+  ignored local response snapshots.
 - **Collections:** local TOML projects, nested folders, deterministic discovery,
   stable request identity, duplicate/delete/rename flows, metadata-only history
   and workspace-wide request search. The native GUI supports multiple saved
@@ -305,8 +306,8 @@ The highest-value next steps are:
 
 - broaden tested Postman `pm.*` compatibility while keeping the script boundary
   explicit and resource-limited;
-- finish deeper protocol-specific GUI tooling, assertions, response previews,
-  accessibility and crash recovery;
+- finish deeper protocol-specific GUI tooling, assertions, response previews and
+  accessibility;
 - expand deterministic protocol fixtures, OpenAPI reference coverage and memory
   benchmarks;
 - complete signing, packaging, notarization and external review before calling
@@ -324,6 +325,7 @@ guarantees as a substitute for product evidence.
 - [Collections and environments](docs/collections.md)
 - [Authentication](docs/authentication.md)
 - [Scripting and `pm.*`](docs/scripting.md)
+- [Developer console](docs/console.md)
 - [History](docs/history.md)
 - [Keyboard shortcuts](docs/shortcuts.md)
 - [Cookies](docs/cookies.md)

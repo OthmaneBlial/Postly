@@ -95,6 +95,9 @@ Implemented:
   replacement.
 - Native GUI saved-request tabs support dirty indicators, activation,
   close-others, reordering and restoration from ignored local path-only state.
+- Native GUI developer console retains bounded execution, protocol and script
+  events, exposes warnings/errors separately and redacts known sensitive values
+  before display.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:

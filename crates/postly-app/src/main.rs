@@ -117,6 +117,7 @@ enum ResponseTab {
     Headers,
     Cookies,
     Timing,
+    Console,
     SseEvents,
     WebSocket,
     GraphqlSchema,
@@ -141,6 +142,20 @@ impl ScriptRunKind {
 struct ScriptRunReport {
     kind: ScriptRunKind,
     result: ScriptResult,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConsoleLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+struct ConsoleEntry {
+    level: ConsoleLevel,
+    message: String,
+    at: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -528,6 +543,8 @@ pub struct PostlyApp {
     auth_quaternary: String,
     api_key_location: ApiKeyLocation,
     response_tab: ResponseTab,
+    console_entries: VecDeque<ConsoleEntry>,
+    console_sensitive_values: Vec<String>,
     response_search: String,
     response: Option<HttpResponse>,
     response_error: Option<String>,
@@ -643,6 +660,8 @@ impl PostlyApp {
             auth_quaternary: String::new(),
             api_key_location: ApiKeyLocation::Header,
             response_tab: ResponseTab::Pretty,
+            console_entries: VecDeque::new(),
+            console_sensitive_values: Vec::new(),
             response_search: String::new(),
             response: None,
             response_error: None,
@@ -1707,6 +1726,81 @@ impl PostlyApp {
         }
         if cancelled {
             self.status_message = "Cancelling…".to_owned();
+            self.push_console(ConsoleLevel::Info, "Cancellation requested");
+        }
+    }
+
+    fn remember_sensitive_values(&mut self, request: &Request, context: &VariableContext) {
+        self.console_sensitive_values.clear();
+        let mut values = Vec::new();
+        for variables in [
+            &context.iteration,
+            &context.runtime,
+            &context.request,
+            &context.environment,
+            &context.collection,
+            &context.project,
+            &context.globals,
+        ] {
+            values.extend(variables.values().filter(|value| value.len() >= 4).cloned());
+        }
+        for header in &request.headers {
+            if header.value.len() >= 4 {
+                values.push(header.value.clone());
+            }
+        }
+        for pair in request.query.iter().chain(request.cookies.iter()) {
+            if pair.value.len() >= 4 {
+                values.push(pair.value.clone());
+            }
+        }
+        match &request.auth {
+            Auth::None => {}
+            Auth::Bearer { token } => values.push(token.clone()),
+            Auth::Basic { username, password } => {
+                values.push(username.clone());
+                values.push(password.clone());
+            }
+            Auth::ApiKey { key, value, .. } => {
+                values.push(key.clone());
+                values.push(value.clone());
+            }
+            Auth::OAuth2ClientCredentials {
+                token_url,
+                client_id,
+                client_secret,
+                scope,
+            } => {
+                values.push(token_url.clone());
+                values.push(client_id.clone());
+                values.push(client_secret.clone());
+                if let Some(scope) = scope {
+                    values.push(scope.clone());
+                }
+            }
+        }
+        if let Ok(body) = serde_json::to_string(&request.body) {
+            values.push(body);
+        }
+        values.retain(|value| value.len() >= 4 && !value.contains("{{"));
+        values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+        values.dedup();
+        values.truncate(128);
+        self.console_sensitive_values = values;
+    }
+
+    fn push_console(&mut self, level: ConsoleLevel, message: impl Into<String>) {
+        let mut message = message.into();
+        for value in &self.console_sensitive_values {
+            message = message.replace(value, "[redacted]");
+        }
+        self.console_entries.push_back(ConsoleEntry {
+            level,
+            message,
+            at: Local::now().format("%H:%M:%S").to_string(),
+        });
+        while self.console_entries.len() > MAX_CONSOLE_ITEMS {
+            self.console_entries.pop_front();
         }
     }
 
@@ -1991,6 +2085,7 @@ impl PostlyApp {
             return self.start_grpc_current(request);
         }
         let context = self.context()?;
+        self.remember_sensitive_values(&request, &context);
         let engine = self.configured_engine()?;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
@@ -2019,6 +2114,7 @@ impl PostlyApp {
         self.pending = Some(receiver);
         self.pending_request = Some(request);
         self.pending_cancellation = Some(cancellation);
+        self.push_console(ConsoleLevel::Info, "HTTP request started");
         self.status_message = "Sending request…".to_owned();
         Ok(())
     }
@@ -2032,6 +2128,7 @@ impl PostlyApp {
             return Ok(());
         }
         let context = self.context()?;
+        self.remember_sensitive_values(&request, &context);
         let transport = self.transport.clone();
         let root = self.workspace.root().to_path_buf();
         let cancellation = CancellationToken::default();
@@ -2058,6 +2155,7 @@ impl PostlyApp {
         self.pending_request = Some(request);
         self.pending_grpc = true;
         self.pending_cancellation = Some(cancellation);
+        self.push_console(ConsoleLevel::Info, "gRPC request started");
         self.status_message = "Calling gRPC method…".to_owned();
         Ok(())
     }
@@ -2086,6 +2184,7 @@ impl PostlyApp {
             };
         let request = self.edited_request()?;
         let context = self.context()?;
+        self.remember_sensitive_values(&request, &context);
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
             let result = run_script(&script, &request, response.as_ref(), &context)
@@ -2096,6 +2195,10 @@ impl PostlyApp {
         self.script_pending = Some(receiver);
         self.script_report = None;
         self.script_error = None;
+        self.push_console(
+            ConsoleLevel::Info,
+            format!("{} script started", kind.label()),
+        );
         self.status_message = format!("Running {} script…", kind.label());
         Ok(())
     }
@@ -2116,6 +2219,7 @@ impl PostlyApp {
             operation_name: Some("PostlySchemaIntrospection".to_owned()),
         };
         let context = self.context()?;
+        self.remember_sensitive_values(&request, &context);
         let engine = self.configured_engine()?;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
@@ -2146,6 +2250,7 @@ impl PostlyApp {
         self.pending_graphql_schema = true;
         self.pending_cancellation = Some(cancellation);
         self.response_tab = ResponseTab::GraphqlSchema;
+        self.push_console(ConsoleLevel::Info, "GraphQL schema introspection started");
         self.status_message = "Fetching GraphQL schema…".to_owned();
         Ok(())
     }
@@ -2160,6 +2265,7 @@ impl PostlyApp {
         }
         let request = self.edited_request()?;
         let context = self.context()?;
+        self.remember_sensitive_values(&request, &context);
         let engine = self.configured_engine()?;
         let reconnect_limit = self.sse_reconnect_limit;
         let cancellation = CancellationToken::default();
@@ -2318,6 +2424,7 @@ impl PostlyApp {
         self.sse_pending = Some(receiver);
         self.sse_cancellation = Some(cancellation);
         self.sse_started = true;
+        self.push_console(ConsoleLevel::Info, "SSE stream started");
         self.status_message = "Connecting to SSE endpoint…".to_owned();
         Ok(())
     }
@@ -2332,6 +2439,7 @@ impl PostlyApp {
         }
         let request = self.edited_request()?;
         let context = self.context()?;
+        self.remember_sensitive_values(&request, &context);
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
         let (command_sender, mut command_receiver) =
@@ -2455,6 +2563,7 @@ impl PostlyApp {
         self.websocket_cancellation = Some(cancellation);
         self.websocket_commands = Some(command_sender);
         self.websocket_started = true;
+        self.push_console(ConsoleLevel::Info, "WebSocket connection started");
         self.status_message = "Connecting to WebSocket…".to_owned();
         Ok(())
     }
@@ -2474,6 +2583,7 @@ impl PostlyApp {
         sender
             .send(WebSocketCommand::SendText(text))
             .map_err(|_| "WebSocket connection is no longer available".to_owned())?;
+        self.push_console(ConsoleLevel::Info, "WebSocket text message sent");
         Ok(())
     }
 
@@ -2495,6 +2605,14 @@ impl PostlyApp {
         self.script_pending = None;
         match result {
             Ok(report) => {
+                for log in &report.result.logs {
+                    let level = match log.level.to_ascii_lowercase().as_str() {
+                        "warn" | "warning" => ConsoleLevel::Warn,
+                        "error" => ConsoleLevel::Error,
+                        _ => ConsoleLevel::Info,
+                    };
+                    self.push_console(level, format!("script: {}", log.message));
+                }
                 let failed = report.result.failed_tests().count();
                 self.status_message = if failed == 0 {
                     format!(
@@ -2510,11 +2628,23 @@ impl PostlyApp {
                 };
                 self.script_report = Some(report);
                 self.script_error = None;
+                if failed == 0 {
+                    self.push_console(ConsoleLevel::Info, "Script finished successfully");
+                } else {
+                    self.push_console(
+                        ConsoleLevel::Warn,
+                        format!("Script finished with {failed} failed test(s)"),
+                    );
+                }
             }
             Err(error) => {
                 self.status_message = "Script failed".to_owned();
                 self.script_error = Some(error);
                 self.script_report = None;
+                self.push_console(
+                    ConsoleLevel::Error,
+                    "Script failed; inspect the script panel",
+                );
             }
         }
         false
@@ -2556,6 +2686,13 @@ impl PostlyApp {
                     "{} {} in {} ms",
                     response.status, response.status_text, response.duration_ms
                 );
+                self.push_console(
+                    ConsoleLevel::Info,
+                    format!(
+                        "Request completed: {} {} in {} ms",
+                        response.status, response.status_text, response.duration_ms
+                    ),
+                );
                 if schema_pending {
                     let schema = if response.status >= 400 {
                         Err(format!(
@@ -2581,6 +2718,10 @@ impl PostlyApp {
                         }
                         Err(error) => {
                             self.status_message = "GraphQL schema introspection failed".to_owned();
+                            self.push_console(
+                                ConsoleLevel::Error,
+                                "GraphQL schema introspection failed; inspect the response error panel",
+                            );
                             self.graphql_schema_error = Some(error);
                             self.response_error = None;
                         }
@@ -2623,9 +2764,14 @@ impl PostlyApp {
                         "Request cancelled".to_owned()
                     };
                     self.response_error = None;
+                    self.push_console(ConsoleLevel::Info, "Request cancelled");
                 } else {
                     self.status_message = "Request failed".to_owned();
                     self.response_error = Some(error);
+                    self.push_console(
+                        ConsoleLevel::Error,
+                        "Request failed; inspect the response error panel",
+                    );
                 }
                 if !cancelled {
                     self.refresh_history();
@@ -2658,6 +2804,10 @@ impl PostlyApp {
                     self.sse_url = Some(url);
                     self.sse_started = true;
                     self.sse_connected = true;
+                    self.push_console(
+                        ConsoleLevel::Info,
+                        format!("SSE connected: {status} {status_text}"),
+                    );
                     self.status_message = format!("SSE connected · {status} {status_text}");
                 }
                 Ok(Ok(SseStreamUpdate::Reconnecting {
@@ -2668,6 +2818,10 @@ impl PostlyApp {
                 })) => {
                     self.sse_started = true;
                     self.sse_connected = false;
+                    self.push_console(
+                        ConsoleLevel::Warn,
+                        format!("SSE reconnecting: attempt {attempt}/{max_attempts}"),
+                    );
                     self.status_message = format!(
                         "SSE reconnecting · attempt {attempt}/{max_attempts} · {delay_ms} ms{}",
                         if last_event_id.is_some() {
@@ -2686,6 +2840,7 @@ impl PostlyApp {
                     while self.sse_events.len() > MAX_CONSOLE_ITEMS {
                         self.sse_events.pop_front();
                     }
+                    self.push_console(ConsoleLevel::Info, "SSE event received");
                     self.status_message =
                         format!("SSE event received · {} retained", self.sse_events.len());
                 }
@@ -2704,6 +2859,14 @@ impl PostlyApp {
                             if self.sse_events.len() == 1 { "" } else { "s" }
                         )
                     };
+                    self.push_console(
+                        ConsoleLevel::Info,
+                        if cancelled {
+                            "SSE stream cancelled"
+                        } else {
+                            "SSE stream closed"
+                        },
+                    );
                     finished = true;
                     break;
                 }
@@ -2720,6 +2883,18 @@ impl PostlyApp {
                         "SSE stream failed".to_owned()
                     };
                     self.response_error = (!cancelled).then_some(error);
+                    self.push_console(
+                        if cancelled {
+                            ConsoleLevel::Info
+                        } else {
+                            ConsoleLevel::Error
+                        },
+                        if cancelled {
+                            "SSE stream cancelled"
+                        } else {
+                            "SSE stream failed; inspect the response error panel"
+                        },
+                    );
                     finished = true;
                     break;
                 }
@@ -2737,6 +2912,10 @@ impl PostlyApp {
                     };
                     self.response_error =
                         (!cancelled).then_some("SSE stream worker stopped unexpectedly".to_owned());
+                    self.push_console(
+                        ConsoleLevel::Error,
+                        "SSE stream worker stopped unexpectedly",
+                    );
                     finished = true;
                     break;
                 }
@@ -2763,6 +2942,7 @@ impl PostlyApp {
                     self.websocket_url = Some(url);
                     self.websocket_started = true;
                     self.websocket_connected = true;
+                    self.push_console(ConsoleLevel::Info, "WebSocket connected");
                     self.status_message = "WebSocket connected".to_owned();
                 }
                 Ok(Ok(WebSocketStreamUpdate::Message {
@@ -2770,6 +2950,7 @@ impl PostlyApp {
                     kind,
                     data,
                 })) => {
+                    let kind_label = kind.clone();
                     self.websocket_started = true;
                     self.websocket_messages.push_back(ReceivedWebSocketMessage {
                         direction,
@@ -2780,6 +2961,10 @@ impl PostlyApp {
                     while self.websocket_messages.len() > MAX_CONSOLE_ITEMS {
                         self.websocket_messages.pop_front();
                     }
+                    self.push_console(
+                        ConsoleLevel::Info,
+                        format!("WebSocket {kind_label} message received"),
+                    );
                     self.status_message = format!(
                         "WebSocket message · {} retained",
                         self.websocket_messages.len()
@@ -2804,6 +2989,14 @@ impl PostlyApp {
                             }
                         )
                     };
+                    self.push_console(
+                        ConsoleLevel::Info,
+                        if cancelled {
+                            "WebSocket connection cancelled"
+                        } else {
+                            "WebSocket closed"
+                        },
+                    );
                     finished = true;
                     break;
                 }
@@ -2820,6 +3013,18 @@ impl PostlyApp {
                         "WebSocket failed".to_owned()
                     };
                     self.response_error = (!cancelled).then_some(error);
+                    self.push_console(
+                        if cancelled {
+                            ConsoleLevel::Info
+                        } else {
+                            ConsoleLevel::Error
+                        },
+                        if cancelled {
+                            "WebSocket connection cancelled"
+                        } else {
+                            "WebSocket failed; inspect the response error panel"
+                        },
+                    );
                     finished = true;
                     break;
                 }
@@ -2837,6 +3042,7 @@ impl PostlyApp {
                     };
                     self.response_error =
                         (!cancelled).then_some("WebSocket worker stopped unexpectedly".to_owned());
+                    self.push_console(ConsoleLevel::Error, "WebSocket worker stopped unexpectedly");
                     finished = true;
                     break;
                 }
@@ -4468,6 +4674,7 @@ impl PostlyApp {
                         (ResponseTab::Headers, "Headers"),
                         (ResponseTab::Cookies, "Cookies"),
                         (ResponseTab::Timing, "Timing"),
+                        (ResponseTab::Console, "Console"),
                     ] {
                         if tab_button(ui, self.response_tab == tab, label).clicked() {
                             self.response_tab = tab;
@@ -4496,7 +4703,21 @@ impl PostlyApp {
                         self.response_tab = ResponseTab::GraphqlSchema;
                     }
                 });
-                if self.response.is_some()
+                if self.response_tab == ResponseTab::Console {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "{} retained · secret-like values are redacted",
+                                self.console_entries.len()
+                            ))
+                            .small()
+                            .color(MUTED),
+                        );
+                        if ui.button("Clear console").clicked() {
+                            self.console_entries.clear();
+                        }
+                    });
+                } else if self.response.is_some()
                     && matches!(self.response_tab, ResponseTab::Pretty | ResponseTab::Raw)
                 {
                     ui.horizontal(|ui| {
@@ -4526,7 +4747,9 @@ impl PostlyApp {
                     });
                 }
                 ui.separator();
-                if let Some(error) = &self.response_error {
+                if self.response_tab == ResponseTab::Console {
+                    self.render_console_content(ui);
+                } else if let Some(error) = &self.response_error {
                     ui.colored_label(Color32::from_rgb(240, 125, 105), error);
                     if self.sse_started {
                         self.render_sse_content(ui);
@@ -4619,6 +4842,36 @@ impl PostlyApp {
                 self.close_websocket();
             }
         });
+    }
+
+    fn render_console_content(&self, ui: &mut egui::Ui) {
+        if self.console_entries.is_empty() {
+            ui.label(
+                RichText::new("Execution, script and protocol diagnostics will appear here.")
+                    .color(MUTED),
+            );
+            return;
+        }
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for entry in &self.console_entries {
+                    let (label, color) = match entry.level {
+                        ConsoleLevel::Info => ("INFO", MUTED),
+                        ConsoleLevel::Warn => ("WARN", Color32::from_rgb(235, 180, 80)),
+                        ConsoleLevel::Error => ("ERROR", Color32::from_rgb(240, 125, 105)),
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&entry.at).small().color(MUTED));
+                        ui.label(RichText::new(label).small().strong().color(color));
+                        ui.label(
+                            RichText::new(&entry.message)
+                                .monospace()
+                                .color(Color32::WHITE),
+                        );
+                    });
+                }
+            });
     }
 
     fn render_sse_content(&self, ui: &mut egui::Ui) {
@@ -4964,6 +5217,7 @@ impl PostlyApp {
                 ui.label(format!("Response size: {} bytes", response.response_size));
                 ui.label(format!("Final URL: {}", response.url));
             }
+            ResponseTab::Console => {}
             ResponseTab::SseEvents => self.render_sse_content(ui),
             ResponseTab::WebSocket => {
                 ui.label(RichText::new("WebSocket console is not active.").color(MUTED));
@@ -6511,6 +6765,28 @@ mod tests {
     }
 
     #[test]
+    fn developer_console_redacts_sensitive_values_and_stays_bounded() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.console_sensitive_values = vec!["super-secret-token".to_owned()];
+        app.push_console(ConsoleLevel::Info, "Authorization token=super-secret-token");
+        assert_eq!(
+            app.console_entries[0].message,
+            "Authorization token=[redacted]"
+        );
+        for index in 0..(MAX_CONSOLE_ITEMS + 10) {
+            app.push_console(ConsoleLevel::Info, format!("event {index}"));
+        }
+
+        assert_eq!(app.console_entries.len(), MAX_CONSOLE_ITEMS);
+        assert_eq!(app.console_entries[0].message, "event 10");
+        assert!(app
+            .console_entries
+            .iter()
+            .all(|entry| !entry.message.contains("super-secret-token")));
+    }
+
+    #[test]
     fn send_worker_delivers_a_real_local_response_to_the_gui_state() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
         let address = listener.local_addr().expect("address");
@@ -6546,6 +6822,10 @@ mod tests {
             Some(201)
         );
         assert!(app.response_error.is_none());
+        assert!(app
+            .console_entries
+            .iter()
+            .any(|entry| entry.message.contains("Request completed: 201 Created")));
         let history_entry = app.history.first().cloned().expect("history entry");
         app.new_request();
         app.reopen_history(&history_entry).expect("reopen history");
