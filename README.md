@@ -16,6 +16,7 @@ Fast, native and local-first API development powered by Rust.
 <p>
   <a href="#quick-start">Try it in 60 seconds</a> ·
   <a href="docs/migration-from-postman.md">Migrate from Postman</a> ·
+  <a href="docs/packaging.md">Package locally</a> ·
   <a href="docs/progress.md">See what is real</a>
 </p>
 
@@ -284,6 +285,9 @@ cargo xtask fmt
 cargo xtask lint
 cargo xtask test
 cargo xtask check
+
+# Build ignored local CLI/GUI artifacts with checksums
+CARGO_PROFILE_RELEASE_DEBUG=0 cargo xtask package
 ```
 
 On a constrained disk, these settings reduce generated debug artifacts:
@@ -313,7 +317,7 @@ Highest-value roadmap areas include:
 - richer Postman fixtures and executable compatibility scoring;
 - gRPC reflection and deeper protocol-specific GUI tooling;
 - tabs, accessibility and crash recovery;
-- deterministic protocol test servers, fuzzing, benchmarks and packaging.
+- deterministic protocol test servers, fuzzing and broader benchmark coverage.
 
 See <a href="docs/progress.md">docs/progress.md</a> for current evidence instead of a
 marketing-only roadmap.

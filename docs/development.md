@@ -8,6 +8,7 @@ cargo xtask lint
 cargo xtask test
 cargo xtask check
 cargo xtask bench
+cargo xtask package
 ~~~
 
 For low-disk environments:
@@ -28,6 +29,10 @@ Do not place tokens, real environment values, customer data or private certifica
 `cargo xtask bench` measures real local import and workspace/search operations.
 Keep generated JSON under the ignored `bench-generated/` directory and record
 machine, revision and methodology before sharing a result.
+
+`cargo xtask package` builds a locked release locally and creates ignored
+`dist/` artifacts with SHA-256 checksums. See [packaging](packaging.md) for the
+boundary of that command.
 
 The CLI environment command stores values locally and only prints the environment name and count, never the values:
 
