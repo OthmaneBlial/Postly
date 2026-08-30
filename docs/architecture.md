@@ -4,11 +4,11 @@
 
 The repository is a Cargo workspace with three packages:
 
-- postly-core: durable models, variable resolution, filesystem storage, Postman import and HTTP execution.
+- postly-core: durable models, variable resolution, filesystem storage, Postman import, HTTP execution and runner orchestration.
 - postly: the CLI, intentionally thin over the core.
 - postly-xtask: local formatting, linting and test orchestration.
 
-The core is the product boundary. A future desktop UI must call the same request and persistence services instead of reimplementing request behavior in a frontend.
+The core is the product boundary. A future desktop UI must call the same request, persistence and runner services instead of reimplementing request behavior in a frontend.
 
 ## Canonical files
 

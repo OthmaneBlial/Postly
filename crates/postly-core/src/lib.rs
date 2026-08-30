@@ -7,11 +7,13 @@
 pub mod http;
 pub mod import;
 pub mod model;
+pub mod runner;
 pub mod storage;
 pub mod variables;
 
 pub use http::{EngineOptions, HttpEngine, HttpError, HttpResponse, ResponseView};
 pub use import::{import_environment, import_postman_collection, ImportReport};
 pub use model::*;
+pub use runner::{run_requests, CancellationToken, RunnerItemResult, RunnerOptions, RunnerSummary};
 pub use storage::{CollectionFiles, Workspace, WorkspaceError};
 pub use variables::{ResolvedText, VariableContext, VariableDiagnostic, VariableDiagnosticKind};

@@ -23,6 +23,7 @@ Postly is an open-source, Rust-first API development workspace designed around l
 
 ~~~bash
 cargo run -- init ./my-api --name "My API"
+cargo run -- new request --workspace ./my-api --collection "My API" --name health https://example.com/health
 cargo run -- request https://httpbin.org/get
 cargo run -- list ./my-api
 ~~~

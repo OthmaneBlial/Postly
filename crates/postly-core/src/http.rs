@@ -130,11 +130,21 @@ impl HttpEngine {
     ) -> Result<HttpResponse, HttpError> {
         let resolved_url = context.resolve(&request.url);
         let mut diagnostics = resolved_url.diagnostics;
-        let mut url = Url::parse(&resolved_url.value)?;
         resolve_pairs(&mut diagnostics, &request.query, context);
+        for header in request.headers.iter().filter(|header| header.enabled) {
+            diagnostics.extend(context.resolve(&header.key).diagnostics);
+            diagnostics.extend(context.resolve(&header.value).diagnostics);
+        }
+        for cookie in request.cookies.iter().filter(|cookie| cookie.enabled) {
+            diagnostics.extend(context.resolve(&cookie.key).diagnostics);
+            diagnostics.extend(context.resolve(&cookie.value).diagnostics);
+        }
+        resolve_auth(&mut diagnostics, &request.auth, context);
+        resolve_body(&mut diagnostics, &request.body, context);
         if !diagnostics.is_empty() {
             return Err(HttpError::VariableResolution(diagnostics));
         }
+        let mut url = Url::parse(&resolved_url.value)?;
         for pair in &request.query {
             if pair.enabled {
                 url.query_pairs_mut().append_pair(
@@ -278,7 +288,7 @@ async fn apply_body(
             }
         }
         RequestBody::Json { value } => {
-            builder = builder.json(value);
+            builder = builder.json(&resolve_json(value, context));
         }
         RequestBody::FormUrlEncoded { fields } => {
             let values = fields
@@ -325,12 +335,14 @@ async fn apply_body(
             builder = builder.multipart(form);
         }
         RequestBody::BinaryFile { path, content_type } => {
-            let bytes = tokio::fs::read(path)
-                .await
-                .map_err(|source| HttpError::BodyFile {
-                    path: path.clone(),
-                    source,
-                })?;
+            let resolved_path = context.resolve(path).value;
+            let bytes =
+                tokio::fs::read(&resolved_path)
+                    .await
+                    .map_err(|source| HttpError::BodyFile {
+                        path: resolved_path,
+                        source,
+                    })?;
             builder = builder.body(bytes);
             if let Some(content_type) = content_type {
                 builder = builder.header("content-type", context.resolve(content_type).value);
@@ -338,6 +350,98 @@ async fn apply_body(
         }
     }
     Ok(builder)
+}
+
+fn resolve_auth(diagnostics: &mut Vec<VariableDiagnostic>, auth: &Auth, context: &VariableContext) {
+    match auth {
+        Auth::None => {}
+        Auth::Basic { username, password } => {
+            diagnostics.extend(context.resolve(username).diagnostics);
+            diagnostics.extend(context.resolve(password).diagnostics);
+        }
+        Auth::Bearer { token } => diagnostics.extend(context.resolve(token).diagnostics),
+        Auth::ApiKey { key, value, .. } => {
+            diagnostics.extend(context.resolve(key).diagnostics);
+            diagnostics.extend(context.resolve(value).diagnostics);
+        }
+    }
+}
+
+fn resolve_body(
+    diagnostics: &mut Vec<VariableDiagnostic>,
+    body: &RequestBody,
+    context: &VariableContext,
+) {
+    match body {
+        RequestBody::None => {}
+        RequestBody::Raw { text, content_type } => {
+            diagnostics.extend(context.resolve(text).diagnostics);
+            if let Some(content_type) = content_type {
+                diagnostics.extend(context.resolve(content_type).diagnostics);
+            }
+        }
+        RequestBody::Json { value } => resolve_json_diagnostics(value, diagnostics, context),
+        RequestBody::FormUrlEncoded { fields } => resolve_pairs(diagnostics, fields, context),
+        RequestBody::Multipart { parts } => {
+            for part in parts.iter().filter(|part| part.enabled) {
+                diagnostics.extend(context.resolve(&part.name).diagnostics);
+                diagnostics.extend(context.resolve(&part.value).diagnostics);
+                if let Some(path) = &part.file_path {
+                    diagnostics.extend(context.resolve(path).diagnostics);
+                }
+                if let Some(content_type) = &part.content_type {
+                    diagnostics.extend(context.resolve(content_type).diagnostics);
+                }
+            }
+        }
+        RequestBody::BinaryFile { path, content_type } => {
+            diagnostics.extend(context.resolve(path).diagnostics);
+            if let Some(content_type) = content_type {
+                diagnostics.extend(context.resolve(content_type).diagnostics);
+            }
+        }
+    }
+}
+
+fn resolve_json(value: &serde_json::Value, context: &VariableContext) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(value) => serde_json::Value::String(context.resolve(value).value),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .iter()
+                .map(|value| resolve_json(value, context))
+                .collect(),
+        ),
+        serde_json::Value::Object(values) => serde_json::Value::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), resolve_json(value, context)))
+                .collect(),
+        ),
+        value => value.clone(),
+    }
+}
+
+fn resolve_json_diagnostics(
+    value: &serde_json::Value,
+    diagnostics: &mut Vec<VariableDiagnostic>,
+    context: &VariableContext,
+) {
+    match value {
+        serde_json::Value::String(value) => diagnostics.extend(context.resolve(value).diagnostics),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                resolve_json_diagnostics(value, diagnostics, context);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for (key, value) in values {
+                diagnostics.extend(context.resolve(key).diagnostics);
+                resolve_json_diagnostics(value, diagnostics, context);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -386,5 +490,37 @@ mod tests {
             "{\n  \"ok\": true,\n  \"source\": \"local\"\n}"
         );
         assert!(response.duration_ms < 5_000);
+    }
+
+    #[tokio::test]
+    async fn rejects_undefined_values_before_network_io() {
+        let mut request = Request::new("Invalid", "GET", "http://127.0.0.1:1/{{missing}}");
+        request
+            .headers
+            .push(HeaderEntry::enabled("x-token", "{{secret}}"));
+        request.auth = Auth::Bearer {
+            token: "{{token}}".to_owned(),
+        };
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+
+        let error = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect_err("undefined values must fail");
+
+        match error {
+            HttpError::VariableResolution(diagnostics) => {
+                assert!(diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.name == "missing"));
+                assert!(diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.name == "secret"));
+                assert!(diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.name == "token"));
+            }
+            other => panic!("expected variable diagnostics, got {other}"),
+        }
     }
 }
