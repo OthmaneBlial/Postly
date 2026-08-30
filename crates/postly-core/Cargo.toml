@@ -10,6 +10,7 @@ description = "Local-first Rust core for Postly"
 [dependencies]
 base64.workspace = true
 chrono.workspace = true
+cookie_store.workspace = true
 http.workspace = true
 prost-reflect.workspace = true
 protox.workspace = true

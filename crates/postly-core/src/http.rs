@@ -1,12 +1,14 @@
 use std::{
     fs,
+    io::BufReader,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
+use cookie_store::{CookieStore as StoredCookieStore, RawCookie};
 use reqwest::{
-    cookie::{CookieStore, Jar},
+    cookie::CookieStore,
     header::{HeaderName, HeaderValue, SET_COOKIE},
     Client, Method, Url,
 };
@@ -28,6 +30,8 @@ pub struct EngineOptions {
     pub ca_cert: Option<PathBuf>,
     /// A PEM bundle containing the client certificate chain and private key.
     pub client_identity: Option<PathBuf>,
+    /// Optional ignored local cookie-jar file for saved-request sessions.
+    pub cookie_jar: Option<PathBuf>,
 }
 
 impl Default for EngineOptions {
@@ -39,6 +43,7 @@ impl Default for EngineOptions {
             proxy: None,
             ca_cert: None,
             client_identity: None,
+            cookie_jar: None,
         }
     }
 }
@@ -98,12 +103,147 @@ pub enum HttpError {
     VariableResolution(Vec<VariableDiagnostic>),
     #[error("invalid JSON body: {0}")]
     JsonBody(#[from] serde_json::Error),
+    #[error("could not access cookie jar {path}: {message}")]
+    CookieJar { path: String, message: String },
 }
 
 #[derive(Debug, Clone)]
 pub struct HttpEngine {
     client: Client,
-    cookie_jar: Arc<Jar>,
+    cookie_jar: Arc<PersistentCookieJar>,
+}
+
+const MAX_COOKIE_JAR_BYTES: usize = 1_048_576;
+
+#[derive(Debug)]
+struct PersistentCookieJar {
+    store: RwLock<StoredCookieStore>,
+    path: Option<PathBuf>,
+}
+
+impl PersistentCookieJar {
+    fn load(path: Option<&Path>) -> Result<Self, HttpError> {
+        let path = path.map(Path::to_path_buf);
+        let store = if let Some(path) = path.as_deref().filter(|path| path.is_file()) {
+            let metadata = fs::metadata(path).map_err(|source| HttpError::CookieJar {
+                path: path.display().to_string(),
+                message: source.to_string(),
+            })?;
+            if metadata.len() > MAX_COOKIE_JAR_BYTES as u64 {
+                return Err(HttpError::CookieJar {
+                    path: path.display().to_string(),
+                    message: format!("file exceeds {MAX_COOKIE_JAR_BYTES} bytes"),
+                });
+            }
+            let file = fs::File::open(path).map_err(|source| HttpError::CookieJar {
+                path: path.display().to_string(),
+                message: source.to_string(),
+            })?;
+            cookie_store::serde::json::load_all(BufReader::new(file)).map_err(|source| {
+                HttpError::CookieJar {
+                    path: path.display().to_string(),
+                    message: source.to_string(),
+                }
+            })?
+        } else {
+            StoredCookieStore::default()
+        };
+        Ok(Self {
+            store: RwLock::new(store),
+            path,
+        })
+    }
+
+    fn read_store(&self) -> std::sync::RwLockReadGuard<'_, StoredCookieStore> {
+        self.store
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn write_store(&self) -> std::sync::RwLockWriteGuard<'_, StoredCookieStore> {
+        self.store
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn persist(&self, store: &StoredCookieStore) -> Result<(), HttpError> {
+        let Some(path) = self.path.as_deref() else {
+            return Ok(());
+        };
+        let mut bytes = Vec::new();
+        cookie_store::serde::json::save_incl_expired_and_nonpersistent(store, &mut bytes).map_err(
+            |source| HttpError::CookieJar {
+                path: path.display().to_string(),
+                message: source.to_string(),
+            },
+        )?;
+        if bytes.len() > MAX_COOKIE_JAR_BYTES {
+            return Err(HttpError::CookieJar {
+                path: path.display().to_string(),
+                message: format!("file would exceed {MAX_COOKIE_JAR_BYTES} bytes"),
+            });
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| HttpError::CookieJar {
+                path: path.display().to_string(),
+                message: source.to_string(),
+            })?;
+        }
+        let temporary = path.with_extension("json.tmp");
+        fs::write(&temporary, bytes).map_err(|source| HttpError::CookieJar {
+            path: temporary.display().to_string(),
+            message: source.to_string(),
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&temporary)
+                .map_err(|source| HttpError::CookieJar {
+                    path: temporary.display().to_string(),
+                    message: source.to_string(),
+                })?
+                .permissions();
+            permissions.set_mode(0o600);
+            fs::set_permissions(&temporary, permissions).map_err(|source| {
+                HttpError::CookieJar {
+                    path: temporary.display().to_string(),
+                    message: source.to_string(),
+                }
+            })?;
+        }
+        fs::rename(&temporary, path).map_err(|source| HttpError::CookieJar {
+            path: path.display().to_string(),
+            message: source.to_string(),
+        })
+    }
+}
+
+impl CookieStore for PersistentCookieJar {
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Url) {
+        let cookies = cookie_headers.filter_map(|value| {
+            let value = value.to_str().ok()?;
+            RawCookie::parse(value)
+                .ok()
+                .map(|cookie| cookie.into_owned())
+        });
+        let mut store = self.write_store();
+        store.store_response_cookies(cookies, url);
+        if let Err(error) = self.persist(&store) {
+            tracing::warn!(error = %error, "could not persist HTTP cookie jar");
+        }
+    }
+
+    fn cookies(&self, url: &Url) -> Option<HeaderValue> {
+        let values = self
+            .read_store()
+            .get_request_values(url)
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+        (!values.is_empty())
+            .then(|| HeaderValue::from_str(&values).ok())
+            .flatten()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,7 +327,7 @@ impl HttpResponse {
 
 impl HttpEngine {
     pub fn new(options: &EngineOptions) -> Result<Self, HttpError> {
-        let cookie_jar = Arc::new(Jar::default());
+        let cookie_jar = Arc::new(PersistentCookieJar::load(options.cookie_jar.as_deref())?);
         let ca_cert_path = options
             .ca_cert
             .as_deref()
@@ -239,14 +379,23 @@ impl HttpEngine {
         Ok(Self { client, cookie_jar })
     }
 
-    /// Add a manually-authored cookie to the in-memory jar for a URL.
-    ///
-    /// The cookie is scoped by the URL and is discarded when this engine is
-    /// dropped. This deliberately does not persist cookie values to disk.
+    /// Add a manually-authored cookie to the jar for a URL.
     pub fn add_cookie(&self, url: &str, cookie: &str) -> Result<(), HttpError> {
         let url = Url::parse(url)?;
-        self.cookie_jar.add_cookie_str(cookie, &url);
-        Ok(())
+        let cookie = RawCookie::parse(cookie)
+            .map_err(|error| HttpError::CookieJar {
+                path: self
+                    .cookie_jar
+                    .path
+                    .as_deref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "<memory>".to_owned()),
+                message: format!("invalid cookie: {error}"),
+            })?
+            .into_owned();
+        let mut store = self.cookie_jar.write_store();
+        store.store_response_cookies(std::iter::once(cookie), &url);
+        self.cookie_jar.persist(&store)
     }
 
     /// Return the cookie header currently applicable to a URL, if any.
@@ -1089,6 +1238,48 @@ mod tests {
         assert_eq!(second_response.status, 200);
         assert!(second_response.cookies.is_empty());
         server.await.expect("server");
+    }
+
+    #[test]
+    fn persists_manual_cookies_in_a_bounded_local_jar() {
+        let directory = tempfile::tempdir().expect("directory");
+        let jar_path = directory.path().join(".postly/cookies.json");
+        let engine = HttpEngine::new(&EngineOptions {
+            cookie_jar: Some(jar_path.clone()),
+            ..EngineOptions::default()
+        })
+        .expect("engine");
+        engine
+            .add_cookie("https://example.test/api", "session=abc; Path=/")
+            .expect("manual cookie");
+        assert_eq!(
+            engine
+                .cookie_header("https://example.test/api/users")
+                .expect("cookie header"),
+            Some("session=abc".to_owned())
+        );
+        assert!(jar_path.is_file());
+        drop(engine);
+
+        let reopened = HttpEngine::new(&EngineOptions {
+            cookie_jar: Some(jar_path.clone()),
+            ..EngineOptions::default()
+        })
+        .expect("reopened engine");
+        assert_eq!(
+            reopened
+                .cookie_header("https://example.test/api/users")
+                .expect("reopened cookie header"),
+            Some("session=abc".to_owned())
+        );
+
+        fs::write(&jar_path, vec![b'x'; MAX_COOKIE_JAR_BYTES + 1]).expect("oversized jar");
+        let error = HttpEngine::new(&EngineOptions {
+            cookie_jar: Some(jar_path),
+            ..EngineOptions::default()
+        })
+        .expect_err("oversized cookie jar must be rejected");
+        assert!(error.to_string().contains("exceeds"));
     }
 
     #[tokio::test]

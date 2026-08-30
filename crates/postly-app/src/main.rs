@@ -237,7 +237,7 @@ impl TransportSettings {
         fs::write(path, contents).map_err(|error| error.to_string())
     }
 
-    fn engine_options(&self) -> EngineOptions {
+    fn engine_options(&self, root: &Path) -> EngineOptions {
         let path = |value: &str| (!value.trim().is_empty()).then(|| PathBuf::from(value.trim()));
         EngineOptions {
             timeout: Duration::from_secs(self.timeout_seconds.max(1)),
@@ -245,6 +245,7 @@ impl TransportSettings {
             proxy: (!self.proxy_url.trim().is_empty()).then(|| self.proxy_url.trim().to_owned()),
             ca_cert: path(&self.ca_cert_path),
             client_identity: path(&self.client_identity_path),
+            cookie_jar: Some(root.join(".postly/cookies.json")),
             ..EngineOptions::default()
         }
     }
@@ -812,7 +813,7 @@ impl PostlyApp {
     }
 
     fn configured_engine(&mut self) -> Result<HttpEngine, String> {
-        let engine = HttpEngine::new(&self.transport.engine_options())
+        let engine = HttpEngine::new(&self.transport.engine_options(self.workspace.root()))
             .map_err(|error| format!("connection settings are invalid: {error}"))?;
         self.engine = engine.clone();
         Ok(engine)

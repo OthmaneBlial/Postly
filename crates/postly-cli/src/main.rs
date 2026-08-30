@@ -277,6 +277,15 @@ struct SendOptions<'a> {
     output_json: bool,
 }
 
+struct ExecuteOptions<'a> {
+    timeout: u64,
+    proxy: Option<&'a str>,
+    ca_cert: Option<&'a Path>,
+    client_identity: Option<&'a Path>,
+    insecure: bool,
+    cookie_jar: Option<&'a Path>,
+}
+
 struct NewRequestOptions {
     workspace: PathBuf,
     collection: String,
@@ -1093,11 +1102,14 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
     let response = execute(
         &request,
         VariableContext::default(),
-        options.timeout,
-        options.proxy.as_deref(),
-        options.ca_cert.as_deref(),
-        options.client_identity.as_deref(),
-        options.insecure,
+        ExecuteOptions {
+            timeout: options.timeout,
+            proxy: options.proxy.as_deref(),
+            ca_cert: options.ca_cert.as_deref(),
+            client_identity: options.client_identity.as_deref(),
+            insecure: options.insecure,
+            cookie_jar: None,
+        },
     )
     .await?;
     print_response(&response, options.output_json)?;
@@ -1126,11 +1138,14 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
     let response = execute(
         &request,
         VariableContext::default(),
-        options.timeout,
-        options.proxy.as_deref(),
-        options.ca_cert.as_deref(),
-        options.client_identity.as_deref(),
-        options.insecure,
+        ExecuteOptions {
+            timeout: options.timeout,
+            proxy: options.proxy.as_deref(),
+            ca_cert: options.ca_cert.as_deref(),
+            client_identity: options.client_identity.as_deref(),
+            insecure: options.insecure,
+            cookie_jar: None,
+        },
     )
     .await?;
     let graphql = parse_graphql_response(&response.body_text())?;
@@ -1403,6 +1418,7 @@ async fn stream_sse(options: SseOptions) -> Result<()> {
         proxy: options.proxy.clone(),
         ca_cert: options.ca_cert.clone(),
         client_identity: options.client_identity.clone(),
+        cookie_jar: None,
         ..EngineOptions::default()
     })?;
     let mut reconnects_used = 0;
@@ -1713,11 +1729,14 @@ async fn send_saved_request(options: SendOptions<'_>) -> Result<()> {
     let result = execute(
         &request,
         context.clone(),
-        options.timeout,
-        options.proxy,
-        options.ca_cert,
-        options.client_identity,
-        options.insecure,
+        ExecuteOptions {
+            timeout: options.timeout,
+            proxy: options.proxy,
+            ca_cert: options.ca_cert,
+            client_identity: options.client_identity,
+            insecure: options.insecure,
+            cookie_jar: Some(&workspace.root().join(".postly/cookies.json")),
+        },
     )
     .await;
     let history_entry = match &result {
@@ -2035,6 +2054,7 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
         proxy: options.proxy.map(ToOwned::to_owned),
         ca_cert: options.ca_cert.map(Path::to_path_buf),
         client_identity: options.client_identity.map(Path::to_path_buf),
+        cookie_jar: Some(workspace.root().join(".postly/cookies.json")),
         ..EngineOptions::default()
     })?;
     let iterations = load_iteration_data(options.data_file)?;
@@ -2214,18 +2234,15 @@ fn xml_escape(value: &str) -> String {
 async fn execute(
     request: &Request,
     context: VariableContext,
-    timeout: u64,
-    proxy: Option<&str>,
-    ca_cert: Option<&Path>,
-    client_identity: Option<&Path>,
-    insecure: bool,
+    options: ExecuteOptions<'_>,
 ) -> Result<postly_core::HttpResponse> {
     let engine = HttpEngine::new(&EngineOptions {
-        timeout: Duration::from_secs(timeout),
-        accept_invalid_certs: insecure,
-        proxy: proxy.map(ToOwned::to_owned),
-        ca_cert: ca_cert.map(Path::to_path_buf),
-        client_identity: client_identity.map(Path::to_path_buf),
+        timeout: Duration::from_secs(options.timeout),
+        accept_invalid_certs: options.insecure,
+        proxy: options.proxy.map(ToOwned::to_owned),
+        ca_cert: options.ca_cert.map(Path::to_path_buf),
+        client_identity: options.client_identity.map(Path::to_path_buf),
+        cookie_jar: options.cookie_jar.map(Path::to_path_buf),
         ..EngineOptions::default()
     })?;
     Ok(engine.execute(request, &context).await?)

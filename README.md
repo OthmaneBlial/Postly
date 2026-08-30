@@ -54,7 +54,8 @@ This is a working vertical slice, not a static UI mockup.
 
 - <strong>HTTP:</strong> GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS and custom methods;
   query parameters, duplicate headers, cookies, raw/JSON/form/multipart/file
-  bodies, redirects, compression, timeouts and cancellation.
+  bodies, redirects, compression, timeouts, cancellation and an ignored local
+  cookie jar for saved workspaces.
 - <strong>Authentication:</strong> Bearer, Basic and API-key auth with variable resolution.
 - <strong>TLS and routing:</strong> explicit insecure-TLS opt-in, custom PEM CA bundles,
   combined PEM client identities, HTTP(S) proxy routing and actionable file
@@ -322,6 +323,7 @@ marketing-only roadmap.
 - <a href="docs/collections.md">Collections and environments</a>
 - <a href="docs/scripting.md">Scripting and pm.*</a>
 - <a href="docs/history.md">History</a>
+- <a href="docs/cookies.md">Cookies</a>
 - <a href="docs/certificates.md">Certificates</a>
 - <a href="docs/proxy.md">Proxy</a>
 - <a href="docs/graphql.md">GraphQL</a>
