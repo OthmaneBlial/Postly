@@ -10,6 +10,12 @@
   "variable": [
     { "key": "baseUrl", "value": "https://api.example.test" }
   ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": { "type": "text/javascript", "exec": ["console.log(\"collection pre-request\");"] }
+    }
+  ],
   "item": [
     {
       "name": "Users",

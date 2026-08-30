@@ -1,0 +1,17 @@
+{
+  "format": "postly-postman-script-compatibility",
+  "version": 1,
+  "runtime": "not implemented",
+  "entries": [
+    { "api": "pm.environment.get", "status": "planned", "note": "Requires an explicit script runtime and environment mutation contract." },
+    { "api": "pm.environment.set", "status": "planned", "note": "Must define persistence and secret redaction semantics before execution." },
+    { "api": "pm.collectionVariables.get", "status": "planned", "note": "Model exists; script bridge is not implemented." },
+    { "api": "pm.variables.get", "status": "planned", "note": "Variable precedence exists outside scripts; bridge is not implemented." },
+    { "api": "pm.request", "status": "planned", "note": "Request model exists; script bridge is not implemented." },
+    { "api": "pm.response", "status": "planned", "note": "Response model exists; script bridge is not implemented." },
+    { "api": "pm.test", "status": "planned", "note": "Runner result panel and assertion runtime are not implemented." },
+    { "api": "pm.expect", "status": "planned", "note": "No compatibility claim until assertions run against real responses." },
+    { "api": "pm.sendRequest", "status": "planned", "note": "Requires documented network permissions and cancellation behavior." },
+    { "api": "console.log", "status": "planned", "note": "Console capture is not implemented; secrets must be redacted first." }
+  ]
+}

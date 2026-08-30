@@ -50,6 +50,28 @@ impl ImportReport {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct ScriptSet {
+    pre_request: Vec<String>,
+    test: Vec<String>,
+}
+
+impl ScriptSet {
+    fn extend(&mut self, other: Self) {
+        self.pre_request.extend(other.pre_request);
+        self.test.extend(other.test);
+    }
+
+    fn apply_to_request(&self, request: &mut Request) {
+        if !self.pre_request.is_empty() {
+            request.pre_request_script = Some(self.pre_request.join("\n\n"));
+        }
+        if !self.test.is_empty() {
+            request.test_script = Some(self.test.join("\n\n"));
+        }
+    }
+}
+
 pub fn import_postman_collection(
     collection_path: impl AsRef<Path>,
     output_directory: impl AsRef<Path>,
@@ -76,6 +98,11 @@ pub fn import_postman_collection(
         collection_name: Some(name),
         ..ImportReport::default()
     };
+    let collection_scripts = parse_event_scripts(&document, "Collection", &mut report);
+    collection_files.collection.pre_request_script = (!collection_scripts.pre_request.is_empty())
+        .then(|| collection_scripts.pre_request.join("\n\n"));
+    collection_files.collection.test_script =
+        (!collection_scripts.test.is_empty()).then(|| collection_scripts.test.join("\n\n"));
 
     if let Some(description) = document
         .pointer("/info/description")
@@ -99,10 +126,18 @@ pub fn import_postman_collection(
         }
         workspace.save_collection(&collection_files)?;
     }
+    workspace.save_collection(&collection_files)?;
 
     if let Some(items) = document.get("item").and_then(Value::as_array) {
         for item in items {
-            import_item(&workspace, &collection_files, item, None, &mut report)?;
+            import_item(
+                &workspace,
+                &collection_files,
+                item,
+                None,
+                &collection_scripts,
+                &mut report,
+            )?;
         }
     }
     Ok(report)
@@ -173,6 +208,7 @@ fn import_item(
     collection: &CollectionFiles,
     item: &Value,
     folder: Option<String>,
+    inherited_scripts: &ScriptSet,
     report: &mut ImportReport,
 ) -> Result<(), ImportError> {
     let name = item
@@ -180,12 +216,21 @@ fn import_item(
         .and_then(Value::as_str)
         .unwrap_or("Unnamed item");
     if let Some(children) = item.get("item").and_then(Value::as_array) {
+        let mut next_scripts = inherited_scripts.clone();
+        next_scripts.extend(parse_event_scripts(item, name, report));
         let next_folder = Some(match folder {
             Some(folder) => format!("{folder}/{name}"),
             None => name.to_owned(),
         });
         for child in children {
-            import_item(workspace, collection, child, next_folder.clone(), report)?;
+            import_item(
+                workspace,
+                collection,
+                child,
+                next_folder.clone(),
+                &next_scripts,
+                report,
+            )?;
         }
         return Ok(());
     }
@@ -197,7 +242,9 @@ fn import_item(
         return Ok(());
     };
     let mut request = parse_request(name, request_value, folder, report);
-    apply_events(&mut request, item, name, report);
+    let mut scripts = inherited_scripts.clone();
+    scripts.extend(parse_event_scripts(item, name, report));
+    scripts.apply_to_request(&mut request);
     request.examples = parse_examples(item, report);
     let request_path = workspace.save_request(collection, &request)?;
     report.imported_requests += 1;
@@ -268,9 +315,10 @@ fn parse_request(
     request
 }
 
-fn apply_events(request: &mut Request, item: &Value, name: &str, report: &mut ImportReport) {
+fn parse_event_scripts(item: &Value, subject: &str, report: &mut ImportReport) -> ScriptSet {
+    let mut scripts = ScriptSet::default();
     let Some(events) = item.get("event").and_then(Value::as_array) else {
-        return;
+        return scripts;
     };
     for event in events {
         let listen = event.get("listen").and_then(Value::as_str);
@@ -285,16 +333,17 @@ fn apply_events(request: &mut Request, item: &Value, name: &str, report: &mut Im
                     .join("\n")
             });
         match (listen, script) {
-            (Some("prerequest"), Some(script)) => request.pre_request_script = Some(script),
-            (Some("test"), Some(script)) => request.test_script = Some(script),
+            (Some("prerequest"), Some(script)) => scripts.pre_request.push(script),
+            (Some("test"), Some(script)) => scripts.test.push(script),
             (Some(other), _) => report.warn(format!(
-                "Request {name} contains unsupported event type {other}."
+                "{subject} contains unsupported event type {other}."
             )),
             _ => report.warn(format!(
-                "Request {name} contains an event without executable script lines."
+                "{subject} contains an event without executable script lines."
             )),
         }
     }
+    scripts
 }
 
 fn parse_url(value: Option<&Value>) -> Option<String> {
@@ -582,8 +631,8 @@ mod tests {
 
         let report = import_postman_collection(&fixture, output.path()).expect("import");
         assert_eq!(report.imported_requests, 2);
-        assert_eq!(report.fully_supported_requests, 1);
-        assert_eq!(report.manual_review_requests, 1);
+        assert_eq!(report.fully_supported_requests, 0);
+        assert_eq!(report.manual_review_requests, 2);
         assert!(report
             .warnings
             .iter()
@@ -596,12 +645,18 @@ mod tests {
             collection.collection.variables.get("baseUrl"),
             Some(&"https://api.example.test".to_owned())
         );
+        assert!(collection.collection.pre_request_script.is_some());
         let requests = workspace.requests(&collection).expect("requests");
         let list = requests
             .iter()
             .find(|(_, request)| request.name == "List users")
             .expect("list request");
         assert_eq!(list.1.query, vec![KeyValue::enabled("limit", "10")]);
+        assert!(list
+            .1
+            .pre_request_script
+            .as_deref()
+            .is_some_and(|script| script.contains("collection pre-request")));
         assert!(list.1.test_script.is_some());
         assert!(matches!(list.1.auth, Auth::Bearer { .. }));
     }

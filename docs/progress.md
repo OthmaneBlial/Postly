@@ -15,6 +15,7 @@ Implemented:
 - Native async HTTP execution with common body/auth/header/query behavior.
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
+- collection/folder/request script source preservation and a truthful pm.* compatibility matrix.
 - init, request, send, import, list and sequential run CLI commands.
 - new request creates and persists a saved request without editing files by hand.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.

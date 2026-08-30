@@ -32,6 +32,10 @@ pub struct Collection {
     pub variables: Variables,
     #[serde(default)]
     pub auth: Auth,
+    #[serde(default)]
+    pub pre_request_script: Option<String>,
+    #[serde(default)]
+    pub test_script: Option<String>,
 }
 
 impl Collection {
@@ -42,6 +46,8 @@ impl Collection {
             description: None,
             variables: Variables::new(),
             auth: Auth::None,
+            pre_request_script: None,
+            test_script: None,
         }
     }
 }
