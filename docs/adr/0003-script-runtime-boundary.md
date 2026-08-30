@@ -21,9 +21,13 @@ place the script payload in the process argument list.
 
 Execution is opt-in with `postly send --scripts` or `postly run --scripts`.
 The context exposes only the currently documented `pm.*` subset, and the VM
-has a two-second synchronous limit. Variable updates are applied to the
-current execution session and are not silently written back to environment
-files.
+has a two-second synchronous limit. The compatibility contract currently
+covers scoped variable reads/mutations, read-only iteration data, request
+header mutation, response inspection, `pm.test`, `pm.expect` and captured
+console methods. Source larger than 512 KiB is rejected before spawning Node;
+`NODE_OPTIONS` and `NODE_PATH` are removed from the child environment. Variable
+updates and unsets are applied to the current execution session and are not
+silently written back to environment files.
 
 ## Security boundary
 
@@ -40,4 +44,6 @@ This provides real compatibility fixtures and honest failure behavior without
 adding a large native dependency immediately. It also makes Node.js an
 explicit local prerequisite for this prototype. A future embedded runtime can
 reuse the `ScriptResult` contract and compatibility tests without changing
-request storage or runner semantics.
+request storage or runner semantics. The contract deliberately carries
+variable removals separately from assignments so `unset` and `clear` do not
+silently become no-ops at the Rust boundary.

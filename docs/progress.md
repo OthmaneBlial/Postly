@@ -40,6 +40,9 @@ Implemented:
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata and HTTPS webpki roots.
 - Persistable response assertions for status, headers, body text and JSON Pointer values, evaluated by the runner without Node.js.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
+- Script compatibility boundary now carries explicit variable unsets, globals,
+  read-only iteration data, request header mutations and bounded source size;
+  the child environment removes Node module injection variables.
 - Common response assertions now cover headers, cookies, status health, numeric/type/regex and negated expectations.
 - Stateful in-memory cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
@@ -49,7 +52,8 @@ Implemented:
 Not yet implemented:
 
 - Desktop GUI polish, richer response preview/syntax features and manual responsive/accessibility QA.
-- Embedded/hardened script runtime and broader pm.* compatibility.
+- Embedded/hardened script runtime and broader pm.* compatibility beyond the
+  tested scoped-variable/request-header/response subset.
 - Broader Postman tests/assertions and GUI assertion editing beyond the current explicit runner slice.
 - OS keychain storage, persistent/manual cookie management and crash recovery.
 - encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association and certificate settings for WebSocket/gRPC workflows.
@@ -63,6 +67,7 @@ cargo xtask check is the required validation command for this milestone. The CLI
 ## Next highest-value work
 
 1. Add importer fixtures for more Postman body/auth/URL variants.
-2. Add script isolation research and an ADR before broadening runtime compatibility.
+2. Prototype an embedded or isolated script runtime before enabling broader
+   compatibility by default; keep the opt-in Node boundary explicit.
 3. Extend the explicit assertion model with broader Postman-compatible cases and GUI coverage.
 4. Extend response preview features and complete desktop accessibility/responsive QA.

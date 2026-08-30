@@ -25,6 +25,8 @@ pub enum ScriptError {
     InvalidOutput(#[source] serde_json::Error),
     #[error("script returned an invalid request object: {0}")]
     InvalidRequest(#[source] serde_json::Error),
+    #[error("script is too large to execute safely (maximum {maximum_bytes} bytes)")]
+    TooLarge { maximum_bytes: usize },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,7 +51,17 @@ pub struct ScriptResult {
     #[serde(default)]
     pub collection_updates: Variables,
     #[serde(default)]
+    pub globals_updates: Variables,
+    #[serde(default)]
     pub runtime_updates: Variables,
+    #[serde(default)]
+    pub environment_unsets: Vec<String>,
+    #[serde(default)]
+    pub collection_unsets: Vec<String>,
+    #[serde(default)]
+    pub globals_unsets: Vec<String>,
+    #[serde(default)]
+    pub runtime_unsets: Vec<String>,
     #[serde(default)]
     pub tests: Vec<ScriptTestResult>,
     #[serde(default)]
@@ -66,25 +78,41 @@ impl ScriptResult {
         request: &mut Request,
         context: &mut VariableContext,
     ) -> Result<(), ScriptError> {
-        context.environment.extend(
-            self.environment_updates
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone())),
+        apply_variable_changes(
+            &mut context.environment,
+            &self.environment_updates,
+            &self.environment_unsets,
         );
-        context.collection.extend(
-            self.collection_updates
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone())),
+        apply_variable_changes(
+            &mut context.collection,
+            &self.collection_updates,
+            &self.collection_unsets,
         );
-        context.runtime.extend(
-            self.runtime_updates
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone())),
+        apply_variable_changes(
+            &mut context.globals,
+            &self.globals_updates,
+            &self.globals_unsets,
+        );
+        apply_variable_changes(
+            &mut context.runtime,
+            &self.runtime_updates,
+            &self.runtime_unsets,
         );
         *request =
             serde_json::from_value(self.request.clone()).map_err(ScriptError::InvalidRequest)?;
         Ok(())
     }
+}
+
+fn apply_variable_changes(target: &mut Variables, updates: &Variables, unsets: &[String]) {
+    for key in unsets {
+        target.remove(key);
+    }
+    target.extend(
+        updates
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone())),
+    );
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,7 +151,23 @@ struct VariableChanges {
     #[serde(default)]
     collection: Variables,
     #[serde(default)]
+    globals: Variables,
+    #[serde(default)]
     runtime: Variables,
+    #[serde(default)]
+    removed: VariableRemovals,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct VariableRemovals {
+    #[serde(default)]
+    environment: Vec<String>,
+    #[serde(default)]
+    collection: Vec<String>,
+    #[serde(default)]
+    globals: Vec<String>,
+    #[serde(default)]
+    runtime: Vec<String>,
 }
 
 pub fn run_script(
@@ -132,6 +176,11 @@ pub fn run_script(
     response: Option<&HttpResponse>,
     context: &VariableContext,
 ) -> Result<ScriptResult, ScriptError> {
+    if script.len() > MAX_SCRIPT_BYTES {
+        return Err(ScriptError::TooLarge {
+            maximum_bytes: MAX_SCRIPT_BYTES,
+        });
+    }
     let input = ScriptInput {
         script: script.to_owned(),
         variables: context.clone(),
@@ -148,6 +197,8 @@ pub fn run_script(
     let payload = serde_json::to_vec(&input)?;
     let mut child = Command::new("node")
         .args(["--input-type=commonjs", "-e", NODE_HARNESS])
+        .env_remove("NODE_OPTIONS")
+        .env_remove("NODE_PATH")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -176,17 +227,26 @@ pub fn run_script(
         request: node_output.request,
         environment_updates: node_output.changes.environment,
         collection_updates: node_output.changes.collection,
+        globals_updates: node_output.changes.globals,
         runtime_updates: node_output.changes.runtime,
+        environment_unsets: node_output.changes.removed.environment,
+        collection_unsets: node_output.changes.removed.collection,
+        globals_unsets: node_output.changes.removed.globals,
+        runtime_unsets: node_output.changes.removed.runtime,
         tests: node_output.tests,
         logs: node_output.logs,
     })
 }
+
+const MAX_SCRIPT_BYTES: usize = 512 * 1024;
 
 const NODE_HARNESS: &str = r##"
 const vm = require("node:vm");
 const fs = require("node:fs");
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
 const changes = { environment: {}, collection: {}, runtime: {} };
+changes.globals = {};
+const removals = { environment: [], collection: [], globals: [], runtime: [] };
 const tests = [];
 const logs = [];
 const values = input.variables || {};
@@ -196,7 +256,7 @@ function text(value) {
 }
 
 function visibleGet(key) {
-  for (const scope of ["runtime", "request", "environment", "collection", "project", "globals"]) {
+  for (const scope of ["iteration", "runtime", "request", "environment", "collection", "project", "globals"]) {
     if (Object.prototype.hasOwnProperty.call(values[scope] || {}, key)) {
       return values[scope][key];
     }
@@ -215,13 +275,24 @@ function scope(name) {
   values[name] = values[name] || {};
   return {
     get: (key) => values[name][key],
+    has: (key) => Object.prototype.hasOwnProperty.call(values[name], key),
     set: (key, value) => {
       values[name][key] = text(value);
       changes[name][key] = text(value);
+      const removalIndex = removals[name].indexOf(key);
+      if (removalIndex !== -1) removals[name].splice(removalIndex, 1);
     },
     unset: (key) => {
       delete values[name][key];
       delete changes[name][key];
+      if (!removals[name].includes(key)) removals[name].push(key);
+    },
+    clear: () => {
+      Object.keys(values[name]).forEach((key) => {
+        delete values[name][key];
+        delete changes[name][key];
+        if (!removals[name].includes(key)) removals[name].push(key);
+      });
     },
     replaceIn
   };
@@ -229,16 +300,29 @@ function scope(name) {
 
 const environment = scope("environment");
 const collectionVariables = scope("collection");
+const globals = scope("globals");
+const iterationData = {
+  get: (key) => (values.iteration || {})[key],
+  has: (key) => Object.prototype.hasOwnProperty.call(values.iteration || {}, key),
+  replaceIn
+};
 const runtime = {
   get: visibleGet,
+  has: (key) => visibleGet(key) !== undefined,
   set: (key, value) => {
     values.runtime = values.runtime || {};
     values.runtime[key] = text(value);
     changes.runtime[key] = text(value);
+    const removalIndex = removals.runtime.indexOf(key);
+    if (removalIndex !== -1) removals.runtime.splice(removalIndex, 1);
   },
   unset: (key) => {
     if (values.runtime) delete values.runtime[key];
     delete changes.runtime[key];
+    if (!removals.runtime.includes(key)) removals.runtime.push(key);
+  },
+  clear: () => {
+    Object.keys(values.runtime || {}).forEach((key) => runtime.unset(key));
   },
   replaceIn
 };
@@ -246,8 +330,33 @@ const runtime = {
 const request = input.request || {};
 const requestHeaders = request.headers || [];
 requestHeaders.get = (name) => {
-  const found = requestHeaders.find((header) => header.key.toLowerCase() === text(name).toLowerCase() && header.enabled !== false);
+  const found = requestHeaders.find((header) => header.key && header.key.toLowerCase() === text(name).toLowerCase() && header.enabled !== false);
   return found ? found.value : undefined;
+};
+requestHeaders.has = (name) => requestHeaders.get(name) !== undefined;
+requestHeaders.add = (header) => {
+  const key = text(header && (header.key || header.name)).trim();
+  if (!key) return;
+  requestHeaders.push({ key, value: text(header.value), enabled: header.disabled !== true && header.enabled !== false });
+};
+requestHeaders.upsert = (header) => {
+  const key = text(header && (header.key || header.name)).trim();
+  if (!key) return;
+  const found = requestHeaders.find((entry) => entry.key && entry.key.toLowerCase() === key.toLowerCase());
+  if (found) {
+    found.value = text(header.value);
+    found.enabled = header.disabled !== true && header.enabled !== false;
+  } else {
+    requestHeaders.add(header);
+  }
+};
+requestHeaders.remove = (name) => {
+  const normalized = text(name).toLowerCase();
+  for (let index = requestHeaders.length - 1; index >= 0; index -= 1) {
+    if (requestHeaders[index].key && requestHeaders[index].key.toLowerCase() === normalized) {
+      requestHeaders.splice(index, 1);
+    }
+  }
 };
 request.headers = requestHeaders;
 
@@ -341,6 +450,8 @@ const scriptConsole = {
 const pm = {
   environment,
   collectionVariables,
+  globals,
+  iterationData,
   variables: runtime,
   request,
   response,
@@ -370,7 +481,12 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 new vm.Script(input.script, { filename: "postly-script.js" }).runInContext(sandbox, { timeout: 2000 });
-process.stdout.write(JSON.stringify({ request, changes, tests, logs }));
+process.stdout.write(JSON.stringify({
+  request,
+  changes: { ...changes, removed: removals },
+  tests,
+  logs
+}));
 "##;
 
 #[cfg(test)]
@@ -469,5 +585,82 @@ mod tests {
         assert!(result.tests[2].passed);
         assert!(result.tests[3].passed);
         assert_eq!(result.request["name"], "Scripted");
+    }
+
+    #[test]
+    fn supports_iteration_data_request_headers_globals_and_unsets() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let mut request = Request::new("Scripted request", "GET", "https://example.test");
+        request
+            .headers
+            .push(crate::model::HeaderEntry::enabled("X-Remove", "old"));
+        request
+            .headers
+            .push(crate::model::HeaderEntry::enabled("X-Trace", "before"));
+        let mut context = VariableContext::default();
+        context
+            .environment
+            .insert("obsolete".to_owned(), "remove-me".to_owned());
+        context
+            .globals
+            .insert("suite".to_owned(), "before".to_owned());
+        context
+            .iteration
+            .insert("trace".to_owned(), "iteration-42".to_owned());
+
+        let result = run_script(
+            r#"
+                pm.request.headers.upsert({ key: "X-Trace", value: pm.iterationData.get("trace") });
+                pm.request.headers.add({ key: "X-Added", value: "yes" });
+                pm.request.headers.remove("X-Remove");
+                pm.environment.unset("obsolete");
+                pm.globals.set("suite", "after");
+                pm.test("iteration data is visible", function () {
+                    pm.expect(pm.variables.get("trace")).to.eql("iteration-42");
+                });
+            "#,
+            &request,
+            None,
+            &context,
+        )
+        .expect("script");
+
+        result
+            .apply(&mut request, &mut context)
+            .expect("apply script changes");
+        assert_eq!(
+            request
+                .headers
+                .iter()
+                .find(|header| header.key == "X-Trace")
+                .map(|header| header.value.as_str()),
+            Some("iteration-42")
+        );
+        assert!(request
+            .headers
+            .iter()
+            .any(|header| { header.key == "X-Added" && header.value == "yes" }));
+        assert!(!request
+            .headers
+            .iter()
+            .any(|header| header.key == "X-Remove"));
+        assert!(!context.environment.contains_key("obsolete"));
+        assert_eq!(context.globals.get("suite"), Some(&"after".to_owned()));
+        assert!(result.tests[0].passed);
+    }
+
+    #[test]
+    fn rejects_oversized_scripts_before_starting_node() {
+        let request = Request::new("Oversized", "GET", "https://example.test");
+        let error = run_script(
+            &"x".repeat(MAX_SCRIPT_BYTES + 1),
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect_err("oversized script should be rejected");
+        assert!(matches!(error, ScriptError::TooLarge { .. }));
     }
 }

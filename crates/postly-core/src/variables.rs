@@ -6,11 +6,19 @@ use crate::model::Variables;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VariableContext {
+    #[serde(default)]
+    pub iteration: Variables,
+    #[serde(default)]
     pub runtime: Variables,
+    #[serde(default)]
     pub request: Variables,
+    #[serde(default)]
     pub environment: Variables,
+    #[serde(default)]
     pub collection: Variables,
+    #[serde(default)]
     pub project: Variables,
+    #[serde(default)]
     pub globals: Variables,
 }
 
@@ -34,6 +42,11 @@ impl VariableContext {
         self
     }
 
+    pub fn with_iteration(mut self, variables: Variables) -> Self {
+        self.iteration = variables;
+        self
+    }
+
     pub fn set_runtime(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.runtime.insert(key.into(), value.into());
     }
@@ -51,6 +64,7 @@ impl VariableContext {
             &self.environment,
             &self.request,
             &self.runtime,
+            &self.iteration,
         ] {
             merged.extend(
                 source
@@ -170,6 +184,7 @@ fn substitute_once(input: &str, context: &VariableContext) -> (String, Vec<Strin
 
 fn lookup<'a>(context: &'a VariableContext, name: &str) -> Option<&'a str> {
     [
+        &context.iteration,
         &context.runtime,
         &context.request,
         &context.environment,
@@ -229,5 +244,14 @@ mod tests {
             context.resolve("{{baseUrl}}/health").value,
             "https://api.example.com/health"
         );
+    }
+
+    #[test]
+    fn resolves_iteration_data_before_runtime_values() {
+        let mut context = VariableContext::new();
+        context.runtime.insert("id".into(), "runtime".into());
+        context.iteration.insert("id".into(), "iteration".into());
+
+        assert_eq!(context.resolve("{{id}}").value, "iteration");
     }
 }

@@ -34,7 +34,10 @@ Current limitations:
 - Collection-level and folder-level script inheritance is materialized into request source, while variable persistence and broader runtime behavior remain limited.
 - Export back to Postman covers the current model; full pm.* compatibility and a measured behavioral score remain planned.
 
-The current compatibility matrix is machine-readable in compat/postman-script-compatibility.json. Every entry is marked planned until an actual runtime and regression fixture prove it.
+The current compatibility matrix is machine-readable in
+compat/postman-script-compatibility.json. Entries are marked supported,
+partial or planned only when the corresponding runtime behavior and regression
+evidence justify that status.
 
 Treat the report as part of the migration artifact. A successful JSON parse is not proof that a collection is behaviorally compatible.
 

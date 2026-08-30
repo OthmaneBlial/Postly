@@ -37,7 +37,11 @@ environments/staging.example.toml
 The current CLI reads enabled environment values and resolves scopes in this order:
 
 ~~~text
-runtime > request > environment > collection > project > globals
+iteration data > runtime > request > environment > collection > project > globals
 ~~~
+
+Iteration data is supplied by the collection runner and is read-only from
+scripts through `pm.iterationData`. Runtime values remain mutable for the
+current execution session.
 
 Undefined variables fail before a request is sent, which prevents an accidental request to a literal {{missing}} URL.

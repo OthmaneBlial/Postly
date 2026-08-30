@@ -198,7 +198,7 @@ pub async fn run_requests(
     summary.iterations = iterations.len();
     'iterations: for (iteration_index, iteration_data) in iterations.into_iter().enumerate() {
         let mut iteration_context = context.clone();
-        iteration_context.runtime.extend(iteration_data);
+        iteration_context.iteration = iteration_data;
         for (index, (path, request)) in requests.iter().enumerate() {
             if options.cancellation.is_cancelled() {
                 summary.cancelled = true;
@@ -464,6 +464,85 @@ mod tests {
         assert_eq!(summary.assertions, 4);
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.results[0].assertions, 4);
+    }
+
+    #[tokio::test]
+    async fn passes_iteration_data_to_pre_request_scripts() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+            for expected in ["one", "two"] {
+                let (mut socket, _) = listener.accept().await.expect("connection");
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    let read = socket.read(&mut buffer).await.expect("read request");
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                assert!(request.contains(&format!("x-iteration: {expected}")));
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: 0\r\n\r\n")
+                    .await
+                    .expect("write response");
+            }
+        });
+
+        let request = {
+            let mut request = Request::new(
+                "Iteration script",
+                "GET",
+                format!("http://{address}/health"),
+            );
+            request.pre_request_script = Some(
+                r#"
+                    pm.request.headers.upsert({
+                        key: "X-Iteration",
+                        value: pm.iterationData.get("id")
+                    });
+                "#
+                .to_owned(),
+            );
+            request
+        };
+        let mut first = Variables::new();
+        first.insert("id".to_owned(), "one".to_owned());
+        let mut second = Variables::new();
+        second.insert("id".to_owned(), "two".to_owned());
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let summary = run_requests(
+            &engine,
+            &[(PathBuf::from("iteration.postly.toml"), request)],
+            &VariableContext::default(),
+            &RunnerOptions {
+                iterations: vec![first, second],
+                scripts: true,
+                ..RunnerOptions::default()
+            },
+        )
+        .await;
+        server.await.expect("server");
+
+        assert!(summary.succeeded());
+        assert_eq!(summary.requests, 2);
+        assert_eq!(summary.failed, 0);
     }
 
     #[tokio::test]
