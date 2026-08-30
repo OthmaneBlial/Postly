@@ -67,6 +67,12 @@ enum SseStreamUpdate {
         protocol: String,
         url: String,
     },
+    Reconnecting {
+        attempt: u32,
+        max_attempts: u32,
+        delay_ms: u64,
+        last_event_id: Option<String>,
+    },
     Event(SseEvent),
     Closed,
 }
@@ -224,6 +230,7 @@ pub struct PostlyApp {
     sse_content_type: Option<String>,
     sse_protocol: Option<String>,
     sse_url: Option<String>,
+    sse_reconnect_limit: u32,
     sse_started: bool,
     sse_connected: bool,
     websocket_pending: Option<Receiver<Result<WebSocketStreamUpdate, String>>>,
@@ -299,6 +306,7 @@ impl PostlyApp {
             sse_content_type: None,
             sse_protocol: None,
             sse_url: None,
+            sse_reconnect_limit: 0,
             sse_started: false,
             sse_connected: false,
             websocket_pending: None,
@@ -740,33 +748,72 @@ impl PostlyApp {
         let request = self.edited_request()?;
         let context = self.context();
         let engine = self.engine.clone();
+        let reconnect_limit = self.sse_reconnect_limit;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
         let (sender, receiver) = mpsc::channel();
         let error_sender = sender.clone();
         thread::spawn(move || {
-            let result =
-                (|| {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|error| error.to_string())?;
-                    runtime.block_on(async move {
-                        let mut request = request;
-                        if !request.headers.iter().any(|header| {
-                            header.enabled && header.key.eq_ignore_ascii_case("accept")
-                        }) {
-                            request
-                                .headers
-                                .push(HeaderEntry::enabled("accept", "text/event-stream"));
+            let result = (|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                runtime.block_on(async move {
+                    let mut base_request = request;
+                    if !base_request
+                        .headers
+                        .iter()
+                        .any(|header| header.enabled && header.key.eq_ignore_ascii_case("accept"))
+                    {
+                        base_request
+                            .headers
+                            .push(HeaderEntry::enabled("accept", "text/event-stream"));
+                    }
+                    let mut reconnects_used = 0_u32;
+                    let mut last_event_id = None;
+                    loop {
+                        let mut request = base_request.clone();
+                        if let Some(last_event_id) = &last_event_id {
+                            if let Some(header) = request.headers.iter_mut().find(|header| {
+                                header.enabled && header.key.eq_ignore_ascii_case("last-event-id")
+                            }) {
+                                header.value.clone_from(last_event_id);
+                            } else {
+                                request
+                                    .headers
+                                    .push(HeaderEntry::enabled("last-event-id", last_event_id));
+                            }
                         }
-                        let mut response = tokio::select! {
+                        let response_result = tokio::select! {
                             result = engine.execute_stream(&request, &context) => {
-                                result.map_err(|error| error.to_string())?
+                                result.map_err(|error| error.to_string())
                             }
                             _ = worker_cancellation.cancelled() => {
                                 return Err("SSE stream cancelled".to_owned());
                             }
+                        };
+                        let mut response = match response_result {
+                            Ok(response) => response,
+                            Err(_error) if reconnects_used < reconnect_limit => {
+                                reconnects_used += 1;
+                                sender
+                                    .send(Ok(SseStreamUpdate::Reconnecting {
+                                        attempt: reconnects_used,
+                                        max_attempts: reconnect_limit,
+                                        delay_ms: 250,
+                                        last_event_id: last_event_id.clone(),
+                                    }))
+                                    .map_err(|_| "SSE console was closed".to_owned())?;
+                                tokio::select! {
+                                    _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                                    _ = worker_cancellation.cancelled() => {
+                                        return Err("SSE stream cancelled".to_owned());
+                                    }
+                                }
+                                continue;
+                            }
+                            Err(error) => return Err(error),
                         };
                         if response.status >= 400 {
                             let body = response.response.text().await.unwrap_or_default();
@@ -791,6 +838,7 @@ impl PostlyApp {
                             }))
                             .map_err(|_| "SSE console was closed".to_owned())?;
                         let mut parser = SseParser::default();
+                        let mut retry_delay_ms = 250_u64;
                         while let Some(chunk) = tokio::select! {
                             result = response.response.chunk() => {
                                 result.map_err(|error| error.to_string())?
@@ -803,20 +851,52 @@ impl PostlyApp {
                                 .feed_bytes(&chunk)
                                 .map_err(|error| error.to_string())?
                             {
+                                if let Some(id) = &event.id {
+                                    last_event_id = Some(id.clone());
+                                }
+                                if let Some(retry_ms) = event.retry_ms {
+                                    retry_delay_ms = retry_ms;
+                                }
                                 sender
                                     .send(Ok(SseStreamUpdate::Event(event)))
                                     .map_err(|_| "SSE console was closed".to_owned())?;
                             }
                         }
                         for event in parser.finish().map_err(|error| error.to_string())? {
+                            if let Some(id) = &event.id {
+                                last_event_id = Some(id.clone());
+                            }
+                            if let Some(retry_ms) = event.retry_ms {
+                                retry_delay_ms = retry_ms;
+                            }
                             sender
                                 .send(Ok(SseStreamUpdate::Event(event)))
                                 .map_err(|_| "SSE console was closed".to_owned())?;
                         }
-                        let _ = sender.send(Ok(SseStreamUpdate::Closed));
-                        Ok::<(), String>(())
-                    })
-                })();
+                        if reconnects_used >= reconnect_limit {
+                            sender
+                                .send(Ok(SseStreamUpdate::Closed))
+                                .map_err(|_| "SSE console was closed".to_owned())?;
+                            return Ok::<(), String>(());
+                        }
+                        reconnects_used += 1;
+                        sender
+                            .send(Ok(SseStreamUpdate::Reconnecting {
+                                attempt: reconnects_used,
+                                max_attempts: reconnect_limit,
+                                delay_ms: retry_delay_ms,
+                                last_event_id: last_event_id.clone(),
+                            }))
+                            .map_err(|_| "SSE console was closed".to_owned())?;
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(retry_delay_ms)) => {}
+                            _ = worker_cancellation.cancelled() => {
+                                return Err("SSE stream cancelled".to_owned());
+                            }
+                        }
+                    }
+                })
+            })();
             if let Err(error) = result {
                 let _ = error_sender.send(Err(error));
             }
@@ -1074,6 +1154,23 @@ impl PostlyApp {
                     self.sse_started = true;
                     self.sse_connected = true;
                     self.status_message = format!("SSE connected · {status} {status_text}");
+                }
+                Ok(Ok(SseStreamUpdate::Reconnecting {
+                    attempt,
+                    max_attempts,
+                    delay_ms,
+                    last_event_id,
+                })) => {
+                    self.sse_started = true;
+                    self.sse_connected = false;
+                    self.status_message = format!(
+                        "SSE reconnecting · attempt {attempt}/{max_attempts} · {delay_ms} ms{}",
+                        if last_event_id.is_some() {
+                            " · Last-Event-ID set"
+                        } else {
+                            ""
+                        }
+                    );
                 }
                 Ok(Ok(SseStreamUpdate::Event(event))) => {
                     self.sse_started = true;
@@ -1547,6 +1644,14 @@ impl PostlyApp {
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new("SSE retries").small().color(MUTED));
+                        ui.add_enabled(
+                            !busy,
+                            egui::DragValue::new(&mut self.sse_reconnect_limit)
+                                .range(0..=10)
+                                .speed(0.1),
+                        )
+                        .on_hover_text("Bounded reconnect attempts for SSE streams");
                         if ui
                             .add_enabled(!busy, egui::Button::new("Stream SSE"))
                             .on_hover_text("Open the current request as a progressive SSE console")
@@ -2985,6 +3090,57 @@ mod tests {
                 .map(|event| event.event.id.as_deref()),
             Some(Some("25"))
         );
+    }
+
+    #[test]
+    fn sse_worker_reconnects_with_the_last_event_id() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            let responses: [(Option<&str>, &[u8]); 2] = [
+                (None, b"id: first\ndata: one\n\n"),
+                (Some("first"), b"id: second\ndata: two\n\n"),
+            ];
+            for (last_event_id, body) in responses {
+                let (mut stream, _) = listener.accept().expect("connection");
+                let mut request = [0_u8; 4096];
+                let length = stream.read(&mut request).expect("read");
+                let request = String::from_utf8_lossy(&request[..length]);
+                assert!(request.contains("GET /reconnect-events HTTP/1.1"));
+                if let Some(last_event_id) = last_event_id {
+                    assert!(request
+                        .to_ascii_lowercase()
+                        .contains(&format!("last-event-id: {last_event_id}")));
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).expect("headers");
+                stream.write_all(body).expect("events");
+            }
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.url = format!("http://{address}/reconnect-events");
+        app.sse_reconnect_limit = 1;
+        app.start_sse_current().expect("start SSE");
+
+        let mut finished = false;
+        for _ in 0..300 {
+            if !app.poll_pending() {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.join().expect("server");
+        assert!(finished, "SSE worker did not finish after reconnect");
+        assert_eq!(app.sse_events.len(), 2);
+        assert_eq!(app.sse_events[0].event.data, "one");
+        assert_eq!(app.sse_events[1].event.data, "two");
+        assert!(!app.sse_connected);
+        assert_eq!(app.status_message, "SSE stream closed · 2 events");
     }
 
     #[test]

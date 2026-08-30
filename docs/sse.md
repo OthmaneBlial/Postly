@@ -18,7 +18,7 @@ blank line. JSON output emits one event object per line, which can be piped to
 local tools without an account or hosted relay. In the GUI, the `Stream SSE`
 action opens a progressive event console with event type, data, id, retry,
 timestamp and connection status. `Cancel` interrupts the in-flight body read and
-closes the local stream. The GUI retains at most 500 events; reconnect policy
-remains planned. The CLI supports bounded reconnects with `--reconnect N`, waits
-for the server-provided `retry` delay when present, and sends the most recent
-`Last-Event-ID` on the next attempt.
+closes the local stream. Set the GUI's `SSE retries` control for bounded
+reconnects; it waits for the server-provided `retry` delay when present and sends
+the most recent `Last-Event-ID` on the next attempt. The CLI supports the same
+bounded behavior with `--reconnect N`.
