@@ -126,7 +126,7 @@ Not yet implemented:
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
 - transactional workspace restore and broader multi-document crash recovery.
-- Device Code OAuth flow and a browser callback UX for Authorization Code/PKCE; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in the CLI.
+- Device Code OAuth flow and a browser callback UX for Authorization Code/PKCE; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in CLI and GUI, while SOCKS gRPC/WebSocket routing remains unsupported.
 - OpenAPI cyclic/remote references and deeper protocol-specific GUI tooling.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
   cross-client/memory benchmarks and deeper packaging/release validation.

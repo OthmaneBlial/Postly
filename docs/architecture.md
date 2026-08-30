@@ -9,7 +9,9 @@ The repository is a Cargo workspace with four packages:
 - postly-xtask: local formatting, linting and test orchestration.
 - postly-app: native desktop presentation and asynchronous interaction with the core.
 
-The core is the product boundary. A future desktop UI must call the same request, persistence and runner services instead of reimplementing request behavior in a frontend.
+The core is the product boundary. The native desktop UI and CLI call the same
+request, persistence and runner services instead of reimplementing request
+behavior in a frontend.
 
 ## Canonical files
 
