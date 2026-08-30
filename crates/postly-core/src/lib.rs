@@ -19,7 +19,10 @@ pub mod sse;
 pub mod storage;
 pub mod variables;
 
-pub use curl::{import_curl_command, parse_curl_command, CurlImportResult, CurlParseError};
+pub use curl::{
+    export_curl_command, import_curl_command, parse_curl_command, CurlExportResult,
+    CurlImportResult, CurlParseError,
+};
 pub use export::{
     export_postman_collection, export_postman_environment, ExportError, ExportReport,
 };

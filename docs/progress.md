@@ -29,6 +29,7 @@ Implemented:
 - new request creates and persists a saved request without editing files by hand.
 - env set creates local environments and saved requests resolve enabled environment variables.
 - common cURL commands can be parsed and imported without shell execution.
+- Native GUI cURL paste import creates an unsaved draft, and the current request can be copied as a shell-quoted cURL command with explicit warnings for non-materialized auth.
 - saved-request executions can be recorded, searched, filtered, cleared and retained as bounded ignored metadata-only local history.
 - global request metadata search across collections is available in the native workspace and CLI; secrets are excluded from the index.
 - native `postly-gui` request workspace with async send, editor tabs and response views.

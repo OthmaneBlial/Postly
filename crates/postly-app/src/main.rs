@@ -12,11 +12,11 @@ use chrono::Local;
 use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
-    parse_graphql_response, parse_graphql_schema, schema_introspection_query, ApiKeyLocation,
-    Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions, Environment, GraphqlSchema,
-    HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, MultipartPart,
-    Request, RequestBody, RequestSearchResult, ResponseView, SseEvent, SseParser, VariableContext,
-    Workspace,
+    export_curl_command, parse_curl_command, parse_graphql_response, parse_graphql_schema,
+    schema_introspection_query, ApiKeyLocation, Assertion, Auth, CancellationToken,
+    CollectionFiles, EngineOptions, Environment, GraphqlSchema, HeaderEntry, HistoryEntry,
+    HistoryFilter, HttpEngine, HttpResponse, KeyValue, MultipartPart, Request, RequestBody,
+    RequestSearchResult, ResponseView, SseEvent, SseParser, VariableContext, Workspace,
 };
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::{
@@ -65,6 +65,7 @@ enum CommandPaletteAction {
     CancelOperation,
     ClearResponse,
     ToggleResponseWrap,
+    ImportCurl,
 }
 
 impl CommandPaletteAction {
@@ -76,6 +77,7 @@ impl CommandPaletteAction {
             Self::CancelOperation => "Cancel active operation",
             Self::ClearResponse => "Clear response",
             Self::ToggleResponseWrap => "Toggle response wrapping",
+            Self::ImportCurl => "Import cURL command",
         }
     }
 
@@ -86,6 +88,7 @@ impl CommandPaletteAction {
             Self::SendRequest => "⌘↵",
             Self::CancelOperation => "Esc",
             Self::ClearResponse | Self::ToggleResponseWrap => "",
+            Self::ImportCurl => "",
         }
     }
 }
@@ -360,6 +363,9 @@ pub struct PostlyApp {
     command_palette_open: bool,
     command_palette_query: String,
     command_palette_selected: usize,
+    curl_import_open: bool,
+    curl_import_text: String,
+    curl_import_error: Option<String>,
     dirty: bool,
     status_message: String,
 }
@@ -452,6 +458,9 @@ impl PostlyApp {
             command_palette_open: false,
             command_palette_query: String::new(),
             command_palette_selected: 0,
+            curl_import_open: false,
+            curl_import_text: String::new(),
+            curl_import_error: None,
             dirty: false,
             status_message,
         };
@@ -721,6 +730,7 @@ impl PostlyApp {
             CommandPaletteAction::CancelOperation,
             CommandPaletteAction::ClearResponse,
             CommandPaletteAction::ToggleResponseWrap,
+            CommandPaletteAction::ImportCurl,
         ]
     }
 
@@ -743,6 +753,115 @@ impl PostlyApp {
             CommandPaletteAction::CancelOperation => self.cancel_active(),
             CommandPaletteAction::ClearResponse => self.clear_response(),
             CommandPaletteAction::ToggleResponseWrap => self.response_wrap = !self.response_wrap,
+            CommandPaletteAction::ImportCurl => {
+                self.curl_import_open = true;
+                self.curl_import_error = None;
+            }
+        }
+    }
+
+    fn apply_curl_import(&mut self) -> Result<Vec<String>, String> {
+        let (request, warnings) =
+            parse_curl_command(&self.curl_import_text).map_err(|error| error.to_string())?;
+        self.selected_request = None;
+        self.request_path = None;
+        self.request = request;
+        self.load_request_editors();
+        self.clear_response();
+        self.dirty = true;
+        self.status_message = if warnings.is_empty() {
+            "cURL command imported as a local draft".to_owned()
+        } else {
+            format!(
+                "cURL imported with {} warning{} — review before sending",
+                warnings.len(),
+                if warnings.len() == 1 { "" } else { "s" }
+            )
+        };
+        Ok(warnings)
+    }
+
+    fn draw_curl_import_dialog(&mut self, ctx: &egui::Context) {
+        if !self.curl_import_open {
+            return;
+        }
+        let mut import_clicked = false;
+        let mut cancel_clicked = false;
+        egui::Window::new("Import cURL")
+            .collapsible(false)
+            .resizable(true)
+            .default_width(640.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new(
+                        "Paste a POSIX-shell cURL command. It becomes a new unsaved local draft.",
+                    )
+                    .small()
+                    .color(MUTED),
+                );
+                ui.add_space(8.0);
+                ui.add(
+                    TextEdit::multiline(&mut self.curl_import_text)
+                        .font(TextStyle::Monospace)
+                        .desired_rows(9)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(
+                            "curl https://api.example.test/users -H 'Accept: application/json'",
+                        ),
+                );
+                if let Some(error) = &self.curl_import_error {
+                    ui.add_space(5.0);
+                    ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel_clicked = true;
+                    }
+                    if ui.button("Import as draft").clicked() {
+                        import_clicked = true;
+                    }
+                });
+            });
+        if cancel_clicked {
+            self.curl_import_open = false;
+            self.curl_import_error = None;
+        }
+        if import_clicked {
+            match self.apply_curl_import() {
+                Ok(warnings) => {
+                    self.curl_import_open = false;
+                    self.curl_import_error = None;
+                    if !warnings.is_empty() {
+                        self.status_message =
+                            format!("{} · {}", self.status_message, warnings.join(" "));
+                    }
+                }
+                Err(error) => self.curl_import_error = Some(error),
+            }
+        }
+    }
+
+    fn copy_current_as_curl(&mut self, ctx: &egui::Context) {
+        match self.edited_request() {
+            Ok(request) => {
+                let exported = export_curl_command(&request);
+                ctx.copy_text(exported.command);
+                self.status_message = if exported.warnings.is_empty() {
+                    "cURL command copied to clipboard".to_owned()
+                } else {
+                    format!(
+                        "cURL copied with {} warning{}",
+                        exported.warnings.len(),
+                        if exported.warnings.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    )
+                };
+            }
+            Err(error) => self.status_message = format!("Cannot copy cURL: {error}"),
         }
     }
 
@@ -2089,6 +2208,7 @@ impl PostlyApp {
                 let mut stream_clicked = false;
                 let mut websocket_clicked = false;
                 let mut save_clicked = false;
+                let mut copy_curl_clicked = false;
                 let mut duplicate_clicked = false;
                 let mut delete_clicked = false;
                 let busy = self.pending.is_some()
@@ -2143,6 +2263,9 @@ impl PostlyApp {
                     }
                     if ui.button("Save").clicked() {
                         save_clicked = true;
+                    }
+                    if ui.button("Copy cURL").clicked() {
+                        copy_curl_clicked = true;
                     }
                     if ui
                         .add_enabled(self.request_path.is_some(), egui::Button::new("Duplicate"))
@@ -2208,6 +2331,9 @@ impl PostlyApp {
                     if let Err(error) = self.save_current() {
                         self.status_message = format!("Save failed: {error}");
                     }
+                }
+                if copy_curl_clicked {
+                    self.copy_current_as_curl(ui.ctx());
                 }
                 if duplicate_clicked {
                     if let Err(error) = self.duplicate_current() {
@@ -3657,6 +3783,7 @@ impl eframe::App for PostlyApp {
         self.draw_response(ui);
         self.draw_editor(ui);
         self.draw_command_palette(&ctx);
+        self.draw_curl_import_dialog(&ctx);
         if pending {
             ctx.request_repaint_after(Duration::from_millis(80));
         }
@@ -4102,6 +4229,25 @@ mod tests {
         assert!(app.request_path.is_none());
         assert!(app.dirty);
         assert!(!app.command_palette_open);
+    }
+
+    #[test]
+    fn curl_import_action_creates_an_unsaved_request_draft() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        assert!(app
+            .palette_actions()
+            .contains(&CommandPaletteAction::ImportCurl));
+        app.curl_import_text =
+            "curl -X POST https://api.example.test/users -H 'Content-Type: application/json' --data-raw '{\"name\":\"Ada\"}'"
+                .to_owned();
+        let warnings = app.apply_curl_import().expect("import cURL");
+        assert!(warnings.is_empty());
+        assert_eq!(app.request.method, "POST");
+        assert_eq!(app.request.url, "https://api.example.test/users");
+        assert!(matches!(app.request.body, RequestBody::Json { .. }));
+        assert!(app.request_path.is_none());
+        assert!(app.dirty);
     }
 
     #[test]

@@ -67,7 +67,7 @@ This is a working vertical slice, not a static UI mockup.
   deterministic discovery, stable request identity, duplicate/delete/rename
   flows, global metadata search and bounded metadata-only history.
 - <strong>Migration:</strong> Postman Collection v2.1 import/export, environment import/
-  export, OpenAPI 3.0/3.1 JSON/YAML file or URL import and common cURL import.
+  export, OpenAPI 3.0/3.1 JSON/YAML file or URL import, and cURL paste/copy workflows.
 - <strong>Testing and automation:</strong> explicit response assertions, opt-in Node.js
   script bridge, basic <code>pm.*</code>, collection runner, iteration data, pretty/JSON/
   JUnit reporters and deliberate exit behavior.
@@ -76,7 +76,7 @@ This is a working vertical slice, not a static UI mockup.
   three streaming modes.
 - <strong>Native desktop workspace:</strong> a Rust/egui application using the same core,
   with local history, request editing, a Scripts tab, cancellation and persisted
-  local Transport settings for HTTP/SSE.
+  local Transport settings for HTTP/SSE, plus cURL paste/copy.
 
 For the exact boundary of each feature, read the
 <a href="docs/compatibility.md">compatibility matrix</a> and the

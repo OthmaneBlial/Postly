@@ -49,3 +49,9 @@ postly import curl "curl -X POST https://api.example.test/users -H 'Content-Type
 ~~~
 
 The current parser covers common method, URL, headers, JSON/raw data, cookies, Basic Auth and GET data options. Unsupported flags produce a warning or an explicit parse error.
+
+In the native workspace, use the command palette's **Import cURL** action to
+paste the same kind of command into an unsaved request draft. After editing,
+**Copy cURL** places a POSIX-shell-quoted command on the clipboard; runtime-only
+authentication such as OAuth client credentials stays visible as a warning
+instead of being silently materialized.

@@ -43,6 +43,186 @@ pub struct CurlImportResult {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CurlExportResult {
+    pub command: String,
+    pub warnings: Vec<String>,
+}
+
+/// Convert a native request into a reviewable POSIX-shell cURL command.
+///
+/// Values are quoted for a shell, but variable placeholders remain visible so
+/// the copied command can still be reviewed and adapted before execution.
+pub fn export_curl_command(request: &Request) -> CurlExportResult {
+    let mut arguments = vec!["curl".to_owned()];
+    let mut warnings = Vec::new();
+    let url = append_query_parameters(&request.url, &request.query);
+    arguments.push("--request".to_owned());
+    arguments.push(shell_quote(&request.method));
+    arguments.push(shell_quote(&url));
+
+    for header in request.headers.iter().filter(|header| header.enabled) {
+        arguments.push("--header".to_owned());
+        arguments.push(shell_quote(&format!("{}: {}", header.key, header.value)));
+    }
+    if !has_header(&request.headers, "content-type") {
+        if let Some(content_type) = body_content_type(&request.body) {
+            arguments.push("--header".to_owned());
+            arguments.push(shell_quote(&format!("Content-Type: {content_type}")));
+        }
+    }
+    for cookie in request.cookies.iter().filter(|cookie| cookie.enabled) {
+        arguments.push("--cookie".to_owned());
+        arguments.push(shell_quote(&format!("{}={}", cookie.key, cookie.value)));
+    }
+
+    match &request.auth {
+        Auth::None => {}
+        Auth::Basic { username, password } => {
+            arguments.push("--user".to_owned());
+            arguments.push(shell_quote(&format!("{username}:{password}")));
+        }
+        Auth::Bearer { token } => {
+            arguments.push("--header".to_owned());
+            arguments.push(shell_quote(&format!("Authorization: Bearer {token}")));
+        }
+        Auth::ApiKey {
+            key,
+            value,
+            location: crate::model::ApiKeyLocation::Header,
+        } => {
+            arguments.push("--header".to_owned());
+            arguments.push(shell_quote(&format!("{key}: {value}")));
+        }
+        Auth::ApiKey {
+            key,
+            value,
+            location: crate::model::ApiKeyLocation::Query,
+        } => {
+            warnings.push(
+                "API-key query auth is appended without resolving variable placeholders."
+                    .to_owned(),
+            );
+            arguments[3] = shell_quote(&append_query_parameters(
+                &url,
+                &[crate::model::KeyValue::enabled(key, value)],
+            ));
+        }
+        Auth::OAuth2ClientCredentials { .. } => {
+            warnings.push(
+                "OAuth 2.0 client credentials were not materialized; fetch a token before running the copied command."
+                    .to_owned(),
+            );
+        }
+    }
+
+    match &request.body {
+        RequestBody::None => {}
+        RequestBody::Raw { text, .. } => {
+            arguments.push("--data-raw".to_owned());
+            arguments.push(shell_quote(text));
+        }
+        RequestBody::Json { value } => {
+            arguments.push("--data-raw".to_owned());
+            arguments.push(shell_quote(
+                &serde_json::to_string(value).unwrap_or_else(|_| "null".to_owned()),
+            ));
+        }
+        RequestBody::Graphql {
+            query,
+            variables,
+            operation_name,
+        } => {
+            let mut payload = serde_json::Map::new();
+            payload.insert("query".to_owned(), serde_json::Value::String(query.clone()));
+            payload.insert("variables".to_owned(), variables.clone());
+            if let Some(operation_name) = operation_name {
+                payload.insert(
+                    "operationName".to_owned(),
+                    serde_json::Value::String(operation_name.clone()),
+                );
+            }
+            arguments.push("--data-raw".to_owned());
+            arguments.push(shell_quote(
+                &serde_json::to_string(&serde_json::Value::Object(payload))
+                    .unwrap_or_else(|_| "{}".to_owned()),
+            ));
+        }
+        RequestBody::FormUrlEncoded { fields } => {
+            for field in fields.iter().filter(|field| field.enabled) {
+                arguments.push("--data-urlencode".to_owned());
+                arguments.push(shell_quote(&format!("{}={}", field.key, field.value)));
+            }
+        }
+        RequestBody::Multipart { parts } => {
+            for part in parts.iter().filter(|part| part.enabled) {
+                let value = if let Some(path) = &part.file_path {
+                    let content_type = part
+                        .content_type
+                        .as_deref()
+                        .map(|content_type| format!(";type={content_type}"))
+                        .unwrap_or_default();
+                    format!("{}=@{}{}", part.name, path, content_type)
+                } else {
+                    format!("{}={}", part.name, part.value)
+                };
+                arguments.push("--form".to_owned());
+                arguments.push(shell_quote(&value));
+            }
+        }
+        RequestBody::BinaryFile { path, .. } => {
+            arguments.push("--data-binary".to_owned());
+            arguments.push(shell_quote(&format!("@{path}")));
+        }
+    }
+
+    CurlExportResult {
+        command: arguments.join(" "),
+        warnings,
+    }
+}
+
+fn append_query_parameters(url: &str, pairs: &[crate::model::KeyValue]) -> String {
+    let query = pairs
+        .iter()
+        .filter(|pair| pair.enabled)
+        .fold(
+            url::form_urlencoded::Serializer::new(String::new()),
+            |mut query, pair| {
+                query.append_pair(&pair.key, &pair.value);
+                query
+            },
+        )
+        .finish();
+    if query.is_empty() {
+        return url.to_owned();
+    }
+    format!(
+        "{url}{}{}",
+        if url.contains('?') { '&' } else { '?' },
+        query
+    )
+}
+
+fn has_header(headers: &[HeaderEntry], name: &str) -> bool {
+    headers
+        .iter()
+        .any(|header| header.enabled && header.key.eq_ignore_ascii_case(name))
+}
+
+fn body_content_type(body: &RequestBody) -> Option<&'static str> {
+    match body {
+        RequestBody::Json { .. } | RequestBody::Graphql { .. } => Some("application/json"),
+        RequestBody::FormUrlEncoded { .. } => Some("application/x-www-form-urlencoded"),
+        RequestBody::Multipart { .. } => None,
+        RequestBody::Raw { .. } | RequestBody::BinaryFile { .. } | RequestBody::None => None,
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 pub fn parse_curl_command(command: &str) -> Result<(Request, Vec<String>), CurlParseError> {
     let tokens = shell_words(command)?;
     if tokens.first().map(String::as_str) != Some("curl") {
@@ -332,5 +512,28 @@ mod tests {
         assert_eq!(request.method, "GET");
         assert_eq!(request.url, "https://api.example.test/search?q=postly");
         assert!(matches!(request.body, RequestBody::None));
+    }
+
+    #[test]
+    fn exports_a_request_as_shell_safe_curl() {
+        let mut request = Request::new("Create user", "POST", "https://api.example.test/users");
+        request.query = vec![crate::model::KeyValue::enabled("filter", "Ada Lovelace")];
+        request.headers = vec![HeaderEntry::enabled("X-Trace", "it's-local")];
+        request.auth = Auth::Basic {
+            username: "user".to_owned(),
+            password: "p'ass".to_owned(),
+        };
+        request.body = RequestBody::Json {
+            value: serde_json::json!({"name": "Ada"}),
+        };
+
+        let exported = export_curl_command(&request);
+        assert!(exported
+            .command
+            .contains("--request 'POST' 'https://api.example.test/users?filter=Ada+Lovelace'"));
+        assert!(exported.command.contains("'X-Trace: it'\\''s-local'"));
+        assert!(exported.command.contains("'user:p'\\''ass'"));
+        assert!(exported.command.contains("--data-raw '{\"name\":\"Ada\"}'"));
+        assert!(exported.warnings.is_empty());
     }
 }
