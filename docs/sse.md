@@ -16,5 +16,6 @@ LF/CRLF line endings, chunk boundaries, and a final event without a trailing
 blank line. JSON output emits one event object per line, which can be piped to
 local tools without an account or hosted relay. In the GUI, the `Stream SSE`
 action opens a progressive event console with event type, data, id, retry,
-timestamp and connection status. The GUI retains at most 500 events; reconnect
-policy remains planned.
+timestamp and connection status. `Cancel` interrupts the in-flight body read and
+closes the local stream. The GUI retains at most 500 events; reconnect policy
+remains planned.

@@ -27,6 +27,8 @@ Postly is an open-source, Rust-first API development workspace designed around l
 - Headless commands for immediate requests, saved requests and sequential collection runs.
 - Searchable, filterable and bounded metadata-only local history for saved request executions (`postly history`).
 - A native Rust desktop request workspace (`postly-gui`) using the same core.
+- Native GUI request, SSE and WebSocket workers support explicit cancellation;
+  cancellation drops in-flight HTTP bodies and closes active protocol streams.
 - Response views include virtualized line numbers for large payloads, local search, copy, save-to-workspace and optional wrapping.
 - Saved requests can be duplicated or deleted from the native workspace with guarded project-local storage operations.
 - Saving a request name or folder relocates its canonical file while preserving its stable UUID.

@@ -22,5 +22,6 @@ loop.
 The native GUI exposes `Connect WS` for the current request. It supports
 `ws://` and `wss://`, request headers/auth/cookies/query parameters, text sends,
 binary/ping/pong/close frame visibility, connection status and a bounded
-500-message console history. Reconnect policy and saved message presets remain
+500-message console history. `Cancel` closes an active connection during the
+handshake or receive loop. Reconnect policy and saved message presets remain
 future slices.

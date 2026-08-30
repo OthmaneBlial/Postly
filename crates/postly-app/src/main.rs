@@ -11,9 +11,9 @@ use chrono::Local;
 use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
-    ApiKeyLocation, Assertion, Auth, CollectionFiles, EngineOptions, Environment, HeaderEntry,
-    HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, Request, RequestBody,
-    ResponseView, SseEvent, SseParser, VariableContext, Workspace,
+    ApiKeyLocation, Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions,
+    Environment, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue,
+    Request, RequestBody, ResponseView, SseEvent, SseParser, VariableContext, Workspace,
 };
 use tokio_tungstenite::{
     connect_async,
@@ -216,7 +216,9 @@ pub struct PostlyApp {
     response_wrap: bool,
     pending: Option<Receiver<Result<HttpResponse, String>>>,
     pending_request: Option<Request>,
+    pending_cancellation: Option<CancellationToken>,
     sse_pending: Option<Receiver<Result<SseStreamUpdate, String>>>,
+    sse_cancellation: Option<CancellationToken>,
     sse_events: VecDeque<ReceivedSseEvent>,
     sse_status: Option<(u16, String)>,
     sse_content_type: Option<String>,
@@ -225,6 +227,7 @@ pub struct PostlyApp {
     sse_started: bool,
     sse_connected: bool,
     websocket_pending: Option<Receiver<Result<WebSocketStreamUpdate, String>>>,
+    websocket_cancellation: Option<CancellationToken>,
     websocket_commands: Option<tokio::sync::mpsc::UnboundedSender<WebSocketCommand>>,
     websocket_messages: VecDeque<ReceivedWebSocketMessage>,
     websocket_input: String,
@@ -288,7 +291,9 @@ impl PostlyApp {
             response_wrap: false,
             pending: None,
             pending_request: None,
+            pending_cancellation: None,
             sse_pending: None,
+            sse_cancellation: None,
             sse_events: VecDeque::new(),
             sse_status: None,
             sse_content_type: None,
@@ -297,6 +302,7 @@ impl PostlyApp {
             sse_started: false,
             sse_connected: false,
             websocket_pending: None,
+            websocket_cancellation: None,
             websocket_commands: None,
             websocket_messages: VecDeque::new(),
             websocket_input: String::new(),
@@ -476,11 +482,16 @@ impl PostlyApp {
     }
 
     fn clear_response(&mut self) {
+        self.cancel_active();
         self.response = None;
         self.response_error = None;
         self.response_search.clear();
         self.response_tab = ResponseTab::Pretty;
+        self.pending = None;
+        self.pending_request = None;
+        self.pending_cancellation = None;
         self.sse_pending = None;
+        self.sse_cancellation = None;
         self.sse_events.clear();
         self.sse_status = None;
         self.sse_content_type = None;
@@ -489,12 +500,35 @@ impl PostlyApp {
         self.sse_started = false;
         self.sse_connected = false;
         self.websocket_pending = None;
+        self.websocket_cancellation = None;
         self.websocket_commands = None;
         self.websocket_messages.clear();
         self.websocket_input.clear();
         self.websocket_url = None;
         self.websocket_started = false;
         self.websocket_connected = false;
+    }
+
+    fn cancel_active(&mut self) {
+        let mut cancelled = false;
+        if let Some(token) = &self.pending_cancellation {
+            token.cancel();
+            cancelled = true;
+        }
+        if let Some(token) = &self.sse_cancellation {
+            token.cancel();
+            cancelled = true;
+        }
+        if let Some(token) = &self.websocket_cancellation {
+            token.cancel();
+            cancelled = true;
+        }
+        if let Some(sender) = &self.websocket_commands {
+            let _ = sender.send(WebSocketCommand::Close);
+        }
+        if cancelled {
+            self.status_message = "Cancelling…".to_owned();
+        }
     }
 
     fn save_current_response(&mut self) -> Result<(), String> {
@@ -660,12 +694,15 @@ impl PostlyApp {
     }
 
     fn send_current(&mut self) -> Result<(), String> {
-        if self.pending.is_some() || self.sse_pending.is_some() {
+        if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
+        {
             return Ok(());
         }
         let request = self.edited_request()?;
         let context = self.context();
         let engine = self.engine.clone();
+        let cancellation = CancellationToken::default();
+        let worker_cancellation = cancellation.clone();
         let (sender, receiver) = mpsc::channel();
         let worker_request = request.clone();
         thread::spawn(move || {
@@ -674,26 +711,37 @@ impl PostlyApp {
                     .enable_all()
                     .build()
                     .map_err(|error| error.to_string())?;
-                runtime
-                    .block_on(engine.execute(&worker_request, &context))
-                    .map_err(|error| error.to_string())
+                runtime.block_on(async move {
+                    tokio::select! {
+                        result = engine.execute(&worker_request, &context) => {
+                            result.map_err(|error| error.to_string())
+                        }
+                        _ = worker_cancellation.cancelled() => {
+                            Err("request cancelled".to_owned())
+                        }
+                    }
+                })
             })();
             let _ = sender.send(result);
         });
+        self.clear_response();
         self.pending = Some(receiver);
         self.pending_request = Some(request);
-        self.clear_response();
+        self.pending_cancellation = Some(cancellation);
         self.status_message = "Sending request…".to_owned();
         Ok(())
     }
 
     fn start_sse_current(&mut self) -> Result<(), String> {
-        if self.pending.is_some() || self.sse_pending.is_some() {
+        if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
+        {
             return Ok(());
         }
         let request = self.edited_request()?;
         let context = self.context();
         let engine = self.engine.clone();
+        let cancellation = CancellationToken::default();
+        let worker_cancellation = cancellation.clone();
         let (sender, receiver) = mpsc::channel();
         let error_sender = sender.clone();
         thread::spawn(move || {
@@ -712,10 +760,14 @@ impl PostlyApp {
                                 .headers
                                 .push(HeaderEntry::enabled("accept", "text/event-stream"));
                         }
-                        let mut response = engine
-                            .execute_stream(&request, &context)
-                            .await
-                            .map_err(|error| error.to_string())?;
+                        let mut response = tokio::select! {
+                            result = engine.execute_stream(&request, &context) => {
+                                result.map_err(|error| error.to_string())?
+                            }
+                            _ = worker_cancellation.cancelled() => {
+                                return Err("SSE stream cancelled".to_owned());
+                            }
+                        };
                         if response.status >= 400 {
                             let body = response.response.text().await.unwrap_or_default();
                             return Err(format!(
@@ -739,12 +791,14 @@ impl PostlyApp {
                             }))
                             .map_err(|_| "SSE console was closed".to_owned())?;
                         let mut parser = SseParser::default();
-                        while let Some(chunk) = response
-                            .response
-                            .chunk()
-                            .await
-                            .map_err(|error| error.to_string())?
-                        {
+                        while let Some(chunk) = tokio::select! {
+                            result = response.response.chunk() => {
+                                result.map_err(|error| error.to_string())?
+                            }
+                            _ = worker_cancellation.cancelled() => {
+                                return Err("SSE stream cancelled".to_owned());
+                            }
+                        } {
                             for event in parser
                                 .feed_bytes(&chunk)
                                 .map_err(|error| error.to_string())?
@@ -769,6 +823,7 @@ impl PostlyApp {
         });
         self.clear_response();
         self.sse_pending = Some(receiver);
+        self.sse_cancellation = Some(cancellation);
         self.sse_started = true;
         self.status_message = "Connecting to SSE endpoint…".to_owned();
         Ok(())
@@ -781,6 +836,8 @@ impl PostlyApp {
         }
         let request = self.edited_request()?;
         let context = self.context();
+        let cancellation = CancellationToken::default();
+        let worker_cancellation = cancellation.clone();
         let (command_sender, mut command_receiver) =
             tokio::sync::mpsc::unbounded_channel::<WebSocketCommand>();
         let (sender, receiver) = mpsc::channel();
@@ -794,13 +851,18 @@ impl PostlyApp {
                 runtime.block_on(async move {
                     let websocket_request = build_websocket_request(&request, &context)?;
                     let websocket_url = websocket_request.uri().to_string();
-                    let (mut socket, _) = tokio::time::timeout(
-                        Duration::from_secs(30),
-                        connect_async(websocket_request),
-                    )
-                    .await
-                    .map_err(|_| "WebSocket handshake timed out".to_owned())?
-                    .map_err(|error| format!("WebSocket connection failed: {error}"))?;
+                    let connect_result = tokio::select! {
+                        result = tokio::time::timeout(
+                            Duration::from_secs(30),
+                            connect_async(websocket_request),
+                        ) => result,
+                        _ = worker_cancellation.cancelled() => {
+                            return Err("WebSocket connection cancelled".to_owned());
+                        }
+                    };
+                    let (mut socket, _) = connect_result
+                        .map_err(|_| "WebSocket handshake timed out".to_owned())?
+                        .map_err(|error| format!("WebSocket connection failed: {error}"))?;
                     sender
                         .send(Ok(WebSocketStreamUpdate::Connected {
                             url: websocket_url,
@@ -878,6 +940,10 @@ impl PostlyApp {
                                     }
                                 }
                             }
+                            _ = worker_cancellation.cancelled() => {
+                                let _ = socket.close(None).await;
+                                break;
+                            }
                         }
                     }
                     let _ = sender.send(Ok(WebSocketStreamUpdate::Closed));
@@ -890,6 +956,7 @@ impl PostlyApp {
         });
         self.clear_response();
         self.websocket_pending = Some(receiver);
+        self.websocket_cancellation = Some(cancellation);
         self.websocket_commands = Some(command_sender);
         self.websocket_started = true;
         self.status_message = "Connecting to WebSocket…".to_owned();
@@ -938,8 +1005,13 @@ impl PostlyApp {
                 Err("request worker stopped unexpectedly".to_owned())
             }
         };
+        let cancelled = self
+            .pending_cancellation
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled);
         let request = self.pending_request.take();
         self.pending = None;
+        self.pending_cancellation = None;
         match result {
             Ok(response) => {
                 if let Some(request) = request {
@@ -956,14 +1028,23 @@ impl PostlyApp {
                 self.refresh_history();
             }
             Err(error) => {
-                if let Some(request) = request {
-                    let _ = self
-                        .workspace
-                        .record_history(&HistoryEntry::from_error(&request, 0));
+                if !cancelled {
+                    if let Some(request) = request {
+                        let _ = self
+                            .workspace
+                            .record_history(&HistoryEntry::from_error(&request, 0));
+                    }
                 }
-                self.status_message = "Request failed".to_owned();
-                self.response_error = Some(error);
-                self.refresh_history();
+                if cancelled {
+                    self.status_message = "Request cancelled".to_owned();
+                    self.response_error = None;
+                } else {
+                    self.status_message = "Request failed".to_owned();
+                    self.response_error = Some(error);
+                }
+                if !cancelled {
+                    self.refresh_history();
+                }
             }
         }
         false
@@ -1007,28 +1088,53 @@ impl PostlyApp {
                         format!("SSE event received · {} retained", self.sse_events.len());
                 }
                 Ok(Ok(SseStreamUpdate::Closed)) => {
+                    let cancelled = self
+                        .sse_cancellation
+                        .as_ref()
+                        .is_some_and(CancellationToken::is_cancelled);
                     self.sse_connected = false;
-                    self.status_message = format!(
-                        "SSE stream closed · {} event{}",
-                        self.sse_events.len(),
-                        if self.sse_events.len() == 1 { "" } else { "s" }
-                    );
+                    self.status_message = if cancelled {
+                        "SSE stream cancelled".to_owned()
+                    } else {
+                        format!(
+                            "SSE stream closed · {} event{}",
+                            self.sse_events.len(),
+                            if self.sse_events.len() == 1 { "" } else { "s" }
+                        )
+                    };
                     finished = true;
                     break;
                 }
                 Ok(Err(error)) => {
+                    let cancelled = self
+                        .sse_cancellation
+                        .as_ref()
+                        .is_some_and(CancellationToken::is_cancelled);
                     self.sse_connected = false;
                     self.sse_started = true;
-                    self.status_message = "SSE stream failed".to_owned();
-                    self.response_error = Some(error);
+                    self.status_message = if cancelled {
+                        "SSE stream cancelled".to_owned()
+                    } else {
+                        "SSE stream failed".to_owned()
+                    };
+                    self.response_error = (!cancelled).then_some(error);
                     finished = true;
                     break;
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
+                    let cancelled = self
+                        .sse_cancellation
+                        .as_ref()
+                        .is_some_and(CancellationToken::is_cancelled);
                     self.sse_connected = false;
-                    self.status_message = "SSE stream worker stopped unexpectedly".to_owned();
-                    self.response_error = Some("SSE stream worker stopped unexpectedly".to_owned());
+                    self.status_message = if cancelled {
+                        "SSE stream cancelled".to_owned()
+                    } else {
+                        "SSE stream worker stopped unexpectedly".to_owned()
+                    };
+                    self.response_error =
+                        (!cancelled).then_some("SSE stream worker stopped unexpectedly".to_owned());
                     finished = true;
                     break;
                 }
@@ -1036,6 +1142,7 @@ impl PostlyApp {
         }
         if finished {
             self.sse_pending = None;
+            self.sse_cancellation = None;
         }
         self.sse_pending.is_some()
     }
@@ -1077,32 +1184,57 @@ impl PostlyApp {
                     );
                 }
                 Ok(Ok(WebSocketStreamUpdate::Closed)) => {
+                    let cancelled = self
+                        .websocket_cancellation
+                        .as_ref()
+                        .is_some_and(CancellationToken::is_cancelled);
                     self.websocket_connected = false;
-                    self.status_message = format!(
-                        "WebSocket closed · {} message{}",
-                        self.websocket_messages.len(),
-                        if self.websocket_messages.len() == 1 {
-                            ""
-                        } else {
-                            "s"
-                        }
-                    );
+                    self.status_message = if cancelled {
+                        "WebSocket connection cancelled".to_owned()
+                    } else {
+                        format!(
+                            "WebSocket closed · {} message{}",
+                            self.websocket_messages.len(),
+                            if self.websocket_messages.len() == 1 {
+                                ""
+                            } else {
+                                "s"
+                            }
+                        )
+                    };
                     finished = true;
                     break;
                 }
                 Ok(Err(error)) => {
+                    let cancelled = self
+                        .websocket_cancellation
+                        .as_ref()
+                        .is_some_and(CancellationToken::is_cancelled);
                     self.websocket_connected = false;
                     self.websocket_started = true;
-                    self.status_message = "WebSocket failed".to_owned();
-                    self.response_error = Some(error);
+                    self.status_message = if cancelled {
+                        "WebSocket connection cancelled".to_owned()
+                    } else {
+                        "WebSocket failed".to_owned()
+                    };
+                    self.response_error = (!cancelled).then_some(error);
                     finished = true;
                     break;
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
+                    let cancelled = self
+                        .websocket_cancellation
+                        .as_ref()
+                        .is_some_and(CancellationToken::is_cancelled);
                     self.websocket_connected = false;
-                    self.status_message = "WebSocket worker stopped unexpectedly".to_owned();
-                    self.response_error = Some("WebSocket worker stopped unexpectedly".to_owned());
+                    self.status_message = if cancelled {
+                        "WebSocket connection cancelled".to_owned()
+                    } else {
+                        "WebSocket worker stopped unexpectedly".to_owned()
+                    };
+                    self.response_error =
+                        (!cancelled).then_some("WebSocket worker stopped unexpectedly".to_owned());
                     finished = true;
                     break;
                 }
@@ -1110,6 +1242,7 @@ impl PostlyApp {
         }
         if finished {
             self.websocket_pending = None;
+            self.websocket_cancellation = None;
             self.websocket_commands = None;
         }
         self.websocket_pending.is_some()
@@ -1322,6 +1455,7 @@ impl PostlyApp {
                 });
                 ui.add_space(7.0);
                 let mut send_clicked = false;
+                let mut cancel_clicked = false;
                 let mut stream_clicked = false;
                 let mut websocket_clicked = false;
                 let mut save_clicked = false;
@@ -1370,14 +1504,11 @@ impl PostlyApp {
                     {
                         self.dirty = true;
                     }
-                    if ui
-                        .add_enabled(
-                            !busy,
-                            egui::Button::new(if busy { "Sending…" } else { "Send  ⌘↵" })
-                                .fill(ACCENT),
-                        )
-                        .clicked()
-                    {
+                    if busy {
+                        if ui.button("Cancel").clicked() {
+                            cancel_clicked = true;
+                        }
+                    } else if ui.add(egui::Button::new("Send  ⌘↵").fill(ACCENT)).clicked() {
                         send_clicked = true;
                     }
                     if ui.button("Save").clicked() {
@@ -1447,6 +1578,9 @@ impl PostlyApp {
                     if let Err(error) = self.delete_current() {
                         self.status_message = format!("Delete failed: {error}");
                     }
+                }
+                if cancel_clicked {
+                    self.cancel_active();
                 }
                 if send_clicked {
                     if let Err(error) = self.send_current() {
@@ -2740,6 +2874,49 @@ mod tests {
     }
 
     #[test]
+    fn http_worker_can_be_cancelled_while_waiting_for_a_body() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let (ready_sender, ready_receiver) = std::sync::mpsc::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("connection");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).expect("read");
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 5\r\n\r\n",
+                )
+                .expect("write headers");
+            ready_sender.send(()).expect("ready");
+            let _ = release_receiver.recv_timeout(Duration::from_secs(2));
+            let _ = stream.write_all(b"hello");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.url = format!("http://{address}/cancel");
+        app.send_current().expect("send");
+        ready_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("body wait reached");
+
+        app.cancel_active();
+        let mut finished = false;
+        for _ in 0..200 {
+            if !app.poll_pending() {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        release_sender.send(()).expect("release server");
+        server.join().expect("server");
+        assert!(finished, "HTTP worker did not cancel");
+        assert_eq!(app.status_message, "Request cancelled");
+        assert!(app.response_error.is_none());
+    }
+
+    #[test]
     fn sse_worker_delivers_events_and_bounds_console_history() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
         let address = listener.local_addr().expect("address");
@@ -2802,6 +2979,56 @@ mod tests {
                 .map(|event| event.event.id.as_deref()),
             Some(Some("25"))
         );
+    }
+
+    #[test]
+    fn sse_worker_can_be_cancelled_while_waiting_for_the_next_event() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let (ready_sender, ready_receiver) = std::sync::mpsc::channel();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("connection");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).expect("read");
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n")
+                .expect("write headers");
+            ready_sender.send(()).expect("ready");
+            let _ = release_receiver.recv_timeout(Duration::from_secs(2));
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.url = format!("http://{address}/cancel-events");
+        app.start_sse_current().expect("start SSE");
+        ready_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("SSE headers reached");
+
+        let mut connected = false;
+        for _ in 0..200 {
+            app.poll_pending();
+            if app.sse_connected {
+                connected = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(connected, "SSE worker did not connect");
+        app.cancel_active();
+        let mut finished = false;
+        for _ in 0..200 {
+            if !app.poll_pending() {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        release_sender.send(()).expect("release server");
+        server.join().expect("server");
+        assert!(finished, "SSE worker did not cancel");
+        assert_eq!(app.status_message, "SSE stream cancelled");
+        assert!(app.response_error.is_none());
     }
 
     #[test]
@@ -2870,5 +3097,61 @@ mod tests {
                 && message.kind == "text"
                 && message.data == "echo:hello"
         }));
+    }
+
+    #[test]
+    fn websocket_worker_can_be_cancelled_after_connecting() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let address = listener.local_addr().expect("address");
+        let (ready_sender, ready_receiver) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener).expect("listener");
+                let (stream, _) = listener.accept().await.expect("connection");
+                let mut websocket = tokio_tungstenite::accept_async(stream)
+                    .await
+                    .expect("handshake");
+                ready_sender.send(()).expect("ready");
+                let _ = websocket.next().await;
+            });
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.url = format!("ws://{address}/cancel-socket");
+        app.start_websocket_current().expect("start WebSocket");
+        ready_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("WebSocket handshake reached");
+
+        let mut connected = false;
+        for _ in 0..200 {
+            app.poll_pending();
+            if app.websocket_connected {
+                connected = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(connected, "WebSocket worker did not connect");
+        app.cancel_active();
+        let mut finished = false;
+        for _ in 0..200 {
+            if !app.poll_pending() {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.join().expect("server");
+        assert!(finished, "WebSocket worker did not cancel");
+        assert_eq!(app.status_message, "WebSocket connection cancelled");
+        assert!(app.response_error.is_none());
     }
 }

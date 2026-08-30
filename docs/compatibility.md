@@ -18,8 +18,8 @@ Compatibility numbers are not published until they come from executable fixtures
 | cURL import | common request slice | curl parser tests and CLI round-trip |
 | OpenAPI 3.0/3.1 import | JSON/YAML operation and local `$ref` slice | OpenAPI fixtures and importer tests |
 | GraphQL | structured core/CLI/GUI request editing and HTTP slice; schema explorer pending | GraphQL model, parser, GUI validation and local HTTP integration tests |
-| Server-Sent Events | CLI and native GUI streaming slice; reconnect pending | chunked parser tests, local streaming CLI integration test and GUI worker test |
-| WebSocket | CLI and native GUI bidirectional `ws://`/`wss://` slice with interactive text console; reconnect policy remains CLI-only | local echo/reconnect integration tests and GUI worker test |
+| Server-Sent Events | CLI and native GUI streaming slice with cancellation; reconnect pending | chunked parser tests, local streaming CLI integration test and GUI worker/cancellation tests |
+| WebSocket | CLI and native GUI bidirectional `ws://`/`wss://` slice with interactive text console and cancellation; reconnect policy remains CLI-only | local echo/reconnect integration tests and GUI worker/cancellation tests |
 | gRPC | local `.proto` discovery and dynamic unary/server/client/bidirectional streaming CLI slice; reflection/GUI pending | protox descriptor tests and local tonic HTTP/2 integration test for all four call modes |
 | Postman behavioral parity | not measured | no percentage claimed |
 
