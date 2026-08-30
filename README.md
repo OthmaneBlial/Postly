@@ -17,6 +17,7 @@ Postly is an open-source, Rust-first API development workspace designed around l
 - Environment variables and Postman-style {{variable}} interpolation with precedence diagnostics.
 - Postman Collection v2.1 and environment import with a migration report.
 - OpenAPI 3 JSON/YAML import with generated requests and explicit warnings.
+- Opt-in Postman script execution through a local Node.js bridge with basic `pm.*` tests.
 - Headless commands for immediate requests, saved requests and sequential collection runs.
 - Metadata-only local history for saved request executions (`postly history`).
 - A native Rust desktop request workspace (`postly-gui`) using the same core.
@@ -49,9 +50,10 @@ Send a saved request:
 ~~~bash
 cargo run -- send ./my-api/collections/my-api/requests/health.postly.toml
 cargo run -- send ./my-api/collections/my-api/requests/health.postly.toml --environment Local
+cargo run -- send ./my-api/collections/my-api/requests/health.postly.toml --scripts --environment Local
 ~~~
 
-The CLI can emit machine-readable response data with --output-json. postly run executes saved requests in deterministic path order and returns a failing exit code when a request returns a 4xx/5xx or cannot be sent.
+The CLI can emit machine-readable response data with --output-json. `postly run` executes saved requests in deterministic path order and returns a failing exit code when a request returns a 4xx/5xx, cannot be sent, or an enabled script assertion fails. Pass `--scripts` to opt into the local Node.js bridge.
 
 ## Local validation
 
@@ -68,7 +70,7 @@ Use CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 on 
 
 The long-term target is a credible local-first Postman replacement: a professional request workspace, Git-native collections, environments, scripting and tests, runner/CLI parity, Postman migration, OpenAPI, GraphQL, WebSockets, SSE and gRPC. Features are only documented as supported once executable behavior and tests exist.
 
-See docs/progress.md, docs/architecture.md, docs/migration-from-postman.md, docs/openapi.md and docs/compatibility.md.
+See docs/progress.md, docs/architecture.md, docs/migration-from-postman.md, docs/openapi.md, docs/scripting.md and docs/compatibility.md.
 
 ## Privacy
 

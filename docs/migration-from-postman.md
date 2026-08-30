@@ -13,14 +13,14 @@ export a Postman Collection v2.1
 
 The importer preserves collection metadata, folders, request URLs, query parameters, headers, descriptions, raw/JSON/urlencoded/form-data/file bodies, common auth types, examples, variables and request-level scripts. Collection and folder auth is materialized into requests that do not override it, so the imported files retain the effective behavior without depending on a hidden runtime tree. Unsupported or review-worthy fields are reported rather than silently discarded.
 
-Collection and folder pre-request/test events are preserved into the native collection/request files in execution order. They remain source-only until a script runtime is selected and tested.
+Collection and folder pre-request/test events are preserved into the native collection/request files in execution order. With `--scripts`, the current local Node.js bridge executes the preserved source and reports basic assertions; without that explicit flag, scripts remain source-only.
 
 Current limitations:
 
-- Scripts are preserved as source but are not executed yet.
+- Script execution is opt-in and currently depends on a local Node.js installation; the bridge is a tested prototype, not an embedded or hardened sandbox.
 - GraphQL request metadata is retained as a reviewable raw JSON body.
 - File paths should be checked after import because their meaning depends on the source project location.
-- Collection-level and folder-level Postman scripts/auth inheritance are not yet modeled as executable runtime behavior.
+- Collection-level and folder-level script inheritance is materialized into request source, while variable persistence and broader runtime behavior remain limited.
 - Export back to Postman, full pm.* compatibility and a measured behavioral score are planned.
 
 The current compatibility matrix is machine-readable in compat/postman-script-compatibility.json. Every entry is marked planned until an actual runtime and regression fixture prove it.

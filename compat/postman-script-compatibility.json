@@ -1,17 +1,17 @@
 {
   "format": "postly-postman-script-compatibility",
   "version": 1,
-  "runtime": "not implemented",
+  "runtime": "node-vm-prototype-opt-in",
   "entries": [
-    { "api": "pm.environment.get", "status": "planned", "note": "Requires an explicit script runtime and environment mutation contract." },
-    { "api": "pm.environment.set", "status": "planned", "note": "Must define persistence and secret redaction semantics before execution." },
-    { "api": "pm.collectionVariables.get", "status": "planned", "note": "Model exists; script bridge is not implemented." },
-    { "api": "pm.variables.get", "status": "planned", "note": "Variable precedence exists outside scripts; bridge is not implemented." },
-    { "api": "pm.request", "status": "planned", "note": "Request model exists; script bridge is not implemented." },
-    { "api": "pm.response", "status": "planned", "note": "Response model exists; script bridge is not implemented." },
-    { "api": "pm.test", "status": "planned", "note": "Runner result panel and assertion runtime are not implemented." },
-    { "api": "pm.expect", "status": "planned", "note": "No compatibility claim until assertions run against real responses." },
+    { "api": "pm.environment.get", "status": "supported", "note": "Opt-in Node bridge reads the active environment in process." },
+    { "api": "pm.environment.set", "status": "partial", "note": "Mutation applies to the current run; it is not persisted to the environment file." },
+    { "api": "pm.collectionVariables.get", "status": "supported", "note": "Opt-in Node bridge reads collection variables." },
+    { "api": "pm.variables.get", "status": "supported", "note": "Reads the documented runtime/request/environment/collection precedence." },
+    { "api": "pm.request", "status": "partial", "note": "URL, method and readable headers are exposed; request mutation coverage is limited." },
+    { "api": "pm.response", "status": "partial", "note": "Status, timing, text, JSON and header access are exposed." },
+    { "api": "pm.test", "status": "supported", "note": "Assertions are collected and affect runner/send exit status when scripts are enabled." },
+    { "api": "pm.expect", "status": "partial", "note": "Equality, inclusion, property and boolean checks are implemented." },
     { "api": "pm.sendRequest", "status": "planned", "note": "Requires documented network permissions and cancellation behavior." },
-    { "api": "console.log", "status": "planned", "note": "Console capture is not implemented; secrets must be redacted first." }
+    { "api": "console.log", "status": "partial", "note": "Logs are captured locally but not printed by the CLI to avoid accidental secret disclosure." }
   ]
 }

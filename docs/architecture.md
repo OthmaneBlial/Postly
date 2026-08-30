@@ -39,4 +39,4 @@ The HTTP engine uses a bounded timeout and redirect policy. Insecure certificate
 
 ## Next decisions
 
-The embedded scripting runtime, OS secret storage and advanced protocol crates remain open until small prototypes and cross-platform validation produce evidence. The first GUI decision is recorded in ADR-0002; it deliberately keeps the core independent from `egui`/`eframe`.
+The embedded scripting runtime, OS secret storage and advanced protocol crates remain open until small prototypes and cross-platform validation produce evidence. The first GUI decision is recorded in ADR-0002; the current opt-in script boundary and its limitations are recorded in ADR-0003.

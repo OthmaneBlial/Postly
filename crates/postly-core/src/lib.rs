@@ -11,6 +11,7 @@ pub mod import;
 pub mod model;
 pub mod openapi;
 pub mod runner;
+pub mod scripting;
 pub mod storage;
 pub mod variables;
 
@@ -21,5 +22,6 @@ pub use import::{import_environment, import_postman_collection, ImportReport};
 pub use model::*;
 pub use openapi::{import_openapi, OpenApiImportError, OpenApiImportReport};
 pub use runner::{run_requests, CancellationToken, RunnerItemResult, RunnerOptions, RunnerSummary};
+pub use scripting::{run_script, ScriptError, ScriptLog, ScriptResult, ScriptTestResult};
 pub use storage::{CollectionFiles, Workspace, WorkspaceError};
 pub use variables::{ResolvedText, VariableContext, VariableDiagnostic, VariableDiagnosticKind};

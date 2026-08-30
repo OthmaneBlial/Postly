@@ -10,7 +10,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use postly_core::{
     import_curl_command, import_environment, import_postman_collection, run_requests, Auth,
     Collection, EngineOptions, Environment, EnvironmentVariable, HeaderEntry, HistoryEntry,
-    HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions, VariableContext, Workspace,
+    HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions, ScriptResult,
+    ScriptTestResult, VariableContext, Workspace,
 };
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
@@ -109,6 +110,11 @@ enum Command {
         file: PathBuf,
         #[arg(long)]
         environment: Option<String>,
+        #[arg(
+            long,
+            help = "Execute preserved pre-request and test scripts through Node.js"
+        )]
+        scripts: bool,
         #[arg(long)]
         output_json: bool,
         #[arg(long, default_value_t = 30)]
@@ -148,6 +154,11 @@ enum Command {
         environment: Option<String>,
         #[arg(long)]
         fail_fast: bool,
+        #[arg(
+            long,
+            help = "Execute preserved pre-request and test scripts through Node.js"
+        )]
+        scripts: bool,
         #[arg(long, default_value_t = 30)]
         timeout: u64,
         #[arg(long, value_enum, default_value_t = Reporter::Pretty)]
@@ -308,6 +319,7 @@ async fn main() -> Result<()> {
         Command::Send {
             file,
             environment,
+            scripts,
             output_json,
             timeout,
             insecure,
@@ -315,6 +327,7 @@ async fn main() -> Result<()> {
             send_saved_request(
                 &file,
                 environment.as_deref(),
+                scripts,
                 timeout,
                 insecure,
                 output_json,
@@ -340,6 +353,7 @@ async fn main() -> Result<()> {
             path,
             environment,
             fail_fast,
+            scripts,
             timeout,
             reporter,
             data_file,
@@ -349,6 +363,7 @@ async fn main() -> Result<()> {
                 &path,
                 environment.as_deref(),
                 fail_fast,
+                scripts,
                 timeout,
                 if output_json {
                     Reporter::Json
@@ -417,23 +432,31 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
 async fn send_saved_request(
     file: &Path,
     environment_name: Option<&str>,
+    scripts: bool,
     timeout: u64,
     insecure: bool,
     output_json: bool,
 ) -> Result<()> {
     let workspace = find_workspace(file)?;
-    let request = workspace.load_request(file)?;
+    let mut request = workspace.load_request(file)?;
     let collections = workspace.collections()?;
     let collection = collections
         .iter()
         .find(|collection| file.starts_with(&collection.directory));
-    let context = context_for_collection(
+    let mut context = context_for_collection(
         &workspace,
         collection.map(|collection| &collection.collection),
         environment_name,
     )?;
+    if scripts {
+        if let Some(script) = request.pre_request_script.clone() {
+            let script_result =
+                run_script_async(script, request.clone(), None, context.clone()).await?;
+            script_result.apply(&mut request, &mut context)?;
+        }
+    }
     let started = Instant::now();
-    let result = execute(&request, context, timeout, insecure).await;
+    let result = execute(&request, context.clone(), timeout, insecure).await;
     let history_entry = match &result {
         Ok(response) => HistoryEntry::from_response(&request, response),
         Err(_) => HistoryEntry::from_error(&request, started.elapsed().as_millis() as u64),
@@ -442,7 +465,37 @@ async fn send_saved_request(
         tracing::warn!(error = %error, "could not write local request history");
     }
     let response = result?;
-    print_response(&response, output_json)?;
+    let post_script = if scripts {
+        if let Some(script) = request.test_script.clone() {
+            Some(
+                run_script_async(
+                    script,
+                    request.clone(),
+                    Some(response.clone()),
+                    context.clone(),
+                )
+                .await?,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if let Some(script_result) = &post_script {
+        script_result.apply(&mut request, &mut context)?;
+    }
+    print_response_with_tests(
+        &response,
+        output_json,
+        post_script.as_ref().map(|script| script.tests.as_slice()),
+    )?;
+    if post_script
+        .as_ref()
+        .is_some_and(|script| script.failed_tests().next().is_some())
+    {
+        bail!("script assertions failed");
+    }
     Ok(())
 }
 
@@ -566,6 +619,7 @@ async fn run_workspace(
     path: &Path,
     environment_name: Option<&str>,
     fail_fast: bool,
+    scripts: bool,
     timeout: u64,
     reporter: Reporter,
     data_file: Option<&Path>,
@@ -595,6 +649,7 @@ async fn run_workspace(
             &context,
             &RunnerOptions {
                 fail_fast,
+                scripts,
                 iterations: iterations.clone(),
                 ..RunnerOptions::default()
             },
@@ -604,11 +659,12 @@ async fn run_workspace(
             for result in &summary.results {
                 if let Some(status) = result.status {
                     println!(
-                        "{} {} {} ({} ms)",
+                        "{} {} {} ({} ms, {} assertions)",
                         if result.passed { "PASS" } else { "FAIL" },
                         status,
                         result.name,
-                        result.duration_ms
+                        result.duration_ms,
+                        result.assertions
                     );
                 } else {
                     eprintln!(
@@ -729,6 +785,18 @@ async fn execute(
     Ok(engine.execute(request, &context).await?)
 }
 
+async fn run_script_async(
+    script: String,
+    request: Request,
+    response: Option<postly_core::HttpResponse>,
+    context: VariableContext,
+) -> Result<ScriptResult> {
+    Ok(tokio::task::spawn_blocking(move || {
+        postly_core::run_script(&script, &request, response.as_ref(), &context)
+    })
+    .await??)
+}
+
 fn context_for_collection(
     workspace: &Workspace,
     collection: Option<&Collection>,
@@ -831,20 +899,29 @@ fn parse_cli_body(data: Option<String>, json_body: Option<String>) -> Result<Req
 }
 
 fn print_response(response: &postly_core::HttpResponse, output_json: bool) -> Result<()> {
+    print_response_with_tests(response, output_json, None)
+}
+
+fn print_response_with_tests(
+    response: &postly_core::HttpResponse,
+    output_json: bool,
+    tests: Option<&[ScriptTestResult]>,
+) -> Result<()> {
     if output_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "status": response.status,
-                "status_text": response.status_text,
-                "headers": response.headers,
-                "content_type": response.content_type,
-                "duration_ms": response.duration_ms,
-                "protocol": response.protocol,
-                "url": response.url,
-                "body": response.formatted_body(postly_core::ResponseView::Pretty),
-            }))?
-        );
+        let mut payload = json!({
+            "status": response.status,
+            "status_text": response.status_text,
+            "headers": response.headers,
+            "content_type": response.content_type,
+            "duration_ms": response.duration_ms,
+            "protocol": response.protocol,
+            "url": response.url,
+            "body": response.formatted_body(postly_core::ResponseView::Pretty),
+        });
+        if let Some(tests) = tests {
+            payload["tests"] = serde_json::to_value(tests)?;
+        }
+        println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
         println!(
             "{} {} · {} ms · {}",
@@ -854,6 +931,19 @@ fn print_response(response: &postly_core::HttpResponse, output_json: bool) -> Re
             "{}",
             response.formatted_body(postly_core::ResponseView::Pretty)
         );
+        if let Some(tests) = tests {
+            for test in tests {
+                if test.passed {
+                    println!("PASS test: {}", test.name);
+                } else {
+                    println!(
+                        "FAIL test: {} — {}",
+                        test.name,
+                        test.error.as_deref().unwrap_or("assertion failed")
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }
