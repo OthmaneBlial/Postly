@@ -29,6 +29,10 @@ pub enum ScriptError {
     InvalidRequest(#[source] serde_json::Error),
     #[error("script is too large to execute safely (maximum {maximum_bytes} bytes)")]
     TooLarge { maximum_bytes: usize },
+    #[error("serialized script input is too large (maximum {maximum_bytes} bytes)")]
+    InputTooLarge { maximum_bytes: usize },
+    #[error("script process output exceeded the {maximum_bytes}-byte pipe limit")]
+    OutputTooLarge { maximum_bytes: usize },
     #[error("script process exceeded the {timeout_seconds}-second execution limit")]
     Timeout { timeout_seconds: u64 },
 }
@@ -199,10 +203,19 @@ pub fn run_script(
         }),
     };
     let payload = serde_json::to_vec(&input)?;
-    let mut child = Command::new("node")
-        .args(["--input-type=commonjs", "-e", NODE_HARNESS])
-        .env_remove("NODE_OPTIONS")
-        .env_remove("NODE_PATH")
+    if payload.len() > MAX_SCRIPT_INPUT_BYTES {
+        return Err(ScriptError::InputTooLarge {
+            maximum_bytes: MAX_SCRIPT_INPUT_BYTES,
+        });
+    }
+    let mut command = Command::new("node");
+    command
+        .env_clear()
+        .args(["--input-type=commonjs", "-e", NODE_HARNESS]);
+    if let Some(path) = std::env::var_os("PATH") {
+        command.env("PATH", path);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -242,6 +255,8 @@ pub fn run_script(
 }
 
 const MAX_SCRIPT_BYTES: usize = 512 * 1024;
+const MAX_SCRIPT_INPUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_SCRIPT_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(test)]
 const MAX_LOG_ENTRIES: usize = 200;
@@ -287,15 +302,34 @@ fn wait_for_child(mut child: Child) -> Result<Output, ScriptError> {
 
 fn read_pipe(mut pipe: impl Read) -> io::Result<Vec<u8>> {
     let mut output = Vec::new();
-    pipe.read_to_end(&mut output)?;
-    Ok(output)
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let count = pipe.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(output);
+        }
+        if output.len().saturating_add(count) > MAX_SCRIPT_OUTPUT_BYTES {
+            return Err(io::Error::other("script output limit exceeded"));
+        }
+        output.extend_from_slice(&buffer[..count]);
+    }
 }
 
 fn join_pipe(reader: thread::JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8>, ScriptError> {
     reader
         .join()
         .map_err(|_| ScriptError::Execution("script output reader panicked.".to_owned()))?
-        .map_err(ScriptError::NodeUnavailable)
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::Other
+                && error.to_string() == "script output limit exceeded"
+            {
+                ScriptError::OutputTooLarge {
+                    maximum_bytes: MAX_SCRIPT_OUTPUT_BYTES,
+                }
+            } else {
+                ScriptError::NodeUnavailable(error)
+            }
+        })
 }
 
 const NODE_HARNESS: &str = r##"
@@ -745,6 +779,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_oversized_serialized_input_before_starting_node() {
+        let mut request = Request::new("Oversized input", "POST", "https://example.test");
+        request.body = crate::model::RequestBody::Raw {
+            text: "x".repeat(MAX_SCRIPT_INPUT_BYTES),
+            content_type: None,
+        };
+        let error = run_script(
+            "pm.test('input is bounded', function () {});",
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect_err("oversized serialized input should be rejected");
+        assert!(matches!(error, ScriptError::InputTooLarge { .. }));
+    }
+
+    #[test]
     fn bounds_script_logs_and_test_results() {
         if Command::new("node").arg("--version").output().is_err() {
             return;
@@ -772,6 +823,25 @@ mod tests {
             .all(|log| log.message.len() <= MAX_LOG_MESSAGE_BYTES));
         assert_eq!(result.tests.len(), MAX_TEST_ENTRIES);
         assert!(!result.tests.last().expect("test limit marker").passed);
+    }
+
+    #[test]
+    fn rejects_oversized_child_output() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let request = Request::new("Oversized child output", "GET", "https://example.test");
+        let error = run_script(
+            &format!(
+                "pm.request.headers.add({{ key: 'X-Large', value: 'x'.repeat({}) }});",
+                MAX_SCRIPT_OUTPUT_BYTES
+            ),
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect_err("oversized child output should be rejected");
+        assert!(matches!(error, ScriptError::OutputTooLarge { .. }));
     }
 
     #[test]

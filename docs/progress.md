@@ -55,8 +55,9 @@ Implemented:
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
 - Script compatibility boundary now carries explicit variable unsets, globals,
   read-only iteration data, request header mutations and bounded source size;
-  the child environment removes Node module injection variables, and the
-  worker bounds process duration plus captured logs and test results.
+  the child environment is reduced to `PATH`, serialized input and stdout/stderr
+  pipes have explicit size caps, and the worker bounds process duration plus
+  captured logs and test results.
 - Common response assertions now cover headers, cookies, status health, numeric/type/regex and negated expectations.
 - Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; saved workspaces persist a bounded ignored local jar.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
@@ -95,6 +96,7 @@ cargo xtask check is the required validation command for this milestone. The CLI
 
 1. Add importer fixtures for more Postman body/auth/URL variants.
 2. Prototype an embedded or isolated script runtime before enabling broader
-   compatibility by default; keep the opt-in Node boundary explicit.
+   compatibility by default; keep the opt-in Node boundary explicit even with
+   its resource guards.
 3. Extend the explicit assertion model with broader Postman-compatible cases and GUI coverage.
 4. Extend response preview features and complete desktop accessibility/responsive QA.
