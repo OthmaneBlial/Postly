@@ -65,7 +65,8 @@ This repository contains working vertical slices, not a static interface mockup.
   references stay masked and new secret values go through the OS credential store.
 - **Transport controls:** explicit insecure-TLS opt-in for supported HTTP flows,
   verified HTTPS, custom PEM CAs, combined PEM client identities, HTTP(S)/SOCKS
-  proxy routing, environment proxy support and bypass rules, with actionable
+  proxy routing, CLI WebSocket HTTP CONNECT routing, environment proxy support
+  and bypass rules, with actionable
   diagnostics.
 - **Response inspection:** Pretty/Raw views with JSON and well-formed XML
   formatting, status/headers/cookies/protocol/duration, local search, wrapping,

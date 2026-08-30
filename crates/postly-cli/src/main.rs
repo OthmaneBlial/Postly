@@ -24,7 +24,7 @@ use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::{
-    connect_async,
+    client_async_tls_with_config, connect_async,
     tungstenite::{
         client::IntoClientRequest,
         http::{header::HeaderName, HeaderValue},
@@ -329,6 +329,8 @@ struct WebsocketOptions {
     basic_password: Option<String>,
     timeout: u64,
     reconnect: u32,
+    proxy: Option<String>,
+    no_proxy: Option<String>,
     output_json: bool,
 }
 
@@ -659,6 +661,19 @@ enum Command {
         timeout: u64,
         #[arg(long, default_value_t = 0)]
         reconnect: u32,
+        #[arg(
+            long,
+            value_name = "URL",
+            help = "Route the WebSocket through an HTTP proxy using CONNECT"
+        )]
+        proxy: Option<String>,
+        #[arg(
+            long,
+            requires = "proxy",
+            value_name = "HOSTS",
+            help = "Bypass the WebSocket proxy for comma-separated hosts or domains"
+        )]
+        no_proxy: Option<String>,
         #[arg(long)]
         output_json: bool,
     },
@@ -1265,6 +1280,8 @@ async fn main() -> Result<()> {
             basic_password,
             timeout,
             reconnect,
+            proxy,
+            no_proxy,
             output_json,
         } => {
             run_websocket(WebsocketOptions {
@@ -1276,6 +1293,8 @@ async fn main() -> Result<()> {
                 basic_password,
                 timeout,
                 reconnect,
+                proxy,
+                no_proxy,
                 output_json,
             })
             .await
@@ -2347,7 +2366,11 @@ async fn run_websocket(options: WebsocketOptions) -> Result<()> {
         let websocket_request = build_websocket_request(&options)?;
         let connection = tokio::time::timeout(
             Duration::from_secs(options.timeout),
-            connect_async(websocket_request),
+            connect_websocket(
+                websocket_request,
+                options.proxy.as_deref(),
+                options.no_proxy.as_deref(),
+            ),
         )
         .await
         .with_context(|| {
@@ -2365,7 +2388,7 @@ async fn run_websocket(options: WebsocketOptions) -> Result<()> {
                 eprintln!("WebSocket connection failed, retrying: {error}");
                 continue;
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(error),
         };
         print_websocket_state("connected", options.output_json)?;
         if !options.output_json {
@@ -2419,6 +2442,122 @@ async fn run_websocket(options: WebsocketOptions) -> Result<()> {
         print_websocket_state("closed", options.output_json)?;
         return Ok(());
     }
+}
+
+async fn connect_websocket(
+    request: tokio_tungstenite::tungstenite::http::Request<()>,
+    proxy_url: Option<&str>,
+    no_proxy: Option<&str>,
+) -> Result<(
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    tokio_tungstenite::tungstenite::handshake::client::Response,
+)> {
+    let Some(proxy_url) = proxy_url.filter(|value| !value.trim().is_empty()) else {
+        return Ok(connect_async(request).await?);
+    };
+    let target_host = request
+        .uri()
+        .host()
+        .context("WebSocket endpoint has no hostname")?;
+    let target_port = request
+        .uri()
+        .port_u16()
+        .or_else(|| (request.uri().scheme_str() == Some("wss")).then_some(443))
+        .or_else(|| (request.uri().scheme_str() == Some("ws")).then_some(80))
+        .context("WebSocket endpoint has no port")?;
+    if no_proxy.is_some_and(|rules| no_proxy_matches(target_host, target_port, rules)) {
+        return Ok(connect_async(request).await?);
+    }
+
+    let proxy = url::Url::parse(proxy_url)
+        .with_context(|| format!("invalid WebSocket proxy URL: {proxy_url}"))?;
+    if proxy.scheme() != "http" {
+        bail!(
+            "WebSocket proxy routing currently supports http:// proxies; {} is not supported",
+            proxy.scheme()
+        );
+    }
+    let proxy_host = proxy
+        .host_str()
+        .context("WebSocket proxy URL has no hostname")?;
+    let proxy_port = proxy
+        .port_or_known_default()
+        .context("WebSocket proxy URL has no port")?;
+    let mut socket = tokio::net::TcpStream::connect((proxy_host, proxy_port))
+        .await
+        .with_context(|| {
+            format!("could not connect to WebSocket proxy {proxy_host}:{proxy_port}")
+        })?;
+    let mut connect_request = format!(
+        "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n"
+    );
+    if !proxy.username().is_empty() {
+        let credentials = if let Some(password) = proxy.password() {
+            format!("{}:{password}", proxy.username())
+        } else {
+            format!("{}:", proxy.username())
+        };
+        connect_request.push_str(&format!(
+            "Proxy-Authorization: Basic {}\r\n",
+            base64::engine::general_purpose::STANDARD.encode(credentials)
+        ));
+    }
+    connect_request.push_str("\r\n");
+    socket.write_all(connect_request.as_bytes()).await?;
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    while !response.windows(4).any(|window| window == b"\r\n\r\n") {
+        let count = socket.read(&mut buffer).await?;
+        if count == 0 {
+            bail!("WebSocket proxy closed the CONNECT handshake");
+        }
+        if response.len().saturating_add(count) > 64 * 1024 {
+            bail!("WebSocket proxy response exceeds 65536 bytes");
+        }
+        response.extend_from_slice(&buffer[..count]);
+    }
+    let status_line = String::from_utf8_lossy(&response)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or_default();
+    if status != 200 {
+        bail!("WebSocket proxy CONNECT failed with HTTP {status}");
+    }
+    Ok(client_async_tls_with_config(request, socket, None, None).await?)
+}
+
+fn no_proxy_matches(host: &str, port: u16, rules: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    rules
+        .split(|character: char| character == ',' || character.is_ascii_whitespace())
+        .filter(|rule| !rule.trim().is_empty())
+        .any(|rule| {
+            let rule = rule.trim();
+            if rule == "*" {
+                return true;
+            }
+            let (rule, rule_port) = if !rule.starts_with('[') {
+                rule.rsplit_once(':')
+                    .and_then(|(host, port)| {
+                        port.parse::<u16>().ok().map(|port| (host, Some(port)))
+                    })
+                    .unwrap_or((rule, None))
+            } else {
+                (rule, None)
+            };
+            if rule_port.is_some_and(|rule_port| rule_port != port) {
+                return false;
+            }
+            let rule = rule.trim_start_matches('.').to_ascii_lowercase();
+            host == rule || host.ends_with(&format!(".{rule}"))
+        })
 }
 
 fn build_websocket_request(
@@ -4305,11 +4444,82 @@ paths:
             basic_password: None,
             timeout: 10,
             reconnect: 0,
+            proxy: None,
+            no_proxy: None,
             output_json: true,
         })
         .await
         .expect("WebSocket command");
         server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn websocket_command_routes_through_an_http_connect_proxy() {
+        let target_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("target listener");
+        let target_address = target_listener.local_addr().expect("target address");
+        let target_server = tokio::spawn(async move {
+            let (stream, _) = target_listener.accept().await.expect("target connection");
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("WebSocket handshake");
+            match socket.next().await.expect("message").expect("frame") {
+                Message::Text(text) => assert_eq!(text.to_string(), "through-proxy"),
+                message => panic!("expected text message, got {message:?}"),
+            }
+            socket
+                .send(Message::text("proxy echo"))
+                .await
+                .expect("echo");
+            socket.send(Message::Close(None)).await.expect("close");
+        });
+
+        let proxy_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("proxy listener");
+        let proxy_address = proxy_listener.local_addr().expect("proxy address");
+        let proxy_server = tokio::spawn(async move {
+            let (mut proxy_socket, _) = proxy_listener.accept().await.expect("proxy connection");
+            let mut request = [0_u8; 4096];
+            let length = proxy_socket
+                .read(&mut request)
+                .await
+                .expect("CONNECT request");
+            let request = String::from_utf8_lossy(&request[..length]);
+            assert!(request.contains(&format!(
+                "CONNECT 127.0.0.1:{} HTTP/1.1",
+                target_address.port()
+            )));
+            let mut target_socket = tokio::net::TcpStream::connect(target_address)
+                .await
+                .expect("target connection through proxy");
+            proxy_socket
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await
+                .expect("CONNECT response");
+            tokio::io::copy_bidirectional(&mut proxy_socket, &mut target_socket)
+                .await
+                .expect("proxy relay");
+        });
+
+        run_websocket(WebsocketOptions {
+            endpoint: format!("ws://{target_address}/socket"),
+            send: vec!["through-proxy".to_owned()],
+            headers: Vec::new(),
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            reconnect: 0,
+            proxy: Some(format!("http://{proxy_address}")),
+            no_proxy: None,
+            output_json: true,
+        })
+        .await
+        .expect("WebSocket proxy command");
+        target_server.await.expect("target server");
+        proxy_server.await.expect("proxy server");
     }
 
     #[tokio::test]
@@ -4344,6 +4554,8 @@ paths:
             basic_password: None,
             timeout: 10,
             reconnect: 1,
+            proxy: None,
+            no_proxy: None,
             output_json: true,
         })
         .await
@@ -4363,6 +4575,27 @@ paths:
         assert!(request_belongs_to_folder(&nested, "Auth/OAuth"));
         assert!(!request_belongs_to_folder(&nested, "Aut"));
         assert!(!request_belongs_to_folder(&sibling, "Auth"));
+    }
+
+    #[test]
+    fn no_proxy_matches_exact_hosts_domains_and_ports() {
+        assert!(no_proxy_matches("localhost", 80, "localhost,127.0.0.1"));
+        assert!(no_proxy_matches(
+            "api.internal.example",
+            443,
+            ".internal.example"
+        ));
+        assert!(no_proxy_matches(
+            "api.example.test",
+            8443,
+            "api.example.test:8443"
+        ));
+        assert!(!no_proxy_matches(
+            "api.example.test",
+            443,
+            "api.example.test:8443"
+        ));
+        assert!(no_proxy_matches("anything.example.test", 443, "*"));
     }
 
     #[tokio::test]

@@ -15,7 +15,7 @@ Implemented:
 - Native async HTTP execution with common body/auth/header/query behavior.
 - Custom PEM CA bundles and combined PEM client identities in the shared HTTP engine and CLI workflows, with actionable file/format diagnostics and local HTTPS/mTLS integration tests.
 - Basic, Bearer, API-key, OAuth 2.0 Client Credentials, explicit Authorization Code + PKCE and Refresh Token exchanges in the native model, GUI, CLI, Postman import/export and shared HTTP engine, with in-memory expiry-aware token caching and local token-exchange integration tests.
-- Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass tests.
+- Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, plus CLI WebSocket HTTP CONNECT routing, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass/relay tests.
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
 - Postman Collection v2.1 and environment export with a tested native round-trip.
