@@ -8,8 +8,8 @@ use std::{
 use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
 use postly_core::{
     ApiKeyLocation, Auth, CollectionFiles, EngineOptions, Environment, HeaderEntry, HistoryEntry,
-    HttpEngine, HttpResponse, KeyValue, Request, RequestBody, ResponseView, VariableContext,
-    Workspace,
+    HistoryFilter, HttpEngine, HttpResponse, KeyValue, Request, RequestBody, ResponseView,
+    VariableContext, Workspace,
 };
 
 const ACCENT: Color32 = Color32::from_rgb(91, 141, 239);
@@ -78,6 +78,8 @@ pub struct PostlyApp {
     engine: HttpEngine,
     collections: Vec<CollectionFiles>,
     environments: Vec<(PathBuf, Environment)>,
+    history: Vec<HistoryEntry>,
+    history_search: String,
     selected_collection: usize,
     requests: Vec<(PathBuf, Request)>,
     selected_request: Option<usize>,
@@ -115,6 +117,10 @@ impl PostlyApp {
         let environments = workspace
             .environments()
             .map_err(|error| error.to_string())?;
+        let (history, status_message) = match workspace.history(100) {
+            Ok(history) => (history, "Ready — local workspace".to_owned()),
+            Err(error) => (Vec::new(), format!("Ready — history unavailable: {error}")),
+        };
         let engine =
             HttpEngine::new(&EngineOptions::default()).map_err(|error| error.to_string())?;
         let mut app = Self {
@@ -122,6 +128,8 @@ impl PostlyApp {
             engine,
             collections,
             environments,
+            history,
+            history_search: String::new(),
             selected_collection: 0,
             requests: Vec::new(),
             selected_request: None,
@@ -141,7 +149,7 @@ impl PostlyApp {
             pending_request: None,
             selected_environment: None,
             dirty: false,
-            status_message: "Ready — local workspace".to_owned(),
+            status_message,
         };
         app.refresh_requests(None)?;
         Ok(app)
@@ -196,6 +204,43 @@ impl PostlyApp {
         self.clear_response();
         self.dirty = true;
         self.status_message = "Draft request".to_owned();
+    }
+
+    fn refresh_history(&mut self) {
+        if let Ok(history) = self.workspace.history(100) {
+            self.history = history;
+        }
+    }
+
+    fn reopen_history(&mut self, entry: &HistoryEntry) -> Result<(), String> {
+        let request_id = entry
+            .request_id
+            .ok_or_else(|| "This history entry predates request identity tracking.".to_owned())?;
+        let mut found = None;
+        for (collection_index, collection) in self.collections.iter().enumerate() {
+            let requests = self
+                .workspace
+                .requests(collection)
+                .map_err(|error| error.to_string())?;
+            if let Some(request_index) = requests
+                .iter()
+                .position(|(_, request)| request.id == request_id)
+            {
+                found = Some((collection_index, requests, request_index));
+                break;
+            }
+        }
+        let Some((collection_index, requests, request_index)) = found else {
+            return Err(format!(
+                "Saved request for history entry not found: {}",
+                entry.request_name
+            ));
+        };
+        self.selected_collection = collection_index;
+        self.requests = requests;
+        self.select_request(request_index);
+        self.status_message = "Reopened from local history".to_owned();
+        Ok(())
     }
 
     fn load_request_editors(&mut self) {
@@ -383,6 +428,7 @@ impl PostlyApp {
                 );
                 self.response = Some(response);
                 self.response_error = None;
+                self.refresh_history();
             }
             Err(error) => {
                 if let Some(request) = request {
@@ -402,6 +448,8 @@ impl PostlyApp {
         let mut request_clicked = None;
         let mut new_clicked = false;
         let mut environment_clicked = None;
+        let mut history_clicked = None;
+        let mut clear_history_clicked = false;
         egui::Panel::left("navigator")
             .resizable(true)
             .default_size(280.0)
@@ -450,7 +498,7 @@ impl PostlyApp {
                 ui.add_space(4.0);
                 egui::ScrollArea::vertical()
                     .id_salt("request-list")
-                    .max_height(ui.available_height() - 130.0)
+                    .max_height((ui.available_height() - 280.0).max(100.0))
                     .show(ui, |ui| {
                         for (index, (_, request)) in self.requests.iter().enumerate() {
                             let selected = self.selected_request == Some(index);
@@ -471,6 +519,47 @@ impl PostlyApp {
                         }
                     });
                 ui.add_space(10.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("HISTORY").small().strong().color(MUTED));
+                    if ui.small_button("Clear").clicked() {
+                        clear_history_clicked = true;
+                    }
+                });
+                ui.add(
+                    TextEdit::singleline(&mut self.history_search)
+                        .hint_text("Search recent requests")
+                        .desired_width(ui.available_width()),
+                );
+                let history_filter = HistoryFilter {
+                    search: Some(self.history_search.clone()),
+                    ..HistoryFilter::default()
+                };
+                egui::ScrollArea::vertical()
+                    .id_salt("history-list")
+                    .max_height(130.0)
+                    .show(ui, |ui| {
+                        for entry in self
+                            .history
+                            .iter()
+                            .filter(|entry| history_filter.matches(entry))
+                        {
+                            let status = entry
+                                .status
+                                .map(|status| status.to_string())
+                                .unwrap_or_else(|| "error".to_owned());
+                            let label =
+                                format!("{} {} · {}", entry.method, entry.request_name, status);
+                            if ui
+                                .selectable_label(false, RichText::new(label).color(MUTED))
+                                .on_hover_text(&entry.url)
+                                .clicked()
+                            {
+                                history_clicked = Some(entry.clone());
+                            }
+                        }
+                    });
+                ui.add_space(8.0);
                 ui.separator();
                 ui.label(RichText::new("ENVIRONMENT").small().strong().color(MUTED));
                 let selected_name = self
@@ -522,6 +611,20 @@ impl PostlyApp {
         }
         if let Some(environment) = environment_clicked {
             self.selected_environment = environment;
+        }
+        if clear_history_clicked {
+            match self.workspace.clear_history() {
+                Ok(()) => {
+                    self.history.clear();
+                    self.status_message = "Local history cleared".to_owned();
+                }
+                Err(error) => self.status_message = format!("History clear failed: {error}"),
+            }
+        }
+        if let Some(entry) = history_clicked {
+            if let Err(error) = self.reopen_history(&entry) {
+                self.status_message = format!("History reopen failed: {error}");
+            }
         }
     }
 
@@ -1155,6 +1258,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
         app.request.url = format!("http://{address}/gui");
+        app.save_current().expect("save request");
         app.send_current().expect("send");
 
         let mut finished = false;
@@ -1172,5 +1276,13 @@ mod tests {
             Some(201)
         );
         assert!(app.response_error.is_none());
+        let history_entry = app.history.first().cloned().expect("history entry");
+        app.new_request();
+        app.reopen_history(&history_entry).expect("reopen history");
+        assert!(app.request_path.is_some());
+        assert_eq!(
+            app.request.id,
+            history_entry.request_id.expect("request id")
+        );
     }
 }

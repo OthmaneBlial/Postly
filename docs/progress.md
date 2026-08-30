@@ -35,7 +35,7 @@ Not yet implemented:
 - Desktop GUI polish, large-response virtualization and richer response editor.
 - Embedded/hardened script runtime and broader pm.* compatibility.
 - Postman tests/assertions beyond the current basic runner slice.
-- OS keychain storage, persistent/manual cookie management, crash recovery, GUI history navigation and request reopening.
+- OS keychain storage, persistent/manual cookie management and crash recovery.
 - OpenAPI reference resolution, GraphQL, WebSockets, SSE and gRPC.
 - Local deterministic protocol test servers, fuzzing, benchmarks and packaging.
 

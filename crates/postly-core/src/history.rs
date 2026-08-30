@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{http::HttpResponse, model::Request};
 
@@ -13,6 +14,8 @@ use crate::{http::HttpResponse, model::Request};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HistoryEntry {
     pub timestamp_unix_ms: u64,
+    #[serde(default)]
+    pub request_id: Option<Uuid>,
     pub request_name: String,
     pub method: String,
     pub url: String,
@@ -74,6 +77,7 @@ impl HistoryEntry {
     pub fn from_response(request: &Request, response: &HttpResponse) -> Self {
         Self {
             timestamp_unix_ms: now_unix_ms(),
+            request_id: Some(request.id),
             request_name: request.name.clone(),
             method: request.method.clone(),
             url: sanitize_url(&request.url),
@@ -86,6 +90,7 @@ impl HistoryEntry {
     pub fn from_error(request: &Request, duration_ms: u64) -> Self {
         Self {
             timestamp_unix_ms: now_unix_ms(),
+            request_id: Some(request.id),
             request_name: request.name.clone(),
             method: request.method.clone(),
             url: sanitize_url(&request.url),
@@ -145,6 +150,7 @@ mod tests {
     fn filters_history_by_search_method_status_and_error_state() {
         let success = HistoryEntry {
             timestamp_unix_ms: 2,
+            request_id: None,
             request_name: "List users".to_owned(),
             method: "GET".to_owned(),
             url: "https://example.com/users".to_owned(),
@@ -154,6 +160,7 @@ mod tests {
         };
         let failure = HistoryEntry {
             timestamp_unix_ms: 1,
+            request_id: None,
             request_name: "Create user".to_owned(),
             method: "POST".to_owned(),
             url: "https://example.com/users".to_owned(),

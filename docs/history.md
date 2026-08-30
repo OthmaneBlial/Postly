@@ -16,4 +16,7 @@ postly history ./project --clear
 
 The file is bounded to the newest 1,000 entries and approximately 1 MiB. The
 bound prevents an unattended local project from accumulating unlimited history.
-GUI history navigation and reopening a saved request remain future work.
+The native GUI shows the same recent entries, filters them by text, can clear
+the metadata file, and reopens a matching saved request by its stable request
+UUID. Legacy entries without an identity remain metadata-only and cannot be
+reopened automatically.
