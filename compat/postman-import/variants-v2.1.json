@@ -104,6 +104,41 @@
           "options": { "raw": { "language": "xml" } }
         }
       }
+    },
+    {
+      "name": "OAuth review",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/oauth-check?scope=read",
+          "query": [{ "key": "scope", "value": "read" }]
+        },
+        "header": [{ "key": "X-Retry", "value": 3 }],
+        "auth": {
+          "type": "oauth2",
+          "oauth2": [
+            { "key": "grant_type", "value": "authorization_code" },
+            { "key": "accessToken", "value": "{{accessToken}}" }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\"enabled\":true}",
+          "options": { "raw": { "language": "json" } }
+        }
+      }
+    },
+    {
+      "name": "HTML payload",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/render",
+        "body": {
+          "mode": "raw",
+          "raw": "<main>hello</main>",
+          "options": { "raw": { "language": "html" } }
+        }
+      }
     }
   ]
 }

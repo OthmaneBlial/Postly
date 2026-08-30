@@ -98,7 +98,8 @@ pub fn import_postman_collection(
         collection_name: Some(name),
         ..ImportReport::default()
     };
-    collection_files.collection.auth = parse_auth(document.get("auth"));
+    let collection_auth = parse_auth(document.get("auth"), "Collection", &mut report);
+    collection_files.collection.auth = collection_auth.auth;
     let collection_scripts = parse_event_scripts(&document, "Collection", &mut report);
     collection_files.collection.pre_request_script = (!collection_scripts.pre_request.is_empty())
         .then(|| collection_scripts.pre_request.join("\n\n"));
@@ -130,14 +131,18 @@ pub fn import_postman_collection(
     workspace.save_collection(&collection_files)?;
 
     if let Some(items) = document.get("item").and_then(Value::as_array) {
+        let inherited = InheritedItemContext {
+            scripts: collection_scripts.clone(),
+            auth: collection_files.collection.auth.clone(),
+            auth_requires_review: collection_auth.requires_review,
+        };
         for item in items {
             import_item(
                 &workspace,
                 &collection_files,
                 item,
                 None,
-                &collection_scripts,
-                &collection_files.collection.auth,
+                &inherited,
                 &mut report,
             )?;
         }
@@ -205,13 +210,19 @@ pub fn import_environment(
     Ok(report)
 }
 
+#[derive(Debug, Clone)]
+struct InheritedItemContext {
+    scripts: ScriptSet,
+    auth: Auth,
+    auth_requires_review: bool,
+}
+
 fn import_item(
     workspace: &Workspace,
     collection: &CollectionFiles,
     item: &Value,
     folder: Option<String>,
-    inherited_scripts: &ScriptSet,
-    inherited_auth: &Auth,
+    inherited: &InheritedItemContext,
     report: &mut ImportReport,
 ) -> Result<(), ImportError> {
     let name = item
@@ -219,12 +230,18 @@ fn import_item(
         .and_then(Value::as_str)
         .unwrap_or("Unnamed item");
     if let Some(children) = item.get("item").and_then(Value::as_array) {
-        let mut next_scripts = inherited_scripts.clone();
+        let mut next_scripts = inherited.scripts.clone();
         next_scripts.extend(parse_event_scripts(item, name, report));
-        let next_auth = if item.get("auth").is_some() {
-            parse_auth(item.get("auth"))
+        let (next_auth, next_auth_requires_review) = if item.get("auth").is_some() {
+            let parsed = parse_auth(item.get("auth"), name, report);
+            (parsed.auth, parsed.requires_review)
         } else {
-            inherited_auth.clone()
+            (inherited.auth.clone(), inherited.auth_requires_review)
+        };
+        let next_context = InheritedItemContext {
+            scripts: next_scripts,
+            auth: next_auth,
+            auth_requires_review: next_auth_requires_review,
         };
         let next_folder = Some(match folder {
             Some(folder) => format!("{folder}/{name}"),
@@ -236,8 +253,7 @@ fn import_item(
                 collection,
                 child,
                 next_folder.clone(),
-                &next_scripts,
-                &next_auth,
+                &next_context,
                 report,
             )?;
         }
@@ -250,17 +266,19 @@ fn import_item(
         ));
         return Ok(());
     };
-    let mut request = parse_request(name, request_value, folder, report);
+    let (mut request, mut auth_requires_review) =
+        parse_request(name, request_value, folder, report);
     if request_value.get("auth").is_none() {
-        request.auth = inherited_auth.clone();
+        request.auth = inherited.auth.clone();
+        auth_requires_review = inherited.auth_requires_review;
     }
-    let mut scripts = inherited_scripts.clone();
+    let mut scripts = inherited.scripts.clone();
     scripts.extend(parse_event_scripts(item, name, report));
     scripts.apply_to_request(&mut request);
     request.examples = parse_examples(item, report);
     let request_path = workspace.save_request(collection, &request)?;
     report.imported_requests += 1;
-    if request_needs_review(&request) {
+    if auth_requires_review || request_needs_review(&request) {
         report.manual_review_requests += 1;
         report.warn(format!(
             "Request {name} requires manual review after import ({})",
@@ -277,7 +295,7 @@ fn parse_request(
     value: &Value,
     folder: Option<String>,
     report: &mut ImportReport,
-) -> Request {
+) -> (Request, bool) {
     let method = value.get("method").and_then(Value::as_str).unwrap_or("GET");
     let url = parse_url(value.get("url")).unwrap_or_else(|| {
         report.warn(format!(
@@ -308,7 +326,7 @@ fn parse_request(
                     let key = header.get("key").and_then(Value::as_str)?;
                     let value = header
                         .get("value")
-                        .and_then(Value::as_str)
+                        .and_then(|value| string_value(Some(value)))
                         .unwrap_or_default();
                     Some(HeaderEntry {
                         key: key.to_owned(),
@@ -323,9 +341,10 @@ fn parse_request(
         })
         .unwrap_or_default();
     request.cookies = parse_pairs(value.get("cookie"));
-    request.auth = parse_auth(value.get("auth"));
+    let parsed_auth = parse_auth(value.get("auth"), name, report);
+    request.auth = parsed_auth.auth;
     request.body = parse_body(name, value.get("body"), report);
-    request
+    (request, parsed_auth.requires_review)
 }
 
 fn parse_event_scripts(item: &Value, subject: &str, report: &mut ImportReport) -> ScriptSet {
@@ -451,7 +470,8 @@ fn parse_body(name: &str, value: Option<&Value>, report: &mut ImportReport) -> R
                                 value: string_value(part.get("value")).unwrap_or_default(),
                                 file_path,
                                 content_type: part
-                                    .get("type")
+                                    .get("contentType")
+                                    .or_else(|| part.get("content_type"))
                                     .and_then(Value::as_str)
                                     .map(ToOwned::to_owned),
                                 enabled: !part
@@ -560,15 +580,24 @@ fn parse_pairs(value: Option<&Value>) -> Vec<KeyValue> {
         .unwrap_or_default()
 }
 
-fn parse_auth(value: Option<&Value>) -> Auth {
+#[derive(Debug, Clone)]
+struct ParsedAuth {
+    auth: Auth,
+    requires_review: bool,
+}
+
+fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -> ParsedAuth {
     let Some(value) = value else {
-        return Auth::None;
+        return ParsedAuth {
+            auth: Auth::None,
+            requires_review: false,
+        };
     };
-    match value
+    let auth_type = value
         .get("type")
         .and_then(Value::as_str)
-        .unwrap_or("noauth")
-    {
+        .unwrap_or("noauth");
+    let auth = match auth_type {
         "basic" => Auth::Basic {
             username: auth_value(value.get("basic"), "username"),
             password: auth_value(value.get("basic"), "password"),
@@ -584,7 +613,20 @@ fn parse_auth(value: Option<&Value>) -> Auth {
                 _ => ApiKeyLocation::Header,
             },
         },
-        _ => Auth::None,
+        "noauth" => Auth::None,
+        other => {
+            report.warn(format!(
+                "{subject} uses unsupported Postman auth type {other}; authentication was not executed."
+            ));
+            return ParsedAuth {
+                auth: Auth::None,
+                requires_review: true,
+            };
+        }
+    };
+    ParsedAuth {
+        auth,
+        requires_review: false,
     }
 }
 
@@ -639,7 +681,7 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExampl
                                         header.get("key").and_then(Value::as_str)?,
                                         header
                                             .get("value")
-                                            .and_then(Value::as_str)
+                                            .and_then(|value| string_value(Some(value)))
                                             .unwrap_or_default(),
                                     ))
                                 })
@@ -756,9 +798,9 @@ mod tests {
             .join("../../compat/postman-import/variants-v2.1.json");
 
         let report = import_postman_collection(&fixture, output.path()).expect("import");
-        assert_eq!(report.imported_requests, 4);
-        assert_eq!(report.fully_supported_requests, 2);
-        assert_eq!(report.manual_review_requests, 2);
+        assert_eq!(report.imported_requests, 6);
+        assert_eq!(report.fully_supported_requests, 3);
+        assert_eq!(report.manual_review_requests, 3);
         assert!(report
             .warnings
             .iter()
@@ -771,6 +813,10 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("unsupported event type unknown")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("unsupported Postman auth type oauth2")));
 
         let workspace = Workspace::open(output.path()).expect("workspace");
         let collection = workspace.collections().expect("collections").remove(0);
@@ -811,5 +857,26 @@ mod tests {
             .find(|(_, request)| request.name == "GraphQL review")
             .expect("graphql request");
         assert!(matches!(&graphql.1.body, RequestBody::Graphql { .. }));
+
+        let oauth = requests
+            .iter()
+            .find(|(_, request)| request.name == "OAuth review")
+            .expect("oauth request");
+        assert_eq!(oauth.1.url, "{{baseUrl}}/oauth-check");
+        assert_eq!(oauth.1.query, vec![KeyValue::enabled("scope", "read")]);
+        assert_eq!(oauth.1.headers[0], HeaderEntry::enabled("X-Retry", "3"));
+        assert!(matches!(&oauth.1.body, RequestBody::Json { .. }));
+
+        let html = requests
+            .iter()
+            .find(|(_, request)| request.name == "HTML payload")
+            .expect("html request");
+        assert!(matches!(
+            &html.1.body,
+            RequestBody::Raw {
+                content_type: Some(content_type),
+                ..
+            } if content_type == "text/html"
+        ));
     }
 }
