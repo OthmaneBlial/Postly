@@ -1,7 +1,10 @@
 use std::{
     fs,
+    future::Future,
     io::{self, BufRead, BufReader, IsTerminal, Read, Write},
     path::{Path, PathBuf},
+    pin::Pin,
+    task::{Context as TaskContext, Poll},
     time::{Duration, Instant},
 };
 
@@ -9,6 +12,7 @@ use anyhow::{bail, Context, Result};
 use base64::Engine;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
+use hyper_util::rt::TokioIo;
 use postly_core::{
     export_postman_collection, export_postman_environment_with_store, generate_code_snippet,
     generate_markdown_docs, import_curl_command, import_dotenv, import_environment,
@@ -104,6 +108,8 @@ struct GrpcCallOptions {
     basic_user: Option<String>,
     basic_password: Option<String>,
     timeout: u64,
+    proxy: Option<String>,
+    no_proxy: Option<String>,
     ca_cert: Option<PathBuf>,
     client_identity: Option<PathBuf>,
     output_json: bool,
@@ -155,6 +161,141 @@ fn configure_grpc_endpoint(
         scheme => bail!("gRPC endpoint must use http:// or https://, got {scheme}://"),
     }
     Ok(endpoint)
+}
+
+#[derive(Clone)]
+struct GrpcHttpProxyConnector {
+    proxy_host: String,
+    proxy_port: u16,
+    proxy_authorization: Option<String>,
+}
+
+impl tonic::codegen::Service<http::Uri> for GrpcHttpProxyConnector {
+    type Response = TokioIo<tokio::net::TcpStream>;
+    type Error = io::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, uri: http::Uri) -> Self::Future {
+        let proxy_host = self.proxy_host.clone();
+        let proxy_port = self.proxy_port;
+        let proxy_authorization = self.proxy_authorization.clone();
+        Box::pin(async move {
+            let target_host = uri.host().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "gRPC URI has no hostname")
+            })?;
+            let target_port = uri
+                .port_u16()
+                .or_else(|| (uri.scheme_str() == Some("https")).then_some(443))
+                .or_else(|| (uri.scheme_str() == Some("http")).then_some(80))
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "gRPC URI has no port")
+                })?;
+            let target_authority = if target_host.contains(':') {
+                format!("[{target_host}]:{target_port}")
+            } else {
+                format!("{target_host}:{target_port}")
+            };
+            let mut socket =
+                tokio::net::TcpStream::connect((proxy_host.as_str(), proxy_port)).await?;
+            let mut connect_request =
+                format!("CONNECT {target_authority} HTTP/1.1\r\nHost: {target_authority}\r\n");
+            if let Some(proxy_authorization) = proxy_authorization {
+                connect_request.push_str(&format!(
+                    "Proxy-Authorization: Basic {proxy_authorization}\r\n"
+                ));
+            }
+            connect_request.push_str("\r\n");
+            socket.write_all(connect_request.as_bytes()).await?;
+
+            let mut response = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while !response.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = socket.read(&mut buffer).await?;
+                if count == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "gRPC proxy closed the CONNECT handshake",
+                    ));
+                }
+                if response.len().saturating_add(count) > 64 * 1024 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "gRPC proxy response exceeds 65536 bytes",
+                    ));
+                }
+                response.extend_from_slice(&buffer[..count]);
+            }
+            let status = String::from_utf8_lossy(&response)
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<u16>().ok())
+                .unwrap_or_default();
+            if status != 200 {
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    format!("gRPC proxy CONNECT failed with HTTP {status}"),
+                ));
+            }
+            Ok(TokioIo::new(socket))
+        })
+    }
+}
+
+async fn connect_grpc_endpoint(
+    endpoint: tonic::transport::Endpoint,
+    endpoint_value: &str,
+    proxy_url: Option<&str>,
+    no_proxy: Option<&str>,
+) -> Result<tonic::transport::Channel> {
+    let Some(proxy_url) = proxy_url.filter(|value| !value.trim().is_empty()) else {
+        return Ok(endpoint.connect().await?);
+    };
+    let target = url::Url::parse(endpoint_value)
+        .with_context(|| format!("invalid gRPC endpoint: {endpoint_value}"))?;
+    let target_host = target.host_str().context("gRPC endpoint has no hostname")?;
+    let target_port = target
+        .port_or_known_default()
+        .context("gRPC endpoint has no port")?;
+    if no_proxy.is_some_and(|rules| no_proxy_matches(target_host, target_port, rules)) {
+        return Ok(endpoint.connect().await?);
+    }
+
+    let proxy = url::Url::parse(proxy_url)
+        .with_context(|| format!("invalid gRPC proxy URL: {proxy_url}"))?;
+    if proxy.scheme() != "http" {
+        bail!(
+            "gRPC proxy routing currently supports http:// proxies; {} is not supported",
+            proxy.scheme()
+        );
+    }
+    let proxy_host = proxy
+        .host_str()
+        .context("gRPC proxy URL has no hostname")?
+        .to_owned();
+    let proxy_port = proxy
+        .port_or_known_default()
+        .context("gRPC proxy URL has no port")?;
+    let proxy_authorization = (!proxy.username().is_empty()).then(|| {
+        let credentials = if let Some(password) = proxy.password() {
+            format!("{}:{password}", proxy.username())
+        } else {
+            format!("{}:", proxy.username())
+        };
+        base64::engine::general_purpose::STANDARD.encode(credentials)
+    });
+    endpoint
+        .connect_with_connector(GrpcHttpProxyConnector {
+            proxy_host,
+            proxy_port,
+            proxy_authorization,
+        })
+        .await
+        .map_err(Into::into)
 }
 
 #[derive(Debug, Args)]
@@ -911,6 +1052,19 @@ struct GrpcCallCommand {
     basic_password: Option<String>,
     #[arg(long, default_value_t = 30)]
     timeout: u64,
+    #[arg(
+        long,
+        value_name = "URL",
+        help = "Route the gRPC channel through an HTTP proxy using CONNECT"
+    )]
+    proxy: Option<String>,
+    #[arg(
+        long,
+        requires = "proxy",
+        value_name = "HOSTS",
+        help = "Bypass the gRPC proxy for comma-separated hosts or domains"
+    )]
+    no_proxy: Option<String>,
     #[command(flatten)]
     tls: Box<GrpcTlsArgs>,
     #[arg(long)]
@@ -924,6 +1078,19 @@ struct GrpcReflectCommand {
     host: Option<String>,
     #[arg(long, default_value_t = 30)]
     timeout: u64,
+    #[arg(
+        long,
+        value_name = "URL",
+        help = "Route the reflection channel through an HTTP proxy using CONNECT"
+    )]
+    proxy: Option<String>,
+    #[arg(
+        long,
+        requires = "proxy",
+        value_name = "HOSTS",
+        help = "Bypass the reflection proxy for comma-separated hosts or domains"
+    )]
+    no_proxy: Option<String>,
     #[command(flatten)]
     tls: Box<GrpcTlsArgs>,
     #[arg(long)]
@@ -1216,6 +1383,8 @@ async fn main() -> Result<()> {
                     basic_user,
                     basic_password,
                     timeout,
+                    proxy,
+                    no_proxy,
                     tls,
                     output_json,
                 } = *call;
@@ -1231,6 +1400,8 @@ async fn main() -> Result<()> {
                     basic_user,
                     basic_password,
                     timeout,
+                    proxy,
+                    no_proxy,
                     ca_cert: tls.ca_cert,
                     client_identity: tls.client_identity,
                     output_json,
@@ -2024,10 +2195,14 @@ async fn reflect_grpc(options: GrpcReflectCommand) -> Result<()> {
         options.tls.ca_cert.as_deref(),
         options.tls.client_identity.as_deref(),
     )?;
-    let channel = endpoint
-        .connect()
-        .await
-        .with_context(|| format!("could not connect to gRPC endpoint {}", options.endpoint))?;
+    let channel = connect_grpc_endpoint(
+        endpoint,
+        &options.endpoint,
+        options.proxy.as_deref(),
+        options.no_proxy.as_deref(),
+    )
+    .await
+    .with_context(|| format!("could not connect to gRPC endpoint {}", options.endpoint))?;
     let schema = GrpcSchema::from_reflection(channel, host.clone())
         .await
         .with_context(|| format!("could not reflect gRPC endpoint {}", options.endpoint))?;
@@ -2103,10 +2278,14 @@ async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
         options.ca_cert.as_deref(),
         options.client_identity.as_deref(),
     )?;
-    let channel = endpoint
-        .connect()
-        .await
-        .with_context(|| format!("could not connect to gRPC endpoint {}", options.endpoint))?;
+    let channel = connect_grpc_endpoint(
+        endpoint,
+        &options.endpoint,
+        options.proxy.as_deref(),
+        options.no_proxy.as_deref(),
+    )
+    .await
+    .with_context(|| format!("could not connect to gRPC endpoint {}", options.endpoint))?;
     let method_path = format!("/{}/{}", method.parent_service().full_name(), method.name());
     let path = http::uri::PathAndQuery::try_from(method_path.clone())?;
     let mut grpc = tonic::client::Grpc::new(channel);
@@ -4036,6 +4215,8 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            proxy: None,
+            no_proxy: None,
             ca_cert: None,
             client_identity: None,
             output_json: true,
@@ -4055,6 +4236,8 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            proxy: None,
+            no_proxy: None,
             ca_cert: None,
             client_identity: None,
             output_json: true,
@@ -4074,6 +4257,8 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            proxy: None,
+            no_proxy: None,
             ca_cert: None,
             client_identity: None,
             output_json: true,
@@ -4093,12 +4278,64 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            proxy: None,
+            no_proxy: None,
             ca_cert: None,
             client_identity: None,
             output_json: true,
         })
         .await
         .expect("gRPC bidirectional-streaming command");
+
+        let proxy_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("proxy listener");
+        let proxy_address = proxy_listener.local_addr().expect("proxy address");
+        let proxy = tokio::spawn(async move {
+            let (mut client, _) = proxy_listener.accept().await.expect("proxy connection");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = client.read(&mut buffer).await.expect("proxy request");
+                assert!(count > 0, "proxy client closed before CONNECT");
+                request.extend_from_slice(&buffer[..count]);
+                assert!(request.len() <= 64 * 1024, "proxy request is too large");
+            }
+            let request = String::from_utf8_lossy(&request);
+            assert!(request.starts_with(&format!("CONNECT {address} HTTP/1.1")));
+            client
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await
+                .expect("proxy response");
+            let mut target = tokio::net::TcpStream::connect(address)
+                .await
+                .expect("proxy target");
+            tokio::io::copy_bidirectional(&mut client, &mut target)
+                .await
+                .expect("proxy relay");
+        });
+
+        call_grpc(GrpcCallOptions {
+            endpoint: format!("http://{address}"),
+            proto: directory.path().join("echo.proto"),
+            includes: Vec::new(),
+            method: "/demo.Echo/Echo".to_owned(),
+            message: Some(r#"{"message":"through-proxy"}"#.to_owned()),
+            message_file: None,
+            metadata: vec!["x-test=local".to_owned()],
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            proxy: Some(format!("http://{proxy_address}")),
+            no_proxy: None,
+            ca_cert: None,
+            client_identity: None,
+            output_json: true,
+        })
+        .await
+        .expect("gRPC proxy command");
+        proxy.await.expect("proxy task");
 
         shutdown_tx.send(()).expect("shutdown");
         server.await.expect("server task");
@@ -4166,6 +4403,8 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            proxy: None,
+            no_proxy: None,
             ca_cert: Some(ca_path),
             client_identity: Some(client_identity_path),
             output_json: true,

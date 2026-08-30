@@ -111,6 +111,8 @@ cargo run -- grpc call http://127.0.0.1:50051 \
 
 Client-streaming methods return one response and bidirectional methods emit
 one JSON object per response with `stream_index` and `input_count`. Custom CA
-certificates and combined PEM client identities work for HTTPS calls. Native GUI gRPC calls
-currently require verified TLS for HTTPS endpoints and reject proxy/insecure-TLS
-configuration explicitly rather than silently ignoring it.
+certificates and combined PEM client identities work for HTTPS calls. CLI and
+native GUI gRPC calls support explicit `http://` proxy CONNECT routing with
+`--no-proxy` or the matching GUI bypass list. Native GUI gRPC calls require
+verified TLS for HTTPS endpoints and reject insecure-TLS configuration explicitly
+rather than silently ignoring it.

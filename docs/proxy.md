@@ -10,6 +10,9 @@ postly graphql https://api.example.test/graphql --query '{ health }' --proxy htt
 postly sse https://api.example.test/events --proxy http://127.0.0.1:8080
 postly run ./my-api --proxy http://127.0.0.1:8080
 postly websocket ws://api.example.test/socket --proxy http://127.0.0.1:8080
+postly grpc reflect https://api.example.test:443 --proxy http://127.0.0.1:8080
+postly grpc call https://api.example.test:443 --proto ./api.proto \
+  --method /demo.Echo/Echo --proxy http://127.0.0.1:8080
 
 # SOCKS5 with proxy-side DNS resolution
 postly request https://api.example.test/health --proxy socks5h://127.0.0.1:1080
@@ -34,9 +37,9 @@ use `--no-proxy` to retain selected direct destinations.
 
 The native GUI exposes the proxy URL in the request workspace's `Transport`
 tab, plus a comma-separated bypass list. Both are persisted under the ignored
-`.postly/gui-settings.json` file and apply to HTTP requests, SSE streams and
-WebSocket connections. The CLI and GUI WebSocket clients support explicit
-`http://` proxy CONNECT routing and the same bypass matching. SOCKS WebSocket
-and gRPC proxy routing remain separate future slices. A proxy can observe
-traffic and credentials; use one you trust and keep TLS verification enabled
-unless an explicit, documented local exception is required.
+`.postly/gui-settings.json` file and apply to HTTP requests, SSE streams,
+WebSocket connections and gRPC channels. The CLI and GUI WebSocket clients and
+the CLI/GUI gRPC clients support explicit `http://` proxy CONNECT routing and
+the same bypass matching. SOCKS WebSocket and gRPC routing remain unsupported.
+A proxy can observe traffic and credentials; use one you trust and keep TLS
+verification enabled unless an explicit, documented local exception is required.

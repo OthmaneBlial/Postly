@@ -15,7 +15,7 @@ Implemented:
 - Native async HTTP execution with common body/auth/header/query behavior.
 - Custom PEM CA bundles and combined PEM client identities in the shared HTTP engine and CLI workflows, with actionable file/format diagnostics and local HTTPS/mTLS integration tests.
 - Basic, Bearer, API-key, OAuth 2.0 Client Credentials, explicit Authorization Code + PKCE and Refresh Token exchanges in the native model, GUI, CLI, Postman import/export and shared HTTP engine, with in-memory expiry-aware token caching and local token-exchange integration tests.
-- Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, plus CLI WebSocket HTTP CONNECT routing, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass/relay tests.
+- Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, plus CLI WebSocket and gRPC HTTP CONNECT routing, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass/relay tests.
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
 - Postman Collection v2.1 and environment export with a tested native round-trip.
@@ -58,10 +58,10 @@ Implemented:
 - Native GUI `Scripts` tab edits and persists imported pre-request/test source;
   explicit GUI previews now run in a worker and display test/log results without
   applying changes automatically; CLI runner execution remains explicit too.
-- native GUI Transport tab with persisted local timeout, HTTP(S)/SOCKS proxy, bypass hosts, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE/WebSocket workflows.
+- native GUI Transport tab with persisted local timeout, HTTP(S)/SOCKS proxy, bypass hosts, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE/WebSocket/gRPC workflows; WebSocket and gRPC use HTTP CONNECT routing.
 - Native GUI Body tab editors for URL-encoded fields, multipart text/file parts and binary file uploads, with disabled entries and optional content types preserved.
 - Native GUI command palette with searchable request actions and keyboard shortcuts for new, save, send, cancel, response clearing and wrapping.
-- Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs and combined PEM client identities; explicit insecure TLS remains pending.
+- Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs, combined PEM client identities and explicit HTTP CONNECT proxy routing; explicit insecure TLS remains pending.
 - CLI gRPC server reflection discovery supports protocol v1 with a v1alpha fallback, keeps reflected descriptors in memory and reports services, methods and streaming shapes as text or JSON.
 - Native GUI gRPC requests now persist local proto/include paths or server-reflection mode/host, method paths and metadata, edit protobuf JSON bodies, and execute unary plus finite streaming shapes through the same dynamic descriptor model; GUI local-proto and reflection worker coverage is backed by local tonic HTTP/2 servers.
 - Persistable response assertions for status, headers, body text and JSON Pointer values, evaluated by the runner without Node.js.
@@ -144,7 +144,11 @@ verified HTTP(S) transport. The gRPC GUI slice adds persisted request
 configuration, a local unary worker round-trip through a dynamic `.proto`
 descriptor and a reflection-backed worker round-trip.
 
+CLI and GUI gRPC proxy tests complete a real HTTP CONNECT tunnel and relay
+HTTP/2 traffic.
+
 cargo xtask check is the required validation command for this milestone. The CLI was exercised against deterministic local HTTP servers: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, an environment created with env set resolved two variables into a saved request, a cURL command was imported and sent with HTTP 201, OpenAPI YAML generated two requests, an OpenAPI YAML document was fetched from a local HTTP URL, same-directory external references were resolved while source traversal and cycles were reported, an imported Postman test executed through the opt-in Node bridge, a two-request cookie exchange verified jar reuse plus response metadata, a manual cookie round-trip verified the ignored local jar and file-size guard, a GraphQL query with variables was sent through the structured CLI command, an SSE stream was decoded progressively from a local endpoint and reconnected with `Last-Event-ID`, WebSocket echo and bounded reconnect tests completed real handshake/send/receive/close cycles, gRPC unary/server/client/bidirectional calls completed against a local tonic HTTP/2 server and a separate local mutual-TLS gRPC call verified custom CA plus client identity, an OAuth 2.0 Client Credentials exchange fetched one token and reused it for two API requests, history filters/clear/retention were tested, workspace metadata search was exercised across collections without matching secrets, and a native collection was exported and imported back with its request semantics. The CLI mock router is covered by unit tests for method/path matching, query omission, saved status/body/delay and generic 404 behavior. The HTTP core also completes local encrypted HTTPS with a custom CA and mutual TLS with a client identity, while invalid certificate paths/material fail before network I/O. The native app has state tests for JSON/auth/GraphQL/OAuth/script editing, workspace search, async local HTTP/SSE/WebSocket workers, bounded event/message history, history reopen, cancellation during body/stream reads and SSE reconnection; native window interaction still needs manual desktop QA. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts. The complete workspace check now passes locally; packaging, external review and manual desktop QA remain separate gates.
+The latest transport slice adds local CLI and GUI gRPC calls through HTTP CONNECT relays; SOCKS routing for WebSocket/gRPC remains intentionally unsupported.
 
 ## Next highest-value work
 

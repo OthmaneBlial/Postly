@@ -132,8 +132,9 @@ variables marked as secrets. Certificate options
 read PEM files from disk; private-key contents are never command-line output
 or history data. Request, GraphQL, SSE, send and run accept the same
 HTTP(S)/SOCKS proxy, `--no-proxy` bypass and certificate flags where the
-transport applies. When `--proxy` is omitted, platform and standard proxy
-environment variables are handled by the HTTP client.
+transport applies. WebSocket and gRPC use explicit `http://` CONNECT proxies;
+SOCKS is not supported for those protocols. When `--proxy` is omitted, platform
+and standard proxy environment variables are handled by the HTTP client.
 
 Import a conventional `.env` file explicitly. Values stay literal—there is no
 variable expansion or command execution—and only keys named with `--secret`
