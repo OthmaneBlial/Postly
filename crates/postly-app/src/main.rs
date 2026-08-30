@@ -141,10 +141,17 @@ impl ScriptRunKind {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ScriptRunReport {
     kind: ScriptRunKind,
     result: ScriptResult,
+}
+
+#[derive(Debug)]
+struct HttpExecutionResult {
+    response: HttpResponse,
+    script_reports: Vec<ScriptRunReport>,
+    script_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -593,7 +600,7 @@ pub struct PostlyApp {
     response: Option<HttpResponse>,
     response_error: Option<String>,
     response_wrap: bool,
-    pending: Option<Receiver<Result<HttpResponse, String>>>,
+    pending: Option<Receiver<Result<HttpExecutionResult, String>>>,
     pending_request: Option<Request>,
     pending_graphql_schema: bool,
     pending_grpc: bool,
@@ -601,6 +608,7 @@ pub struct PostlyApp {
     script_pending: Option<Receiver<Result<ScriptRunReport, String>>>,
     script_report: Option<ScriptRunReport>,
     script_error: Option<String>,
+    run_scripts_on_send: bool,
     sse_pending: Option<Receiver<Result<SseStreamUpdate, String>>>,
     sse_cancellation: Option<CancellationToken>,
     sse_events: VecDeque<ReceivedSseEvent>,
@@ -724,6 +732,7 @@ impl PostlyApp {
             script_pending: None,
             script_report: None,
             script_error: None,
+            run_scripts_on_send: false,
             sse_pending: None,
             sse_cancellation: None,
             sse_events: VecDeque::new(),
@@ -2319,6 +2328,9 @@ impl PostlyApp {
         let context = self.context()?;
         self.remember_sensitive_values(&request, &context);
         let engine = self.configured_engine()?;
+        let run_scripts_on_send = self.run_scripts_on_send;
+        let pre_request_script = request.pre_request_script.clone();
+        let test_script = request.test_script.clone();
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
         let (sender, receiver) = mpsc::channel();
@@ -2330,14 +2342,59 @@ impl PostlyApp {
                     .build()
                     .map_err(|error| error.to_string())?;
                 runtime.block_on(async move {
-                    tokio::select! {
-                        result = engine.execute(&worker_request, &context) => {
-                            result.map_err(|error| error.to_string())
-                        }
-                        _ = worker_cancellation.cancelled() => {
-                            Err("request cancelled".to_owned())
+                    let mut request_for_send = worker_request;
+                    let mut request_context = context;
+                    let mut script_reports = Vec::new();
+                    if run_scripts_on_send {
+                        if let Some(script) = pre_request_script {
+                            let script_result =
+                                run_script(&script, &request_for_send, None, &request_context)
+                                    .map_err(|error| {
+                                        format!("pre-request script failed: {error}")
+                                    })?;
+                            script_result
+                                .apply(&mut request_for_send, &mut request_context)
+                                .map_err(|error| {
+                                    format!(
+                                        "pre-request script returned an invalid request: {error}"
+                                    )
+                                })?;
+                            script_reports.push(ScriptRunReport {
+                                kind: ScriptRunKind::PreRequest,
+                                result: script_result,
+                            });
                         }
                     }
+                    let response = tokio::select! {
+                        result = engine.execute(&request_for_send, &request_context) => {
+                            result.map_err(|error| error.to_string())?
+                        }
+                        _ = worker_cancellation.cancelled() => {
+                            return Err("request cancelled".to_owned());
+                        }
+                    };
+                    let mut script_error = None;
+                    if run_scripts_on_send {
+                        if let Some(script) = test_script {
+                            match run_script(
+                                &script,
+                                &request_for_send,
+                                Some(&response),
+                                &request_context,
+                            ) {
+                                Ok(script_result) => script_reports.push(ScriptRunReport {
+                                    kind: ScriptRunKind::Tests,
+                                    result: script_result,
+                                }),
+                                Err(error) => script_error = Some(error.to_string()),
+                            }
+                        }
+                    }
+                    Ok(HttpExecutionResult {
+                        response,
+                        script_reports,
+                        script_error,
+                    })
                 })
             })();
             let _ = sender.send(result);
@@ -2346,6 +2403,7 @@ impl PostlyApp {
         self.pending = Some(receiver);
         self.pending_request = Some(request);
         self.pending_cancellation = Some(cancellation);
+        self.script_error = None;
         self.push_console(ConsoleLevel::Info, "HTTP request started");
         self.status_message = "Sending request…".to_owned();
         Ok(())
@@ -2375,7 +2433,13 @@ impl PostlyApp {
                     .map_err(|error| error.to_string())?;
                 runtime.block_on(async move {
                     tokio::select! {
-                        result = execute_grpc_request(worker_request, context, transport, root) => result,
+                        result = execute_grpc_request(worker_request, context, transport, root) => {
+                            result.map(|response| HttpExecutionResult {
+                                response,
+                                script_reports: Vec::new(),
+                                script_error: None,
+                            })
+                        },
                         _ = worker_cancellation.cancelled() => Err("gRPC call cancelled".to_owned()),
                     }
                 })
@@ -2466,7 +2530,13 @@ impl PostlyApp {
                 runtime.block_on(async move {
                     tokio::select! {
                         result = engine.execute(&worker_request, &context) => {
-                            result.map_err(|error| error.to_string())
+                            result
+                                .map(|response| HttpExecutionResult {
+                                    response,
+                                    script_reports: Vec::new(),
+                                    script_error: None,
+                                })
+                                .map_err(|error| error.to_string())
                         }
                         _ = worker_cancellation.cancelled() => {
                             Err("schema introspection cancelled".to_owned())
@@ -2919,11 +2989,53 @@ impl PostlyApp {
         self.pending_grpc = false;
         self.pending_cancellation = None;
         match result {
-            Ok(response) => {
+            Ok(HttpExecutionResult {
+                response,
+                script_reports,
+                script_error,
+            }) => {
+                let failed_script_tests = script_reports
+                    .iter()
+                    .map(|report| report.result.failed_tests().count())
+                    .sum::<usize>();
+                if !script_reports.is_empty() {
+                    for report in &script_reports {
+                        for log in &report.result.logs {
+                            let level = match log.level.to_ascii_lowercase().as_str() {
+                                "warn" | "warning" => ConsoleLevel::Warn,
+                                "error" => ConsoleLevel::Error,
+                                _ => ConsoleLevel::Info,
+                            };
+                            self.push_console(level, format!("script: {}", log.message));
+                        }
+                    }
+                    self.script_report = script_reports.last().cloned();
+                    self.script_error = script_error.clone();
+                    if let Some(error) = &script_error {
+                        self.push_console(
+                            ConsoleLevel::Error,
+                            format!("Post-response script failed: {error}"),
+                        );
+                    }
+                    if failed_script_tests > 0 {
+                        self.push_console(
+                            ConsoleLevel::Warn,
+                            format!(
+                                "Post-response scripts reported {failed_script_tests} failed test(s)"
+                            ),
+                        );
+                    }
+                }
                 self.status_message = format!(
                     "{} {} in {} ms",
                     response.status, response.status_text, response.duration_ms
                 );
+                if failed_script_tests > 0 {
+                    self.status_message
+                        .push_str(&format!(" · {failed_script_tests} script test(s) failed"));
+                } else if script_error.is_some() {
+                    self.status_message.push_str(" · script failed");
+                }
                 self.push_console(
                     ConsoleLevel::Info,
                     format!(
@@ -4851,6 +4963,27 @@ impl PostlyApp {
             .small()
             .color(ui.visuals().weak_text_color()),
         );
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.checkbox(
+                &mut self.run_scripts_on_send,
+                "Run pre-request and post-response scripts when sending",
+            );
+            ui.label(
+                RichText::new("opt-in for this session")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+        });
+        if self.run_scripts_on_send {
+            ui.label(
+                RichText::new(
+                    "Scripts run in the same explicit Node.js bridge as previews; failures stay visible and the response is retained.",
+                )
+                .small()
+                .color(Color32::from_rgb(235, 180, 80)),
+            );
+        }
         let script_busy = self.script_pending.is_some()
             || self.pending.is_some()
             || self.sse_pending.is_some()
@@ -7966,6 +8099,56 @@ mod tests {
             app.request.id,
             history_entry.request_id.expect("request id")
         );
+    }
+
+    #[test]
+    fn send_worker_runs_opt_in_scripts_and_keeps_the_response_visible() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("connection");
+            let mut request = [0_u8; 4096];
+            let length = stream.read(&mut request).expect("read");
+            let request = String::from_utf8_lossy(&request[..length]);
+            assert!(request.contains("GET /scripted HTTP/1.1"));
+            assert!(request.to_ascii_lowercase().contains("x-script: yes"));
+            let body = br#"{"script":true}"#;
+            let headers = format!(
+                "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).expect("headers");
+            stream.write_all(body).expect("body");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.url = format!("http://{address}/scripted");
+        app.pre_request_script =
+            "pm.request.headers.upsert({ key: 'X-Script', value: 'yes' });".to_owned();
+        app.test_script =
+            "pm.test('accepted', function () { pm.response.to.have.status(202); });".to_owned();
+        app.run_scripts_on_send = true;
+        app.send_current().expect("send with scripts");
+
+        let mut finished = false;
+        for _ in 0..400 {
+            if !app.poll_pending() {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.join().expect("server");
+        assert!(finished, "scripted GUI worker did not finish");
+        assert_eq!(
+            app.response.as_ref().map(|response| response.status),
+            Some(202)
+        );
+        assert!(app.script_error.is_none());
+        let report = app.script_report.as_ref().expect("test report");
+        assert_eq!(report.kind, ScriptRunKind::Tests);
+        assert_eq!(report.result.failed_tests().count(), 0);
+        assert!(app.status_message.contains("202 Accepted"));
     }
 
     #[test]

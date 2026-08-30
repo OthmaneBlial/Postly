@@ -25,7 +25,7 @@ and manual-review cases remain visible in the report.
 | HTTPS certificates | core and CLI PEM CA/client-identity slice; native GUI HTTP/SSE Transport settings; PKCS#12/passphrases and domain association pending | local HTTPS CA and mutual-TLS tests, GUI settings persistence and file/format diagnostics |
 | Postman Collection v2.1 export | working slice | export/import round-trip fixture |
 | Postman environment export | working slice; secure references require explicit secret-resolving export | export serialization fixture and secure export boundary |
-| Postman scripts | opt-in basic execution, native source editing and explicit GUI preview | Node bridge tests, GUI persistence/preview tests and migration docs |
+| Postman scripts | opt-in basic execution in CLI and GUI send flow, native source editing and explicit GUI preview | Node bridge tests, GUI persistence/preview/send tests and migration docs |
 | Postman pm.* runtime | partial tested subset, including scoped variables, iteration data, request headers and common response matchers | compatibility matrix and script tests |
 | Explicit response assertions | working core/runner and native GUI editor slice | status/header/body/JSON Pointer runner integration test and GUI editor round-trip |
 | Native response viewer | working GUI slice with JSON and well-formed XML pretty formatting | virtualized line rows, search, copy, local save and wrapping |

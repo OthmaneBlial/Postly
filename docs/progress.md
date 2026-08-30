@@ -58,6 +58,9 @@ Implemented:
 - Native GUI `Scripts` tab edits and persists imported pre-request/test source;
   explicit GUI previews now run in a worker and display test/log results without
   applying changes automatically; CLI runner execution remains explicit too.
+  A session-only opt-in also runs those scripts in the HTTP send worker,
+  applies pre-request mutations to that send, and keeps post-response failures
+  visible while retaining the response.
 - native GUI Transport tab with persisted local timeout, HTTP(S)/SOCKS proxy, bypass hosts, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE/WebSocket/gRPC workflows; WebSocket and gRPC use HTTP CONNECT routing.
 - Native GUI Body tab editors for URL-encoded fields, multipart text/file parts and binary file uploads, with disabled entries and optional content types preserved.
 - Native GUI command palette with searchable request actions and keyboard shortcuts for new, save, send, cancel, response clearing and wrapping.
@@ -121,7 +124,7 @@ Implemented:
 
 Not yet implemented:
 
-- Desktop GUI polish, GUI script application parity, richer response preview/syntax features and manual responsive/accessibility QA.
+- Desktop GUI polish, richer response preview/syntax features and manual responsive/accessibility QA.
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.

@@ -11,8 +11,12 @@ postly run ./project --scripts --reporter json
 The native workspace exposes the same sources in its `Scripts` tab. Saving a
 request writes the pre-request and post-response/test text back to the
 canonical `.postly.toml` file. The GUI offers explicit local preview buttons
-for each script type, but never executes them automatically or applies their
-variable/request changes to the saved workspace.
+for each script type. A separate session-only `Run pre-request and
+post-response scripts when sending` toggle enables the same bridge in the
+HTTP send worker: pre-request mutations affect that send, and post-response
+tests/logs appear in the Scripts panel and developer console. It is disabled
+by default, never changes the saved request or environment files, and a
+post-response script failure does not hide the received response.
 
 The current prototype is a Rust-controlled, no-shell Node.js bridge. It uses a
 short-lived `node:vm` context with a two-second synchronous execution limit.
@@ -39,4 +43,6 @@ entries of 4 KiB each and 1,000 test results. These limits are resource guards,
 not a security boundary for hostile code. Filesystem, network and process
 permissions still require a future embedded-runtime or isolated-worker
 decision.
-`pm.sendRequest`, OAuth helpers and broad Postman parity remain planned.
+`pm.sendRequest`, OAuth helpers, broader Postman parity and an embedded or
+isolated runtime remain planned. The current Node bridge is still intended for
+source the user intentionally runs locally; its VM is not a security boundary.

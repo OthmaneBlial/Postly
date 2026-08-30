@@ -19,7 +19,10 @@ the child runs a short-lived `node:vm` context and returns structured updates,
 tests and captured logs over stdout. Postly never invokes a shell and does not
 place the script payload in the process argument list.
 
-Execution is opt-in with `postly send --scripts` or `postly run --scripts`.
+Execution is opt-in with `postly send --scripts`, `postly run --scripts`, or the
+session-only GUI Scripts toggle. The GUI applies pre-request mutations only to
+the in-flight request and retains the response when post-response scripts
+fail; it never persists those runtime mutations back to workspace files.
 The context exposes only the currently documented `pm.*` subset, and the VM
 has a two-second synchronous limit. The compatibility contract currently
 covers scoped variable reads/mutations, read-only iteration data, request
