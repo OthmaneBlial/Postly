@@ -58,7 +58,7 @@ Implemented:
 - Native GUI `Scripts` tab edits and persists imported pre-request/test source;
   explicit GUI previews now run in a worker and display test/log results without
   applying changes automatically; CLI runner execution remains explicit too.
-- native GUI Transport tab with persisted local timeout, HTTP(S)/SOCKS proxy, bypass hosts, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE workflows.
+- native GUI Transport tab with persisted local timeout, HTTP(S)/SOCKS proxy, bypass hosts, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE/WebSocket workflows.
 - Native GUI Body tab editors for URL-encoded fields, multipart text/file parts and binary file uploads, with disabled entries and optional content types preserved.
 - Native GUI command palette with searchable request actions and keyboard shortcuts for new, save, send, cancel, response clearing and wrapping.
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs and combined PEM client identities; explicit insecure TLS remains pending.

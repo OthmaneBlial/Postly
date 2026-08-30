@@ -23,8 +23,9 @@ use postly_core::{
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::{
-    connect_async,
+    client_async_tls_with_config, connect_async,
     tungstenite::{
         client::IntoClientRequest,
         http::{header::HeaderName, HeaderValue},
@@ -2666,6 +2667,8 @@ impl PostlyApp {
         let request = self.edited_request()?;
         let context = self.context()?;
         self.remember_sensitive_values(&request, &context);
+        let proxy_url = self.transport.proxy_url.trim().to_owned();
+        let no_proxy = self.transport.no_proxy_hosts.trim().to_owned();
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
         let (command_sender, mut command_receiver) =
@@ -2684,7 +2687,11 @@ impl PostlyApp {
                     let connect_result = tokio::select! {
                         result = tokio::time::timeout(
                             Duration::from_secs(30),
-                            connect_async(websocket_request),
+                            connect_websocket(
+                                websocket_request,
+                                (!proxy_url.is_empty()).then_some(proxy_url.as_str()),
+                                (!no_proxy.is_empty()).then_some(no_proxy.as_str()),
+                            ),
                         ) => result,
                         _ = worker_cancellation.cancelled() => {
                             return Err("WebSocket connection cancelled".to_owned());
@@ -4677,7 +4684,7 @@ impl PostlyApp {
         ui.heading(RichText::new("Connection settings").color(ui.visuals().text_color()));
         ui.label(
             RichText::new(
-                "These local settings apply to HTTP requests and SSE streams. Only file paths are stored.",
+                "These local settings apply to HTTP requests, SSE streams and WebSocket connections. Only file paths are stored.",
             )
             .small()
             .color(ui.visuals().weak_text_color()),
@@ -4710,7 +4717,7 @@ impl PostlyApp {
             )
             .changed();
         ui.label(
-            RichText::new("SOCKS URLs are supported for HTTP/SSE; environment proxy variables are used when no explicit proxy is set.")
+            RichText::new("SOCKS URLs are supported for HTTP/SSE. WebSocket proxying uses HTTP CONNECT; environment proxy variables are used when no explicit proxy is set for HTTP/SSE.")
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );
@@ -5835,6 +5842,133 @@ fn resolve_websocket_value(input: &str, context: &VariableContext) -> Result<Str
             .collect::<Vec<_>>()
             .join("; "))
     }
+}
+
+async fn connect_websocket(
+    request: tokio_tungstenite::tungstenite::http::Request<()>,
+    proxy_url: Option<&str>,
+    no_proxy: Option<&str>,
+) -> Result<
+    (
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tokio_tungstenite::tungstenite::handshake::client::Response,
+    ),
+    String,
+> {
+    let Some(proxy_url) = proxy_url.filter(|value| !value.trim().is_empty()) else {
+        return connect_async(request)
+            .await
+            .map_err(|error| format!("WebSocket connection failed: {error}"));
+    };
+    let target_host = request
+        .uri()
+        .host()
+        .ok_or_else(|| "WebSocket endpoint has no hostname".to_owned())?;
+    let target_port = request
+        .uri()
+        .port_u16()
+        .or_else(|| (request.uri().scheme_str() == Some("wss")).then_some(443))
+        .or_else(|| (request.uri().scheme_str() == Some("ws")).then_some(80))
+        .ok_or_else(|| "WebSocket endpoint has no port".to_owned())?;
+    if no_proxy.is_some_and(|rules| no_proxy_matches(target_host, target_port, rules)) {
+        return connect_async(request)
+            .await
+            .map_err(|error| format!("WebSocket connection failed: {error}"));
+    }
+
+    let proxy = url::Url::parse(proxy_url)
+        .map_err(|error| format!("invalid WebSocket proxy URL: {error}"))?;
+    if proxy.scheme() != "http" {
+        return Err(format!(
+            "WebSocket proxy routing currently supports http:// proxies; {} is not supported",
+            proxy.scheme()
+        ));
+    }
+    let proxy_host = proxy
+        .host_str()
+        .ok_or_else(|| "WebSocket proxy URL has no hostname".to_owned())?;
+    let proxy_port = proxy
+        .port_or_known_default()
+        .ok_or_else(|| "WebSocket proxy URL has no port".to_owned())?;
+    let mut socket = tokio::net::TcpStream::connect((proxy_host, proxy_port))
+        .await
+        .map_err(|error| format!("could not connect to WebSocket proxy: {error}"))?;
+    let mut connect_request = format!(
+        "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n"
+    );
+    if !proxy.username().is_empty() {
+        let credentials = if let Some(password) = proxy.password() {
+            format!("{}:{password}", proxy.username())
+        } else {
+            format!("{}:", proxy.username())
+        };
+        connect_request.push_str(&format!(
+            "Proxy-Authorization: Basic {}\r\n",
+            base64::engine::general_purpose::STANDARD.encode(credentials)
+        ));
+    }
+    connect_request.push_str("\r\n");
+    socket
+        .write_all(connect_request.as_bytes())
+        .await
+        .map_err(|error| format!("could not write WebSocket proxy CONNECT: {error}"))?;
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    while !response.windows(4).any(|window| window == b"\r\n\r\n") {
+        let count = socket
+            .read(&mut buffer)
+            .await
+            .map_err(|error| format!("could not read WebSocket proxy response: {error}"))?;
+        if count == 0 {
+            return Err("WebSocket proxy closed the CONNECT handshake".to_owned());
+        }
+        if response.len().saturating_add(count) > 64 * 1024 {
+            return Err("WebSocket proxy response exceeds 65536 bytes".to_owned());
+        }
+        response.extend_from_slice(&buffer[..count]);
+    }
+    let status = String::from_utf8_lossy(&response)
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or_default();
+    if status != 200 {
+        return Err(format!("WebSocket proxy CONNECT failed with HTTP {status}"));
+    }
+    client_async_tls_with_config(request, socket, None, None)
+        .await
+        .map_err(|error| format!("WebSocket handshake failed: {error}"))
+}
+
+fn no_proxy_matches(host: &str, port: u16, rules: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    rules
+        .split(|character: char| character == ',' || character.is_ascii_whitespace())
+        .filter(|rule| !rule.trim().is_empty())
+        .any(|rule| {
+            let rule = rule.trim();
+            if rule == "*" {
+                return true;
+            }
+            let (rule, rule_port) = if !rule.starts_with('[') {
+                rule.rsplit_once(':')
+                    .and_then(|(host, port)| {
+                        port.parse::<u16>().ok().map(|port| (host, Some(port)))
+                    })
+                    .unwrap_or((rule, None))
+            } else {
+                (rule, None)
+            };
+            if rule_port.is_some_and(|rule_port| rule_port != port) {
+                return false;
+            }
+            let rule = rule.trim_start_matches('.').to_ascii_lowercase();
+            host == rule || host.ends_with(&format!(".{rule}"))
+        })
 }
 
 fn build_websocket_request(
@@ -7917,6 +8051,26 @@ mod tests {
             "ws://example.test/socket?api_key=secret+value"
         );
         assert!(websocket_request.headers().get("api_key").is_none());
+    }
+
+    #[test]
+    fn websocket_proxy_bypass_matches_domains_and_ports() {
+        assert!(no_proxy_matches("localhost", 80, "localhost,127.0.0.1"));
+        assert!(no_proxy_matches(
+            "api.internal.example",
+            443,
+            ".internal.example"
+        ));
+        assert!(no_proxy_matches(
+            "api.example.test",
+            8443,
+            "api.example.test:8443"
+        ));
+        assert!(!no_proxy_matches(
+            "api.example.test",
+            443,
+            "api.example.test:8443"
+        ));
     }
 
     #[test]
