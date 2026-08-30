@@ -21,5 +21,24 @@ The response parser preserves partial `data` and structured `errors`, and the
 CLI exits non-zero when the GraphQL envelope contains errors even if HTTP
 returned status 200. The native GUI exposes the query, variables JSON and
 optional operation name in the Body tab, validating them before save or send.
-Schema introspection remains planned; imported Postman GraphQL bodies are
-preserved as structured GraphQL data and explicitly marked for review.
+## Inspect a schema
+
+Fetch the endpoint's standard introspection document and print the root fields:
+
+~~~bash
+postly graphql https://api.example.test/graphql --introspect
+~~~
+
+Add --output-json to receive the complete parsed schema, including named types,
+fields, arguments, enum values, input fields and possible types. Headers,
+Bearer/Basic auth, certificates and proxy settings use the same flags as a
+regular GraphQL request. Introspection errors are reported without treating a
+partial schema as complete.
+
+In the native GUI, choose **Inspect schema** in the GraphQL Body tab. The
+response pane opens a searchable local explorer with root operations, field
+arguments, return types, descriptions and deprecated markers. The schema fetch
+is not written to request history.
+
+Imported Postman GraphQL bodies are preserved as structured GraphQL data and
+explicitly marked for review.

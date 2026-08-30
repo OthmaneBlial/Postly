@@ -24,8 +24,10 @@ pub use export::{
     export_postman_collection, export_postman_environment, ExportError, ExportReport,
 };
 pub use graphql::{
-    introspection_query, parse_response as parse_graphql_response, parse_variables_json,
-    validate_query as validate_graphql_query, GraphqlError, GraphqlRequest, GraphqlResponse,
+    introspection_query, parse_response as parse_graphql_response,
+    parse_schema as parse_graphql_schema, parse_variables_json, schema_introspection_query,
+    validate_query as validate_graphql_query, GraphqlArgument, GraphqlEnumValue, GraphqlError,
+    GraphqlField, GraphqlInputField, GraphqlRequest, GraphqlResponse, GraphqlSchema, GraphqlType,
 };
 pub use grpc::{
     message_from_json, message_to_json, GrpcError, GrpcMethodDescription, GrpcSchema,

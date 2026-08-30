@@ -12,9 +12,10 @@ use chrono::Local;
 use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
-    ApiKeyLocation, Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions,
-    Environment, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue,
-    Request, RequestBody, RequestSearchResult, ResponseView, SseEvent, SseParser, VariableContext,
+    parse_graphql_response, parse_graphql_schema, schema_introspection_query, ApiKeyLocation,
+    Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions, Environment, GraphqlSchema,
+    HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, Request,
+    RequestBody, RequestSearchResult, ResponseView, SseEvent, SseParser, VariableContext,
     Workspace,
 };
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,7 @@ enum ResponseTab {
     Timing,
     SseEvents,
     WebSocket,
+    GraphqlSchema,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -306,6 +308,9 @@ pub struct PostlyApp {
     graphql_query: String,
     graphql_variables: String,
     graphql_operation_name: String,
+    graphql_schema: Option<GraphqlSchema>,
+    graphql_schema_search: String,
+    graphql_schema_error: Option<String>,
     pre_request_script: String,
     test_script: String,
     assertion_json_text: Vec<String>,
@@ -323,6 +328,7 @@ pub struct PostlyApp {
     response_wrap: bool,
     pending: Option<Receiver<Result<HttpResponse, String>>>,
     pending_request: Option<Request>,
+    pending_graphql_schema: bool,
     pending_cancellation: Option<CancellationToken>,
     sse_pending: Option<Receiver<Result<SseStreamUpdate, String>>>,
     sse_cancellation: Option<CancellationToken>,
@@ -394,6 +400,9 @@ impl PostlyApp {
             graphql_query: String::new(),
             graphql_variables: String::new(),
             graphql_operation_name: String::new(),
+            graphql_schema: None,
+            graphql_schema_search: String::new(),
+            graphql_schema_error: None,
             pre_request_script: String::new(),
             test_script: String::new(),
             assertion_json_text: Vec::new(),
@@ -411,6 +420,7 @@ impl PostlyApp {
             response_wrap: false,
             pending: None,
             pending_request: None,
+            pending_graphql_schema: false,
             pending_cancellation: None,
             sse_pending: None,
             sse_cancellation: None,
@@ -663,10 +673,14 @@ impl PostlyApp {
         self.cancel_active();
         self.response = None;
         self.response_error = None;
+        self.graphql_schema = None;
+        self.graphql_schema_search.clear();
+        self.graphql_schema_error = None;
         self.response_search.clear();
         self.response_tab = ResponseTab::Pretty;
         self.pending = None;
         self.pending_request = None;
+        self.pending_graphql_schema = false;
         self.pending_cancellation = None;
         self.sse_pending = None;
         self.sse_cancellation = None;
@@ -1076,6 +1090,53 @@ impl PostlyApp {
         Ok(())
     }
 
+    fn start_graphql_schema(&mut self) -> Result<(), String> {
+        if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
+        {
+            return Ok(());
+        }
+        let mut request = self.edited_request()?;
+        request.method = "POST".to_owned();
+        request.body = RequestBody::Graphql {
+            query: schema_introspection_query().to_owned(),
+            variables: serde_json::json!({}),
+            operation_name: Some("PostlySchemaIntrospection".to_owned()),
+        };
+        let context = self.context();
+        let engine = self.configured_engine()?;
+        let cancellation = CancellationToken::default();
+        let worker_cancellation = cancellation.clone();
+        let (sender, receiver) = mpsc::channel();
+        let worker_request = request.clone();
+        thread::spawn(move || {
+            let result = (|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                runtime.block_on(async move {
+                    tokio::select! {
+                        result = engine.execute(&worker_request, &context) => {
+                            result.map_err(|error| error.to_string())
+                        }
+                        _ = worker_cancellation.cancelled() => {
+                            Err("schema introspection cancelled".to_owned())
+                        }
+                    }
+                })
+            })();
+            let _ = sender.send(result);
+        });
+        self.clear_response();
+        self.pending = Some(receiver);
+        self.pending_request = Some(request);
+        self.pending_graphql_schema = true;
+        self.pending_cancellation = Some(cancellation);
+        self.response_tab = ResponseTab::GraphqlSchema;
+        self.status_message = "Fetching GraphQL schema…".to_owned();
+        Ok(())
+    }
+
     fn start_sse_current(&mut self) -> Result<(), String> {
         if self.pending.is_some() || self.sse_pending.is_some() || self.websocket_pending.is_some()
         {
@@ -1426,24 +1487,69 @@ impl PostlyApp {
             .as_ref()
             .is_some_and(CancellationToken::is_cancelled);
         let request = self.pending_request.take();
+        let schema_pending = self.pending_graphql_schema;
         self.pending = None;
+        self.pending_graphql_schema = false;
         self.pending_cancellation = None;
         match result {
             Ok(response) => {
+                self.status_message = format!(
+                    "{} {} in {} ms",
+                    response.status, response.status_text, response.duration_ms
+                );
+                if schema_pending {
+                    let schema = if response.status >= 400 {
+                        Err(format!(
+                            "GraphQL introspection endpoint returned {} {}",
+                            response.status, response.status_text
+                        ))
+                    } else {
+                        parse_graphql_response(&response.body_text())
+                            .map_err(|error| error.to_string())
+                            .and_then(|graphql| {
+                                parse_graphql_schema(&graphql).map_err(|error| error.to_string())
+                            })
+                    };
+                    match schema {
+                        Ok(schema) => {
+                            self.status_message = format!(
+                                "GraphQL schema loaded · {} named types",
+                                schema.types.len()
+                            );
+                            self.graphql_schema = Some(schema);
+                            self.graphql_schema_error = None;
+                            self.response_error = None;
+                        }
+                        Err(error) => {
+                            self.status_message = "GraphQL schema introspection failed".to_owned();
+                            self.graphql_schema_error = Some(error);
+                            self.response_error = None;
+                        }
+                    }
+                    self.response = Some(response);
+                    self.response_tab = ResponseTab::GraphqlSchema;
+                    return false;
+                }
                 if let Some(request) = request {
                     let _ = self
                         .workspace
                         .record_history(&HistoryEntry::from_response(&request, &response));
                 }
-                self.status_message = format!(
-                    "{} {} in {} ms",
-                    response.status, response.status_text, response.duration_ms
-                );
                 self.response = Some(response);
                 self.response_error = None;
                 self.refresh_history();
             }
             Err(error) => {
+                if schema_pending {
+                    if cancelled {
+                        self.status_message = "GraphQL schema introspection cancelled".to_owned();
+                    } else {
+                        self.status_message = "GraphQL schema introspection failed".to_owned();
+                        self.graphql_schema_error = Some(error);
+                    }
+                    self.response_error = None;
+                    return false;
+                }
                 if !cancelled {
                     if let Some(request) = request {
                         let _ = self
@@ -2197,6 +2303,10 @@ impl PostlyApp {
             }
         }
         ui.add_space(10.0);
+        let mut inspect_schema_clicked = false;
+        let busy = self.pending.is_some()
+            || self.sse_pending.is_some()
+            || self.websocket_pending.is_some();
         match self.body_kind {
             BodyKind::None => {
                 ui.label(RichText::new("This request has no body.").color(MUTED));
@@ -2273,6 +2383,23 @@ impl PostlyApp {
                 {
                     self.dirty = true;
                 }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("Inspect schema"))
+                        .on_hover_text(
+                            "Fetch the endpoint schema through GraphQL introspection and open the local explorer",
+                        )
+                        .clicked()
+                    {
+                        inspect_schema_clicked = true;
+                    }
+                    ui.label(
+                        RichText::new("Uses the current endpoint, headers and auth.")
+                            .small()
+                            .color(MUTED),
+                    );
+                });
             }
             BodyKind::Advanced => {
                 ui.label(
@@ -2281,6 +2408,11 @@ impl PostlyApp {
                     )
                     .color(MUTED),
                 );
+            }
+        }
+        if inspect_schema_clicked {
+            if let Err(error) = self.start_graphql_schema() {
+                self.status_message = format!("Schema introspection failed: {error}");
             }
         }
     }
@@ -2792,6 +2924,16 @@ impl PostlyApp {
                     {
                         self.response_tab = ResponseTab::WebSocket;
                     }
+                    if (self.graphql_schema.is_some() || self.pending_graphql_schema)
+                        && tab_button(
+                            ui,
+                            self.response_tab == ResponseTab::GraphqlSchema,
+                            "Schema",
+                        )
+                        .clicked()
+                    {
+                        self.response_tab = ResponseTab::GraphqlSchema;
+                    }
                 });
                 if self.response.is_some()
                     && matches!(self.response_tab, ResponseTab::Pretty | ResponseTab::Raw)
@@ -2830,6 +2972,8 @@ impl PostlyApp {
                     } else if self.websocket_started {
                         self.render_websocket_content(ui);
                     }
+                } else if self.response_tab == ResponseTab::GraphqlSchema {
+                    self.render_graphql_schema_content(ui);
                 } else if let Some(response) = &self.response {
                     self.render_response_content(ui, response);
                 } else if self.sse_started {
@@ -2967,6 +3111,167 @@ impl PostlyApp {
             });
     }
 
+    fn render_graphql_schema_content(&mut self, ui: &mut egui::Ui) {
+        if self.pending_graphql_schema {
+            ui.label(RichText::new("Fetching GraphQL schema…").color(MUTED));
+            return;
+        }
+        if let Some(error) = &self.graphql_schema_error {
+            ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+            ui.label(
+                RichText::new(
+                    "The endpoint may disable introspection or return an incomplete schema.",
+                )
+                .small()
+                .color(MUTED),
+            );
+            return;
+        }
+        let Some(schema) = self.graphql_schema.as_ref() else {
+            ui.label(
+                RichText::new("Choose Inspect schema in the GraphQL body editor.").color(MUTED),
+            );
+            return;
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Roots").strong().color(Color32::WHITE));
+            for (label, value) in [
+                ("query", schema.query_type.as_deref()),
+                ("mutation", schema.mutation_type.as_deref()),
+                ("subscription", schema.subscription_type.as_deref()),
+            ] {
+                ui.label(
+                    RichText::new(format!("{label}: {}", value.unwrap_or("—")))
+                        .small()
+                        .color(MUTED),
+                );
+            }
+            ui.label(
+                RichText::new(format!("{} named types", schema.types.len()))
+                    .small()
+                    .color(MUTED),
+            );
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Filter").small().color(MUTED));
+            ui.add(
+                TextEdit::singleline(&mut self.graphql_schema_search)
+                    .hint_text("type, field or description")
+                    .desired_width(260.0),
+            );
+        });
+        let query = self.graphql_schema_search.trim().to_ascii_lowercase();
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for graphql_type in &schema.types {
+                    let type_text = format!(
+                        "{} {} {}",
+                        graphql_type.kind,
+                        graphql_type.name,
+                        graphql_type.description.as_deref().unwrap_or("")
+                    )
+                    .to_ascii_lowercase();
+                    let matching_fields = graphql_type
+                        .fields
+                        .iter()
+                        .filter(|field| {
+                            query.is_empty()
+                                || type_text.contains(&query)
+                                || format!(
+                                    "{} {} {}",
+                                    field.name,
+                                    field.type_name,
+                                    field.description.as_deref().unwrap_or("")
+                                )
+                                .to_ascii_lowercase()
+                                .contains(&query)
+                        })
+                        .collect::<Vec<_>>();
+                    if !query.is_empty()
+                        && matching_fields.is_empty()
+                        && !type_text.contains(&query)
+                    {
+                        continue;
+                    }
+                    let is_root = [
+                        schema.query_type.as_deref(),
+                        schema.mutation_type.as_deref(),
+                        schema.subscription_type.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|name| name == graphql_type.name);
+                    egui::CollapsingHeader::new(format!(
+                        "{} {}",
+                        graphql_type.kind, graphql_type.name
+                    ))
+                    .default_open(is_root || !query.is_empty())
+                    .show(ui, |ui| {
+                        if let Some(description) = &graphql_type.description {
+                            ui.label(RichText::new(description).small().color(MUTED));
+                        }
+                        for field in &matching_fields {
+                            let arguments = if field.arguments.is_empty() {
+                                String::new()
+                            } else {
+                                format!(
+                                    "({})",
+                                    field
+                                        .arguments
+                                        .iter()
+                                        .map(|argument| {
+                                            format!("{}: {}", argument.name, argument.type_name)
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                )
+                            };
+                            ui.horizontal_wrapped(|ui| {
+                                ui.monospace(format!(
+                                    "{}{}: {}",
+                                    field.name, arguments, field.type_name
+                                ));
+                                if field.deprecated {
+                                    ui.label(
+                                        RichText::new("deprecated")
+                                            .small()
+                                            .color(Color32::from_rgb(235, 180, 80)),
+                                    );
+                                }
+                            });
+                            if let Some(description) = &field.description {
+                                ui.label(RichText::new(description).small().color(MUTED));
+                            }
+                        }
+                        for input in &graphql_type.input_fields {
+                            ui.monospace(format!("{}: {}", input.name, input.type_name));
+                        }
+                        if !graphql_type.enum_values.is_empty() {
+                            ui.label(RichText::new("Values").small().strong().color(MUTED));
+                            ui.horizontal_wrapped(|ui| {
+                                for value in &graphql_type.enum_values {
+                                    ui.monospace(&value.name);
+                                }
+                            });
+                        }
+                        if !graphql_type.possible_types.is_empty() {
+                            ui.label(
+                                RichText::new(format!(
+                                    "Possible types: {}",
+                                    graphql_type.possible_types.join(", ")
+                                ))
+                                .small()
+                                .color(MUTED),
+                            );
+                        }
+                    });
+                }
+            });
+    }
+
     fn render_response_content(&self, ui: &mut egui::Ui, response: &HttpResponse) {
         match self.response_tab {
             ResponseTab::Pretty | ResponseTab::Raw => {
@@ -3100,6 +3405,11 @@ impl PostlyApp {
             ResponseTab::SseEvents => self.render_sse_content(ui),
             ResponseTab::WebSocket => {
                 ui.label(RichText::new("WebSocket console is not active.").color(MUTED));
+            }
+            ResponseTab::GraphqlSchema => {
+                ui.label(
+                    RichText::new("Open the Schema tab to browse GraphQL types.").color(MUTED),
+                );
             }
         }
     }
@@ -3758,6 +4068,61 @@ mod tests {
             app.request.id,
             history_entry.request_id.expect("request id")
         );
+    }
+
+    #[test]
+    fn graphql_schema_worker_fetches_and_parses_a_local_schema() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let schema_body = br#"{"data":{"__schema":{"queryType":{"name":"Query"},"mutationType":null,"subscriptionType":null,"types":[{"kind":"OBJECT","name":"Query","description":"Root","fields":[{"name":"health","description":"Health check","args":[],"type":{"kind":"SCALAR","name":"String","ofType":null},"isDeprecated":false,"deprecationReason":null}],"inputFields":null,"enumValues":null,"possibleTypes":null}]}}}"#;
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("connection");
+            let mut request = [0_u8; 4096];
+            let length = stream.read(&mut request).expect("read");
+            let request = String::from_utf8_lossy(&request[..length]);
+            assert!(request.contains("POST /graphql HTTP/1.1"));
+            assert!(request.contains("PostlySchemaIntrospection"));
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                schema_body.len()
+            );
+            stream.write_all(headers.as_bytes()).expect("headers");
+            stream.write_all(schema_body).expect("schema");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.url = format!("http://{address}/graphql");
+        app.body_kind = BodyKind::Graphql;
+        app.graphql_query = "query Example { health }".to_owned();
+        app.graphql_variables = "{}".to_owned();
+        app.start_graphql_schema().expect("start schema");
+
+        let mut finished = false;
+        for _ in 0..200 {
+            if !app.poll_pending() {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.join().expect("server");
+        assert!(finished, "GraphQL schema worker did not finish");
+        assert_eq!(app.response_tab, ResponseTab::GraphqlSchema);
+        assert_eq!(
+            app.graphql_schema
+                .as_ref()
+                .and_then(|schema| schema.query_type.as_deref()),
+            Some("Query")
+        );
+        assert_eq!(
+            app.graphql_schema
+                .as_ref()
+                .and_then(|schema| schema.named_type("Query"))
+                .map(|graphql_type| graphql_type.fields[0].name.as_str()),
+            Some("health")
+        );
+        assert!(app.graphql_schema_error.is_none());
+        assert!(app.history.is_empty());
     }
 
     #[test]

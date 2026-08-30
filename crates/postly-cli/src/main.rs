@@ -12,10 +12,10 @@ use futures_util::{SinkExt, StreamExt};
 use postly_core::{
     export_postman_collection, export_postman_environment, import_curl_command, import_environment,
     import_postman_collection, message_from_json, message_to_json, parse_graphql_response,
-    parse_variables_json, run_requests, Auth, Collection, EngineOptions, Environment,
-    EnvironmentVariable, GraphqlRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter,
-    HistoryOutcome, HttpEngine, Request, RequestBody, RunnerOptions, ScriptResult,
-    ScriptTestResult, SseParser, VariableContext, Workspace,
+    parse_graphql_schema, parse_variables_json, run_requests, schema_introspection_query, Auth,
+    Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, GrpcSchema,
+    HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody,
+    RunnerOptions, ScriptResult, ScriptTestResult, SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -420,6 +420,8 @@ enum Command {
     /// Execute a GraphQL query as a structured request.
     Graphql {
         endpoint: String,
+        #[arg(long, conflicts_with_all = ["query", "query_file", "variables", "variables_json", "operation_name"], help = "Fetch and summarize the GraphQL schema through introspection")]
+        introspect: bool,
         #[arg(short = 'q', long, conflicts_with = "query_file")]
         query: Option<String>,
         #[arg(long, conflicts_with = "query")]
@@ -891,6 +893,7 @@ async fn main() -> Result<()> {
         }
         Command::Graphql {
             endpoint,
+            introspect,
             query,
             query_file,
             variables,
@@ -907,7 +910,7 @@ async fn main() -> Result<()> {
             insecure,
             output_json,
         } => {
-            send_graphql_request(GraphqlOptions {
+            let options = GraphqlOptions {
                 endpoint,
                 query,
                 query_file,
@@ -924,8 +927,12 @@ async fn main() -> Result<()> {
                 client_identity,
                 insecure,
                 output_json,
-            })
-            .await
+            };
+            if introspect {
+                introspect_graphql_schema(options).await
+            } else {
+                send_graphql_request(options).await
+            }
         }
         Command::Grpc { kind } => match kind {
             GrpcKind::Describe {
@@ -1252,6 +1259,97 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
             messages.join("; ")
         };
         bail!("GraphQL response contains errors: {detail}");
+    }
+    Ok(())
+}
+
+async fn introspect_graphql_schema(options: GraphqlOptions) -> Result<()> {
+    let mut request = GraphqlRequest::new(options.endpoint.clone(), schema_introspection_query())
+        .into_http_request("GraphQL schema introspection")?;
+    request.headers.extend(parse_headers(&options.headers)?);
+    request.auth = parse_auth_flags(options.bearer, options.basic_user, options.basic_password)?;
+    let response = execute(
+        &request,
+        VariableContext::default(),
+        ExecuteOptions {
+            timeout: options.timeout,
+            proxy: options.proxy.as_deref(),
+            ca_cert: options.ca_cert.as_deref(),
+            client_identity: options.client_identity.as_deref(),
+            insecure: options.insecure,
+            cookie_jar: None,
+        },
+    )
+    .await?;
+    if response.status >= 400 {
+        bail!(
+            "GraphQL introspection endpoint returned {} {}",
+            response.status,
+            response.status_text
+        );
+    }
+    let graphql = parse_graphql_response(&response.body_text())?;
+    let schema = parse_graphql_schema(&graphql)?;
+    if options.output_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "status": response.status,
+                "status_text": response.status_text,
+                "duration_ms": response.duration_ms,
+                "protocol": response.protocol,
+                "url": response.url,
+                "schema": schema,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "GraphQL schema · {} {} · {} ms",
+        response.status, response.status_text, response.duration_ms
+    );
+    println!(
+        "Roots: query={} · mutation={} · subscription={}",
+        schema.query_type.as_deref().unwrap_or("—"),
+        schema.mutation_type.as_deref().unwrap_or("—"),
+        schema.subscription_type.as_deref().unwrap_or("—")
+    );
+    println!("Named types: {}", schema.types.len());
+    for (label, root) in [
+        ("Query", schema.query_type.as_deref()),
+        ("Mutation", schema.mutation_type.as_deref()),
+        ("Subscription", schema.subscription_type.as_deref()),
+    ] {
+        let Some(root) = root.and_then(|name| schema.named_type(name)) else {
+            continue;
+        };
+        println!();
+        println!("{label} · {}", root.name);
+        for field in &root.fields {
+            let arguments = if field.arguments.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "({})",
+                    field
+                        .arguments
+                        .iter()
+                        .map(|argument| format!("{}: {}", argument.name, argument.type_name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            let deprecated = if field.deprecated {
+                " [deprecated]"
+            } else {
+                ""
+            };
+            println!(
+                "  {}{}: {}{}",
+                field.name, arguments, field.type_name, deprecated
+            );
+        }
     }
     Ok(())
 }
@@ -3032,6 +3130,55 @@ mod tests {
         })
         .await
         .expect("GraphQL command");
+        server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn graphql_introspection_command_parses_schema() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("connection");
+            let mut request = [0_u8; 8192];
+            let length = socket.read(&mut request).await.expect("request");
+            let request = String::from_utf8_lossy(&request[..length]);
+            assert!(request.contains("POST /graphql HTTP/1.1"));
+            assert!(request.contains("PostlySchemaIntrospection"));
+            assert!(request.contains("__schema"));
+            let body = br#"{"data":{"__schema":{"queryType":{"name":"Query"},"mutationType":null,"subscriptionType":null,"types":[{"kind":"OBJECT","name":"Query","description":null,"fields":[{"name":"health","description":"Health check","args":[],"type":{"kind":"SCALAR","name":"String","ofType":null},"isDeprecated":false,"deprecationReason":null}],"inputFields":null,"enumValues":null,"possibleTypes":null}]}}}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("headers");
+            socket.write_all(body).await.expect("response");
+        });
+
+        introspect_graphql_schema(GraphqlOptions {
+            endpoint: format!("http://{address}/graphql"),
+            query: None,
+            query_file: None,
+            variables: Vec::new(),
+            variables_json: None,
+            operation_name: None,
+            headers: Vec::new(),
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            proxy: None,
+            ca_cert: None,
+            client_identity: None,
+            insecure: false,
+            output_json: true,
+        })
+        .await
+        .expect("GraphQL introspection command");
         server.await.expect("server");
     }
 

@@ -241,14 +241,14 @@ Postly is intentionally growing from a strong HTTP foundation:
 | Protocol / format | Current capability |
 | --- | --- |
 | REST / HTTP | Native async requests, bodies, auth, cookies, response views, proxy and TLS slices |
-| GraphQL | Structured query, variables, operation name, error-aware response parsing and GUI editor |
+| GraphQL | Structured query, variables, operation name, error-aware response parsing, schema introspection and GUI explorer |
 | Server-Sent Events | Chunk-safe progressive events, metadata, cancellation and bounded <code>Last-Event-ID</code> reconnects |
 | WebSocket | <code>ws://</code>/<code>wss://</code>, headers/auth, text and binary frames, ping/pong, console and bounded history |
 | gRPC | Dynamic <code>.proto</code> discovery plus unary, server-streaming, client-streaming and bidi CLI calls with HTTPS custom-CA/client-identity support |
 | OpenAPI | 3.0/3.1 JSON/YAML request generation with guarded local reference resolution |
 
-Reflection, schema explorers, richer protocol-specific GUI surfaces and deeper
-TLS/proxy parity remain active roadmap work. The matrix is the source of truth.
+gRPC reflection, richer protocol-specific GUI surfaces and deeper TLS/proxy parity
+remain active roadmap work. The matrix is the source of truth.
 
 ## Privacy by default
 
