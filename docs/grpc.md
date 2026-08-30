@@ -22,7 +22,20 @@ cargo run -- grpc call http://127.0.0.1:50051 \
   --output-json
 ```
 
-Use `--message-file request.json` for a larger request. Metadata is supplied as repeated `--metadata key=value`; bearer and Basic credentials are sent as the standard `authorization` metadata entry. HTTPS endpoints use the bundled webpki roots.
+Use `--message-file request.json` for a larger request. Metadata is supplied as repeated `--metadata key=value`; bearer and Basic credentials are sent as the standard `authorization` metadata entry. HTTPS endpoints use the bundled webpki roots by default.
+
+For a private HTTPS service, add a PEM-encoded CA certificate. Mutual TLS accepts a combined PEM file containing the client certificate and private key:
+
+```bash
+cargo run -- grpc call https://localhost:50051 \
+  --proto ./echo.proto \
+  --method demo.Echo/Echo \
+  --message '{"message":"secure"}' \
+  --ca-cert ./certs/company-ca.pem \
+  --client-identity ./certs/client-identity.pem
+```
+
+The certificate flags are validated before the network call and only apply to `https://` endpoints. TLS verification remains enabled; an explicit insecure-TLS mode, encrypted/PKCS#12 identities and passphrase handling are not supported yet.
 
 For a server-streaming method, use its canonical path and the same request options:
 
@@ -34,7 +47,7 @@ cargo run -- grpc call http://127.0.0.1:50051 \
   --output-json
 ```
 
-Server responses are consumed progressively. With `--output-json`, Postly emits one JSON object per line with `method`, `stream_index` and `response`; human-readable output labels each message. Reflection, custom CA files, client certificates, insecure TLS and GUI gRPC editing remain future slices.
+Server responses are consumed progressively. With `--output-json`, Postly emits one JSON object per line with `method`, `stream_index` and `response`; human-readable output labels each message. Reflection and GUI gRPC editing remain future slices.
 
 ## Client and bidirectional streaming
 
@@ -56,6 +69,6 @@ cargo run -- grpc call http://127.0.0.1:50051 \
 ```
 
 Client-streaming methods return one response and bidirectional methods emit
-one JSON object per response with `stream_index` and `input_count`. Reflection,
-custom CA files, client certificates, insecure TLS and GUI gRPC editing remain
-future slices.
+one JSON object per response with `stream_index` and `input_count`. Custom CA
+certificates and combined PEM client identities work for HTTPS calls; reflection
+and GUI gRPC editing remain future slices.

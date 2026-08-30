@@ -22,7 +22,7 @@ Compatibility numbers are not published until they come from executable fixtures
 | GraphQL | structured core/CLI/GUI request editing and HTTP slice; schema explorer pending | GraphQL model, parser, GUI validation and local HTTP integration tests |
 | Server-Sent Events | CLI and native GUI streaming slice with cancellation and bounded reconnects using `Last-Event-ID` | chunked parser tests, local streaming/reconnect CLI integration tests and GUI worker/cancellation/reconnect tests |
 | WebSocket | CLI and native GUI bidirectional `ws://`/`wss://` slice with interactive text console, header/query auth and cancellation; reconnect policy remains CLI-only | local echo/reconnect integration tests, request-builder coverage and GUI worker/cancellation tests |
-| gRPC | local `.proto` discovery and dynamic unary/server/client/bidirectional streaming CLI slice; reflection/GUI pending | protox descriptor tests and local tonic HTTP/2 integration test for all four call modes |
+| gRPC | local `.proto` discovery and dynamic unary/server/client/bidirectional streaming CLI slice with HTTPS webpki roots, custom PEM CA and combined PEM client identity; reflection/GUI pending | protox descriptor tests plus local tonic HTTP/2 integration tests for all four call modes and mutual TLS |
 | Postman behavioral parity | not measured | no percentage claimed |
 
 Any future score must count semantic cases, exclude placeholders and retain failing fixtures as regressions.

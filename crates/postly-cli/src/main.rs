@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use base64::Engine;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
     export_postman_collection, export_postman_environment, import_curl_command, import_environment,
@@ -90,7 +90,25 @@ struct GrpcCallOptions {
     basic_user: Option<String>,
     basic_password: Option<String>,
     timeout: u64,
+    ca_cert: Option<PathBuf>,
+    client_identity: Option<PathBuf>,
     output_json: bool,
+}
+
+#[derive(Debug, Args)]
+struct GrpcTlsArgs {
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Trust an additional PEM-encoded CA certificate for HTTPS"
+    )]
+    ca_cert: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Use a combined PEM client certificate and private key for HTTPS"
+    )]
+    client_identity: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -648,6 +666,35 @@ enum NewKind {
     },
 }
 
+#[derive(Debug, Args)]
+struct GrpcCallCommand {
+    endpoint: String,
+    #[arg(long)]
+    proto: PathBuf,
+    #[arg(long)]
+    method: String,
+    #[arg(long, conflicts_with = "message_file")]
+    message: Option<String>,
+    #[arg(long, conflicts_with = "message")]
+    message_file: Option<PathBuf>,
+    #[arg(long = "include")]
+    includes: Vec<PathBuf>,
+    #[arg(short = 'H', long = "metadata")]
+    metadata: Vec<String>,
+    #[arg(long)]
+    bearer: Option<String>,
+    #[arg(long)]
+    basic_user: Option<String>,
+    #[arg(long)]
+    basic_password: Option<String>,
+    #[arg(long, default_value_t = 30)]
+    timeout: u64,
+    #[command(flatten)]
+    tls: Box<GrpcTlsArgs>,
+    #[arg(long)]
+    output_json: bool,
+}
+
 #[derive(Debug, Subcommand)]
 enum GrpcKind {
     /// Compile a local .proto file and list its services and methods.
@@ -659,31 +706,7 @@ enum GrpcKind {
         output_json: bool,
     },
     /// Call a gRPC method using a protobuf JSON request object or stream array.
-    Call {
-        endpoint: String,
-        #[arg(long)]
-        proto: PathBuf,
-        #[arg(long)]
-        method: String,
-        #[arg(long, conflicts_with = "message_file")]
-        message: Option<String>,
-        #[arg(long, conflicts_with = "message")]
-        message_file: Option<PathBuf>,
-        #[arg(long = "include")]
-        includes: Vec<PathBuf>,
-        #[arg(short = 'H', long = "metadata")]
-        metadata: Vec<String>,
-        #[arg(long)]
-        bearer: Option<String>,
-        #[arg(long)]
-        basic_user: Option<String>,
-        #[arg(long)]
-        basic_password: Option<String>,
-        #[arg(long, default_value_t = 30)]
-        timeout: u64,
-        #[arg(long)]
-        output_json: bool,
-    },
+    Call(Box<GrpcCallCommand>),
 }
 
 #[derive(Debug, Subcommand)]
@@ -876,20 +899,22 @@ async fn main() -> Result<()> {
                 includes,
                 output_json,
             } => describe_grpc(&proto, &includes, output_json),
-            GrpcKind::Call {
-                endpoint,
-                proto,
-                method,
-                message,
-                message_file,
-                includes,
-                metadata,
-                bearer,
-                basic_user,
-                basic_password,
-                timeout,
-                output_json,
-            } => {
+            GrpcKind::Call(call) => {
+                let GrpcCallCommand {
+                    endpoint,
+                    proto,
+                    method,
+                    message,
+                    message_file,
+                    includes,
+                    metadata,
+                    bearer,
+                    basic_user,
+                    basic_password,
+                    timeout,
+                    tls,
+                    output_json,
+                } = *call;
                 call_grpc(GrpcCallOptions {
                     endpoint,
                     proto,
@@ -902,6 +927,8 @@ async fn main() -> Result<()> {
                     basic_user,
                     basic_password,
                     timeout,
+                    ca_cert: tls.ca_cert,
+                    client_identity: tls.client_identity,
                     output_json,
                 })
                 .await
@@ -1251,16 +1278,37 @@ async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
     let mut endpoint = tonic::transport::Endpoint::from_shared(options.endpoint.clone())?
         .timeout(Duration::from_secs(options.timeout));
     match endpoint_url.scheme() {
-        "http" => {}
+        "http" => {
+            if options.ca_cert.is_some() || options.client_identity.is_some() {
+                bail!("gRPC CA and client identity options require an https:// endpoint");
+            }
+        }
         "https" => {
             let domain = endpoint_url
                 .host_str()
                 .context("HTTPS gRPC endpoint has no hostname")?;
-            endpoint = endpoint.tls_config(
-                tonic::transport::ClientTlsConfig::new()
-                    .domain_name(domain)
-                    .with_webpki_roots(),
-            )?;
+            let mut tls = tonic::transport::ClientTlsConfig::new()
+                .domain_name(domain)
+                .with_webpki_roots();
+            if let Some(path) = options.ca_cert.as_deref() {
+                let pem = fs::read(path).with_context(|| {
+                    format!("could not read gRPC CA certificate {}", path.display())
+                })?;
+                if pem.is_empty() {
+                    bail!("gRPC CA certificate {} is empty", path.display());
+                }
+                tls = tls.ca_certificate(tonic::transport::Certificate::from_pem(pem));
+            }
+            if let Some(path) = options.client_identity.as_deref() {
+                let pem = fs::read(path).with_context(|| {
+                    format!("could not read gRPC client identity {}", path.display())
+                })?;
+                if pem.is_empty() {
+                    bail!("gRPC client identity {} is empty", path.display());
+                }
+                tls = tls.identity(tonic::transport::Identity::from_pem(&pem, &pem));
+            }
+            endpoint = endpoint.tls_config(tls)?;
         }
         scheme => bail!("gRPC endpoint must use http:// or https://, got {scheme}://"),
     }
@@ -2435,6 +2483,12 @@ mod tests {
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    const TEST_CA_PEM: &str = include_str!("../../postly-core/testdata/tls/ca.pem");
+    const TEST_SERVER_CERT_PEM: &str = include_str!("../../postly-core/testdata/tls/server.pem");
+    const TEST_SERVER_KEY_PEM: &str = include_str!("../../postly-core/testdata/tls/server-key.pem");
+    const TEST_CLIENT_CERT_PEM: &str = include_str!("../../postly-core/testdata/tls/client.pem");
+    const TEST_CLIENT_KEY_PEM: &str = include_str!("../../postly-core/testdata/tls/client-key.pem");
+
     #[derive(Clone, PartialEq, prost::Message)]
     struct EchoRequest {
         #[prost(string, tag = "1")]
@@ -2677,6 +2731,8 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            ca_cert: None,
+            client_identity: None,
             output_json: true,
         })
         .await
@@ -2694,6 +2750,8 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            ca_cert: None,
+            client_identity: None,
             output_json: true,
         })
         .await
@@ -2711,6 +2769,8 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            ca_cert: None,
+            client_identity: None,
             output_json: true,
         })
         .await
@@ -2728,10 +2788,85 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            ca_cert: None,
+            client_identity: None,
             output_json: true,
         })
         .await
         .expect("gRPC bidirectional-streaming command");
+
+        shutdown_tx.send(()).expect("shutdown");
+        server.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn grpc_command_supports_custom_ca_and_client_identity() {
+        let directory = tempfile::tempdir().expect("directory");
+        let proto = directory.path().join("echo.proto");
+        std::fs::write(
+            &proto,
+            r#"
+                syntax = "proto3";
+                package demo;
+                message EchoRequest { string message = 1; }
+                message EchoResponse { string message = 1; }
+                service Echo { rpc Echo(EchoRequest) returns (EchoResponse); }
+            "#,
+        )
+        .expect("proto");
+        let ca_path = directory.path().join("ca.pem");
+        std::fs::write(&ca_path, TEST_CA_PEM).expect("CA");
+        let client_identity_path = directory.path().join("client-identity.pem");
+        std::fs::write(
+            &client_identity_path,
+            format!("{TEST_CLIENT_CERT_PEM}\n{TEST_CLIENT_KEY_PEM}"),
+        )
+        .expect("client identity");
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let tls = tonic::transport::ServerTlsConfig::new()
+            .identity(tonic::transport::Identity::from_pem(
+                TEST_SERVER_CERT_PEM,
+                TEST_SERVER_KEY_PEM,
+            ))
+            .client_ca_root(tonic::transport::Certificate::from_pem(TEST_CA_PEM));
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .tls_config(tls)
+                .expect("TLS config")
+                .add_service(TestGrpcServer)
+                .serve_with_incoming_shutdown(
+                    tonic::transport::server::TcpIncoming::from(listener),
+                    async {
+                        let _ = shutdown_rx.await;
+                    },
+                )
+                .await
+                .expect("gRPC TLS server");
+        });
+
+        call_grpc(GrpcCallOptions {
+            endpoint: format!("https://localhost:{}", address.port()),
+            proto,
+            includes: Vec::new(),
+            method: "/demo.Echo/Echo".to_owned(),
+            message: Some(r#"{"message":"secure"}"#.to_owned()),
+            message_file: None,
+            metadata: vec!["x-test=local".to_owned()],
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            ca_cert: Some(ca_path),
+            client_identity: Some(client_identity_path),
+            output_json: true,
+        })
+        .await
+        .expect("gRPC mTLS command");
 
         shutdown_tx.send(()).expect("shutdown");
         server.await.expect("server task");
