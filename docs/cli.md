@@ -133,6 +133,20 @@ read PEM files from disk; private-key contents are never command-line output
 or history data. Request, GraphQL, SSE, send and run accept the same
 HTTP proxy and certificate flags where the transport applies.
 
+Import a conventional `.env` file explicitly. Values stay literal—there is no
+variable expansion or command execution—and only keys named with `--secret`
+use the OS credential store:
+
+~~~bash
+postly import dotenv .env --output ./my-api --name Local
+postly import dotenv .env --output ./my-api --name Local --secret API_TOKEN
+~~~
+
+Malformed assignments fail the import. Duplicate keys use the last value and
+are reported in the JSON migration report. Keys not listed with `--secret`
+remain plaintext in the ignored local environment file so the security choice
+is explicit and reviewable.
+
 Saved requests can use OAuth 2.0 Client Credentials without an account or
 cloud service. Configure the auth block in the native request file or through
 the GUI, then run it normally:

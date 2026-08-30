@@ -45,7 +45,7 @@ pub use http::{
     EngineOptions, HttpEngine, HttpError, HttpResponse, HttpStreamResponse, ResponseCookie,
     ResponseView,
 };
-pub use import::{import_environment, import_postman_collection, ImportReport};
+pub use import::{import_dotenv, import_environment, import_postman_collection, ImportReport};
 pub use model::*;
 pub use openapi::{import_openapi, import_openapi_text, OpenApiImportError, OpenApiImportReport};
 pub use runner::{run_requests, CancellationToken, RunnerItemResult, RunnerOptions, RunnerSummary};

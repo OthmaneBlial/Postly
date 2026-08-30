@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -12,6 +13,7 @@ use crate::{
         ApiKeyLocation, Auth, Collection, Environment, EnvironmentVariable, HeaderEntry, KeyValue,
         MultipartPart, Request, RequestBody, ResponseExample,
     },
+    secrets::{SecretStore, SecretStoreError},
     storage::{CollectionFiles, Workspace, WorkspaceError},
 };
 
@@ -31,6 +33,12 @@ pub enum ImportError {
     MissingCollectionName,
     #[error("workspace error: {0}")]
     Workspace(#[from] WorkspaceError),
+    #[error("secure storage error: {0}")]
+    Secret(#[from] SecretStoreError),
+    #[error("invalid dotenv entry on line {line}: {message}")]
+    Dotenv { line: usize, message: String },
+    #[error("dotenv secret key was not found: {0}")]
+    MissingDotenvSecret(String),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -209,6 +217,192 @@ pub fn import_environment(
     }
     workspace.save_environment(&environment)?;
     Ok(report)
+}
+
+/// Import a conventional `.env` file into a native environment.
+///
+/// Parsing is deliberately conservative: values are not expanded, commands
+/// are never executed, malformed assignments fail the import, and only keys
+/// explicitly listed in `secret_keys` are written to the OS credential store.
+pub fn import_dotenv(
+    dotenv_path: impl AsRef<Path>,
+    output_directory: impl AsRef<Path>,
+    environment_name: &str,
+    secret_keys: &[String],
+    secret_store: &SecretStore,
+) -> Result<ImportReport, ImportError> {
+    let dotenv_path = dotenv_path.as_ref().to_path_buf();
+    let text = fs::read_to_string(&dotenv_path).map_err(|source| ImportError::Read {
+        path: dotenv_path.clone(),
+        source,
+    })?;
+    let mut report = ImportReport {
+        source: dotenv_path.display().to_string(),
+        imported_environments: 1,
+        ..ImportReport::default()
+    };
+    let values = parse_dotenv(&text, &mut report)?;
+    let secret_keys = secret_keys
+        .iter()
+        .map(|key| {
+            validate_dotenv_key(key)
+                .map(|()| key.to_owned())
+                .map_err(|message| ImportError::Dotenv { line: 0, message })
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    for key in &secret_keys {
+        if !values.contains_key(key) {
+            return Err(ImportError::MissingDotenvSecret(key.clone()));
+        }
+    }
+
+    let workspace = Workspace::open_or_init(&output_directory, "Postly workspace")?;
+    let mut environment = Environment::new(environment_name);
+    for (key, value) in values {
+        if secret_keys.contains(&key) {
+            let reference = secret_store.set_environment_secret(environment_name, &key, &value)?;
+            environment
+                .variables
+                .insert(key, EnvironmentVariable::keychain(reference.into_string()));
+        } else {
+            environment
+                .variables
+                .insert(key, EnvironmentVariable::plain(value));
+        }
+    }
+    workspace.save_environment(&environment)?;
+    Ok(report)
+}
+
+fn parse_dotenv(
+    text: &str,
+    report: &mut ImportReport,
+) -> Result<BTreeMap<String, String>, ImportError> {
+    let mut values = BTreeMap::new();
+    for (index, raw_line) in text.lines().enumerate() {
+        let line_number = index + 1;
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let assignment = line
+            .strip_prefix("export")
+            .filter(|rest| rest.chars().next().is_some_and(char::is_whitespace))
+            .map(str::trim_start)
+            .unwrap_or(line);
+        let (raw_key, raw_value) =
+            assignment
+                .split_once('=')
+                .ok_or_else(|| ImportError::Dotenv {
+                    line: line_number,
+                    message: "expected KEY=VALUE".to_owned(),
+                })?;
+        let key = raw_key.trim();
+        validate_dotenv_key(key).map_err(|message| ImportError::Dotenv {
+            line: line_number,
+            message,
+        })?;
+        let value = parse_dotenv_value(raw_value.trim(), line_number)?;
+        if values.insert(key.to_owned(), value).is_some() {
+            report.warn(format!(
+                "dotenv key {key} appeared more than once; the last value was imported."
+            ));
+        }
+    }
+    Ok(values)
+}
+
+fn validate_dotenv_key(key: &str) -> Result<(), String> {
+    let mut characters = key.chars();
+    let valid_start = characters
+        .next()
+        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic());
+    if !valid_start
+        || !characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+    {
+        return Err(format!("invalid variable name {key:?}"));
+    }
+    Ok(())
+}
+
+fn parse_dotenv_value(value: &str, line: usize) -> Result<String, ImportError> {
+    if let Some(quoted) = value.strip_prefix('\'') {
+        let Some(end) = quoted.find('\'') else {
+            return Err(ImportError::Dotenv {
+                line,
+                message: "unterminated single-quoted value".to_owned(),
+            });
+        };
+        if !quoted[end + 1..].trim().is_empty() && !quoted[end + 1..].trim_start().starts_with('#')
+        {
+            return Err(ImportError::Dotenv {
+                line,
+                message: "unexpected content after quoted value".to_owned(),
+            });
+        }
+        return Ok(quoted[..end].to_owned());
+    }
+    if let Some(quoted) = value.strip_prefix('"') {
+        let mut escaped = false;
+        let mut end = None;
+        for (offset, character) in quoted.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                end = Some(offset);
+                break;
+            }
+        }
+        let Some(end) = end else {
+            return Err(ImportError::Dotenv {
+                line,
+                message: "unterminated double-quoted value".to_owned(),
+            });
+        };
+        if !quoted[end + 1..].trim().is_empty() && !quoted[end + 1..].trim_start().starts_with('#')
+        {
+            return Err(ImportError::Dotenv {
+                line,
+                message: "unexpected content after quoted value".to_owned(),
+            });
+        }
+        return decode_dotenv_escapes(&quoted[..end], line);
+    }
+    Ok(value
+        .find(" #")
+        .map(|index| value[..index].trim_end())
+        .unwrap_or(value)
+        .to_owned())
+}
+
+fn decode_dotenv_escapes(value: &str, line: usize) -> Result<String, ImportError> {
+    let mut decoded = String::with_capacity(value.len());
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        let Some(escaped) = characters.next() else {
+            return Err(ImportError::Dotenv {
+                line,
+                message: "double-quoted value ends with an escape".to_owned(),
+            });
+        };
+        decoded.push(match escaped {
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            '"' => '"',
+            '\\' => '\\',
+            other => other,
+        });
+    }
+    Ok(decoded)
 }
 
 #[derive(Debug, Clone)]
@@ -842,6 +1036,70 @@ mod tests {
         let (_, environment) = workspace.environments().expect("environments").remove(0);
         assert!(environment.variables["accessToken"].secret);
         assert!(!environment.variables["disabledValue"].enabled);
+    }
+
+    #[test]
+    fn imports_dotenv_with_explicit_keychain_selection() {
+        let output = tempfile::tempdir().expect("output");
+        let workspace_root = output.path().join("workspace");
+        let input = output.path().join(".env");
+        fs::write(
+            &input,
+            r#"# Values stay literal; Postly does not expand ${HOST}.
+export API_URL="https://${HOST}/api"
+TOKEN='secret value'
+EMPTY=
+TOKEN='last value'
+"#,
+        )
+        .expect("dotenv fixture");
+        let secret_store = crate::secrets::SecretStore::for_test(&workspace_root);
+
+        let report = import_dotenv(
+            &input,
+            &workspace_root,
+            "Local",
+            &["TOKEN".to_owned()],
+            &secret_store,
+        )
+        .expect("dotenv import");
+
+        assert_eq!(report.imported_environments, 1);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("appeared more than once")));
+        let workspace = Workspace::open(&workspace_root).expect("workspace");
+        let (_, environment) = workspace.environments().expect("environments").remove(0);
+        assert_eq!(
+            environment.variables["API_URL"].value,
+            "https://${HOST}/api"
+        );
+        assert_eq!(environment.variables["EMPTY"].value, "");
+        assert!(environment.variables["TOKEN"].secret_ref.is_some());
+        assert!(toml::to_string(&environment)
+            .expect("environment toml")
+            .contains("secret_ref"));
+        assert_eq!(
+            secret_store
+                .resolve_environment(&environment)
+                .expect("resolved values")["TOKEN"],
+            "last value"
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_dotenv_without_creating_a_workspace() {
+        let output = tempfile::tempdir().expect("output");
+        let workspace_root = output.path().join("workspace");
+        let input = output.path().join(".env");
+        fs::write(&input, "NOT AN ASSIGNMENT\n").expect("dotenv fixture");
+        let secret_store = crate::secrets::SecretStore::for_test(&workspace_root);
+
+        let error = import_dotenv(&input, &workspace_root, "Local", &[], &secret_store)
+            .expect_err("malformed dotenv must fail");
+        assert!(error.to_string().contains("expected KEY=VALUE"));
+        assert!(!workspace_root.exists());
     }
 
     #[test]

@@ -73,8 +73,9 @@ This repository contains working vertical slices, not a static interface mockup.
   and workspace-wide request search. The native GUI supports multiple saved
   request tabs, dirty indicators, close-others, reordering and local tab
   restoration.
-- **Migration:** Postman Collection v2.1 and environment import/export, OpenAPI
-  3.0/3.1 JSON/YAML import with guarded local references, and cURL paste/copy.
+- **Migration:** Postman Collection v2.1 and environment import/export, explicit
+  `.env` import with opt-in keychain storage, OpenAPI 3.0/3.1 JSON/YAML import
+  with guarded local references, and cURL paste/copy.
 - **Code snippets:** generate reviewable cURL, JavaScript fetch, Python
   requests, Rust reqwest, Go, Java, C# and PHP from the same saved request
   model.

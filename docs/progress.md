@@ -34,6 +34,9 @@ Implemented:
 - `postly env set --secret-stdin KEY` accepts secret values without command-line
   arguments, and `postly env migrate --key/--all` migrates legacy plaintext
   values into the OS credential store while preserving enabled flags.
+- `postly import dotenv` imports literal `KEY=VALUE` files with strict parsing;
+  only explicitly named `--secret KEY` values are stored in the OS credential
+  store, and duplicate/malformed entries are reported deterministically.
 - common cURL commands can be parsed and imported without shell execution.
 - Native GUI cURL paste import creates an unsaved draft, and the current request can be copied as a shell-quoted cURL command with explicit warnings for non-materialized auth.
 - saved-request executions can be recorded, searched, filtered, cleared and retained as bounded ignored metadata-only local history.

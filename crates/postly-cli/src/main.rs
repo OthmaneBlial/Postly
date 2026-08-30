@@ -11,12 +11,13 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use postly_core::{
     export_postman_collection, export_postman_environment_with_store, generate_code_snippet,
-    import_curl_command, import_environment, import_postman_collection, message_from_json,
-    message_to_json, parse_graphql_response, parse_graphql_schema, parse_variables_json,
-    run_requests, schema_introspection_query, Auth, Collection, EngineOptions, Environment,
-    EnvironmentVariable, GraphqlRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter,
-    HistoryOutcome, HttpEngine, Request, RequestBody, ResponseExample, RunnerOptions, ScriptResult,
-    ScriptTestResult, SecretStore, SnippetLanguage, SseParser, VariableContext, Workspace,
+    import_curl_command, import_dotenv, import_environment, import_postman_collection,
+    message_from_json, message_to_json, parse_graphql_response, parse_graphql_schema,
+    parse_variables_json, run_requests, schema_introspection_query, Auth, Collection,
+    EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, GrpcSchema, HeaderEntry,
+    HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody, ResponseExample,
+    RunnerOptions, ScriptResult, ScriptTestResult, SecretStore, SnippetLanguage, SseParser,
+    VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -896,6 +897,20 @@ enum ImportKind {
         input: PathBuf,
         #[arg(short, long, default_value = ".")]
         output: PathBuf,
+    },
+    /// Import a local dotenv file without expanding variables or executing commands.
+    Dotenv {
+        input: PathBuf,
+        #[arg(short, long, default_value = ".")]
+        output: PathBuf,
+        #[arg(long, default_value = "Local")]
+        name: String,
+        #[arg(
+            long = "secret",
+            value_name = "KEY",
+            help = "Store this key in the OS credential store; repeat for multiple keys"
+        )]
+        secrets: Vec<String>,
     },
     Openapi {
         input: PathBuf,
@@ -2438,6 +2453,16 @@ async fn import_command(kind: ImportKind) -> Result<()> {
         }
         ImportKind::Environment { input, output } => {
             let report = import_environment(input, output)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        ImportKind::Dotenv {
+            input,
+            output,
+            name,
+            secrets,
+        } => {
+            let secret_store = SecretStore::for_workspace(&output);
+            let report = import_dotenv(input, &output, &name, &secrets, &secret_store)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         ImportKind::Openapi { input, output } => {
