@@ -40,7 +40,8 @@ The supported compatibility slice includes:
   `get`, `has`, `all`, `count`, `each`, `toObject` and mutation helpers;
   `pm.request.auth` supports parameter access and
   mutation for no-auth, Basic, Digest, Bearer, API key and common OAuth shapes
-- `pm.info` request name/ID and deterministic base iteration metadata
+- `pm.info` request name/ID, event name and iteration metadata (runner passes
+  the zero-based iteration and total count)
 - `pm.response.code/status/responseTime/text/json/headers/cookies`
 - `pm.sendRequest` callback requests for bounded HTTP(S) subrequests with
   URL query parameters, headers, Basic/Bearer/Digest/API-key auth, one bounded

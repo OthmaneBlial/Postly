@@ -15,7 +15,9 @@ use tokio::sync::Notify;
 use crate::{
     http::{HttpEngine, HttpResponse},
     model::{Assertion, JsonValueType, Request, Variables},
-    scripting::{run_script_with_cancellation, ScriptResult, ScriptTestResult},
+    scripting::{
+        run_script_with_cancellation_and_info, ScriptExecutionInfo, ScriptResult, ScriptTestResult,
+    },
     variables::VariableContext,
 };
 
@@ -457,7 +459,8 @@ pub async fn run_requests(
     } else {
         options.iterations.clone()
     };
-    summary.iterations = iterations.len();
+    let iteration_count = iterations.len();
+    summary.iterations = iteration_count;
     'iterations: for (iteration_index, iteration_data) in iterations.into_iter().enumerate() {
         let mut iteration_context = context.clone();
         iteration_context.iteration = iteration_data;
@@ -531,6 +534,11 @@ pub async fn run_requests(
                         request_to_run.clone(),
                         None,
                         request_context.clone(),
+                        ScriptExecutionInfo {
+                            event_name: "prerequest".to_owned(),
+                            iteration: iteration_index,
+                            iteration_count,
+                        },
                         options.cancellation.clone(),
                     )
                     .await
@@ -589,6 +597,11 @@ pub async fn run_requests(
                                 request_to_run.clone(),
                                 Some(response.clone()),
                                 request_context.clone(),
+                                ScriptExecutionInfo {
+                                    event_name: "test".to_owned(),
+                                    iteration: iteration_index,
+                                    iteration_count,
+                                },
                                 options.cancellation.clone(),
                             )
                             .await
@@ -682,12 +695,18 @@ async fn run_script_async(
     request: Request,
     response: Option<HttpResponse>,
     context: VariableContext,
+    info: ScriptExecutionInfo,
     cancellation: CancellationToken,
 ) -> Result<ScriptResult, String> {
     tokio::task::spawn_blocking(move || {
-        run_script_with_cancellation(&script, &request, response.as_ref(), &context, || {
-            cancellation.is_cancelled()
-        })
+        run_script_with_cancellation_and_info(
+            &script,
+            &request,
+            response.as_ref(),
+            &context,
+            info,
+            || cancellation.is_cancelled(),
+        )
         .map_err(|error| error.to_string())
     })
     .await
@@ -994,7 +1013,7 @@ mod tests {
         let server = tokio::spawn(async move {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-            for expected in ["one", "two"] {
+            for (expected, iteration) in [("one", "0"), ("two", "1")] {
                 let (mut socket, _) = listener.accept().await.expect("connection");
                 let mut request = Vec::new();
                 let mut buffer = [0_u8; 1024];
@@ -1010,6 +1029,9 @@ mod tests {
                 }
                 let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
                 assert!(request.contains(&format!("x-iteration: {expected}")));
+                assert!(request.contains(&format!("x-info-iteration: {iteration}")));
+                assert!(request.contains("x-info-count: 2"));
+                assert!(request.contains("x-info-event: prerequest"));
                 socket
                     .write_all(b"HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: 0\r\n\r\n")
                     .await
@@ -1028,6 +1050,18 @@ mod tests {
                     pm.request.headers.upsert({
                         key: "X-Iteration",
                         value: pm.iterationData.get("id")
+                    });
+                    pm.request.headers.upsert({
+                        key: "X-Info-Iteration",
+                        value: String(pm.info.iteration)
+                    });
+                    pm.request.headers.upsert({
+                        key: "X-Info-Count",
+                        value: String(pm.info.iterationCount)
+                    });
+                    pm.request.headers.upsert({
+                        key: "X-Info-Event",
+                        value: pm.info.eventName
                     });
                 "#
                 .to_owned(),
@@ -1090,6 +1124,11 @@ mod tests {
                 pm.test("body is JSON", function () {
                     pm.expect(pm.response.json().ok).to.be.true;
                 });
+                pm.test("runner metadata is available", function () {
+                    pm.expect(pm.info.eventName).to.eql("test");
+                    pm.expect(pm.info.iteration).to.eql(0);
+                    pm.expect(pm.info.iterationCount).to.eql(1);
+                });
             "#
             .to_owned(),
         );
@@ -1107,10 +1146,10 @@ mod tests {
         server.await.expect("server");
 
         assert!(summary.succeeded());
-        assert_eq!(summary.assertions, 2);
+        assert_eq!(summary.assertions, 3);
         assert_eq!(summary.assertion_failures, 0);
-        assert_eq!(summary.results[0].assertions, 2);
-        assert_eq!(summary.results[0].script_tests.len(), 2);
+        assert_eq!(summary.results[0].assertions, 3);
+        assert_eq!(summary.results[0].script_tests.len(), 3);
         assert_eq!(summary.results[0].script_tests[0].name, "status is 200");
         assert!(summary.results[0].script_tests[0].passed);
         assert!(summary.results[0].script_tests[0].duration_ms < 2_000);

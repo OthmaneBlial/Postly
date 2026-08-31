@@ -139,6 +139,15 @@ struct ScriptInput {
     variables: VariableContext,
     request: Value,
     response: Option<ResponseInput>,
+    info: ScriptExecutionInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScriptExecutionInfo {
+    pub(crate) event_name: String,
+    pub(crate) iteration: usize,
+    pub(crate) iteration_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -209,6 +218,45 @@ pub fn run_script_with_cancellation(
     context: &VariableContext,
     is_cancelled: impl Fn() -> bool,
 ) -> Result<ScriptResult, ScriptError> {
+    run_script_with_execution_info(
+        script,
+        request,
+        response,
+        context,
+        ScriptExecutionInfo::default(),
+        is_cancelled,
+    )
+}
+
+pub(crate) fn run_script_with_cancellation_and_info(
+    script: &str,
+    request: &Request,
+    response: Option<&HttpResponse>,
+    context: &VariableContext,
+    info: ScriptExecutionInfo,
+    is_cancelled: impl Fn() -> bool,
+) -> Result<ScriptResult, ScriptError> {
+    run_script_with_execution_info(
+        script,
+        request,
+        response,
+        context,
+        ScriptExecutionInfo {
+            iteration_count: info.iteration_count.max(1),
+            ..info
+        },
+        is_cancelled,
+    )
+}
+
+fn run_script_with_execution_info(
+    script: &str,
+    request: &Request,
+    response: Option<&HttpResponse>,
+    context: &VariableContext,
+    info: ScriptExecutionInfo,
+    is_cancelled: impl Fn() -> bool,
+) -> Result<ScriptResult, ScriptError> {
     if is_cancelled() {
         return Err(ScriptError::Cancelled);
     }
@@ -230,6 +278,7 @@ pub fn run_script_with_cancellation(
             body_text: response.body_text(),
             duration_ms: response.duration_ms,
         }),
+        info,
     };
     let payload = serde_json::to_vec(&input)?;
     if payload.len() > MAX_SCRIPT_INPUT_BYTES {
@@ -1122,8 +1171,11 @@ request.cookies = decorateKeyValueList(request.cookies || [], (cookie) => ({
 const pmInfo = Object.freeze({
   requestName: text(request.name),
   requestId: text(request.id),
-  iteration: 0,
-  iterationCount: 1
+  eventName: text(input.info && input.info.eventName),
+  iteration: Number.isInteger(input.info && input.info.iteration) ? input.info.iteration : 0,
+  iterationCount: Number.isInteger(input.info && input.info.iterationCount) && input.info.iterationCount > 0
+    ? input.info.iterationCount
+    : 1
 });
 
 function serializeRequest() {

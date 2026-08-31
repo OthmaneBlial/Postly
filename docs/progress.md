@@ -105,8 +105,9 @@ Implemented:
   array members/include.members, equality aliases and chainable property/type checks; broad Chai/Postman parity
   remains intentionally partial.
 - The opt-in script bridge now exposes a frozen `pm.info` facade with request
-  name/ID and deterministic base iteration metadata, covered by a native
-  compatibility regression.
+  name/ID, event name and iteration metadata; the collection runner passes the
+  real zero-based iteration and total count, covered by local header/test
+  regressions.
 - Script reports now preserve individual post-response test names, pass/fail
   state, callback duration and bounded error details in runner JSON; the native
   GUI and CLI show the same per-test timing.
