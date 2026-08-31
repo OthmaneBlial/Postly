@@ -1410,7 +1410,15 @@ function expect(value) {
               );
             }
             return expect(result.found ? result.value : undefined).to;
-          }
+          },
+          include: (expected) => check(
+            deepIncludes(value, expected),
+            "expected " + JSON.stringify(value) + " to" + prefix + " deeply include " + JSON.stringify(expected)
+          ),
+          members: (expected) => check(
+            membersEqual(value, expected),
+            "expected " + JSON.stringify(value) + " to" + prefix + " deeply have members " + JSON.stringify(expected)
+          )
         },
         nested: {
           property: function (name, expected) {
@@ -2191,6 +2199,8 @@ mod tests {
                     pm.expect({ b: [2], a: 1 }).to.deep.equal({ a: 1, b: [2] });
                     pm.expect({ ready: true, meta: { id: 7, source: "fixture" } }).to.deep.include({ meta: { id: 7 } });
                     pm.expect([1, { ready: true }, 3]).to.deep.members([{ ready: true }, 3, 1]);
+                    pm.expect({ ready: true, meta: { id: 7 } }).to.have.deep.include({ meta: { id: 7 } });
+                    pm.expect([1, { ready: true }, 3]).to.have.deep.members([{ ready: true }, 3, 1]);
                     pm.expect({ ready: true }).to.not.deep.include({ ready: false });
                     pm.expect([1, 2]).to.not.deep.members([1, 2, 3]);
                     pm.expect([1, 2, 3]).to.have.lengthOf(3);
