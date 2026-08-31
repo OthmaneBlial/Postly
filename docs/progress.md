@@ -101,8 +101,10 @@ Implemented:
   strings and comments.
 - Common response assertions now cover headers, cookies, status health/categories, numeric/type/regex and negated expectations.
 - The Node bridge now tests a broader explicit expectation subset including
-  stable deep equality, keys, length, oneOf, empty, numeric range matchers,
-  array members/include.members, include.keys, deep properties, equality aliases and chainable property/type checks; broad Chai/Postman parity
+  stable deep equality, deep.include/deep.members composition, keys, length,
+  oneOf, empty, numeric range matchers, array members/include.members,
+  include.keys, deep properties, equality aliases and chainable property/type
+  checks; broad Chai/Postman parity
   remains intentionally partial.
 - The opt-in script bridge now exposes a frozen `pm.info` facade with request
   name/ID, event name and iteration metadata; the collection runner passes the
