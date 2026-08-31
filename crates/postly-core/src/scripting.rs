@@ -415,6 +415,21 @@ function contentTypeForLanguage(language) {
 }
 
 function decorateKeyValueList(list, makeEntry, onChange = () => {}) {
+  const keyOf = (entry) => text(entry && (entry.key || entry.name));
+  list.get = (key) => {
+    const normalized = text(key).toLowerCase();
+    return list.find((entry) => keyOf(entry).toLowerCase() === normalized);
+  };
+  list.has = (key) => list.get(key) !== undefined;
+  list.all = () => list.slice();
+  list.count = () => list.length;
+  list.each = (callback) => list.forEach(callback);
+  list.toObject = () => list.reduce((object, entry) => {
+    if (entry && entry.enabled !== false && entry.disabled !== true && keyOf(entry)) {
+      object[keyOf(entry)] = text(entry.value);
+    }
+    return object;
+  }, {});
   list.add = (entry) => {
     const normalized = makeEntry(entry);
     if (normalized && normalized.key) {
@@ -899,6 +914,14 @@ requestHeaders.remove = (name) => {
     }
   }
 };
+requestHeaders.clear = () => { requestHeaders.splice(0, requestHeaders.length); };
+requestHeaders.all = () => requestHeaders.slice();
+requestHeaders.count = () => requestHeaders.length;
+requestHeaders.each = (callback) => requestHeaders.forEach(callback);
+requestHeaders.toObject = () => requestHeaders.reduce((object, header) => {
+  if (header && header.key && header.enabled !== false) object[header.key] = text(header.value);
+  return object;
+}, {});
 request.headers = requestHeaders;
 request.cookies = decorateKeyValueList(request.cookies || [], (cookie) => ({
   key: text(cookie && (cookie.key || cookie.name)),
@@ -1076,6 +1099,8 @@ function decorateHeaders(responseHeaders) {
     if (header && header.key && header.enabled !== false) object[header.key] = text(header.value);
     return object;
   }, {});
+  responseHeaders.all = () => responseHeaders.slice();
+  responseHeaders.count = () => responseHeaders.length;
   responseHeaders.each = (callback) => responseHeaders.forEach(callback);
   return responseHeaders;
 }
@@ -1090,6 +1115,8 @@ function decorateCookies(responseCookies) {
     if (cookie && cookie.name) object[cookie.name] = text(cookie.value);
     return object;
   }, {});
+  responseCookies.all = () => responseCookies.slice();
+  responseCookies.count = () => responseCookies.length;
   responseCookies.each = (callback) => responseCookies.forEach(callback);
   return responseCookies;
 }
@@ -1543,6 +1570,61 @@ mod tests {
             vec![crate::model::KeyValue::enabled("session", "local")]
         );
         assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+    }
+
+    #[test]
+    fn supports_postman_property_list_helpers_for_request_data() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let mut request = Request::new("Property lists", "GET", "https://api.example.test/users");
+        request
+            .headers
+            .push(crate::model::HeaderEntry::enabled("X-Trace", "before"));
+        request
+            .headers
+            .push(crate::model::HeaderEntry::enabled("X-Mode", "local"));
+        request
+            .cookies
+            .push(crate::model::KeyValue::enabled("session", "cookie-value"));
+        request
+            .query
+            .push(crate::model::KeyValue::enabled("page", "1"));
+
+        let result = run_script(
+            r#"
+                pm.test("request property lists", function () {
+                    pm.expect(pm.request.headers.get("x-trace")).to.eql("before");
+                    pm.expect(pm.request.headers.has("x-mode")).to.eql(true);
+                    pm.expect(pm.request.headers.count()).to.eql(2);
+                    pm.expect(pm.request.headers.toObject()).to.eql({ "X-Trace": "before", "X-Mode": "local" });
+                    pm.expect(pm.request.headers.all()).to.have.lengthOf(2);
+                    let headerNames = [];
+                    pm.request.headers.each((header) => headerNames.push(header.key));
+                    pm.expect(headerNames).to.eql(["X-Trace", "X-Mode"]);
+                    pm.expect(pm.request.cookies.get("session").value).to.eql("cookie-value");
+                    pm.expect(pm.request.cookies.has("session")).to.eql(true);
+                    pm.expect(pm.request.url.query.get("page").value).to.eql("1");
+                    pm.expect(pm.request.url.query.toObject()).to.eql({ page: "1" });
+                    pm.expect(pm.request.url.query.count()).to.eql(1);
+                });
+                pm.request.headers.clear();
+                pm.test("header list can be cleared", function () {
+                    pm.expect(pm.request.headers).to.be.empty;
+                });
+            "#,
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("property list facade");
+
+        result
+            .apply(&mut request, &mut VariableContext::default())
+            .expect("apply property list facade");
+        assert!(request.headers.is_empty());
+        assert_eq!(request.cookies[0].value, "cookie-value");
+        assert!(result.tests.iter().all(|test| test.passed), "{result:?}");
     }
 
     #[test]
