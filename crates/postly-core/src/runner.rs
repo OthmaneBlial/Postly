@@ -503,15 +503,26 @@ fn validate_json_schema_object(
             }
         }
     }
-    if schema.get("additionalProperties") == Some(&serde_json::Value::Bool(false)) {
-        if let Some((unknown, _)) = object.iter().find(|(property, _)| {
+    if let Some(additional_properties) = schema.get("additionalProperties") {
+        for (unknown, unknown_value) in object.iter().filter(|(property, _)| {
             properties
                 .map(|properties| !properties.contains_key(*property))
                 .unwrap_or(true)
         }) {
-            return Err(format!(
-                "additional JSON Schema property {unknown:?} is not allowed at {path:?}"
-            ));
+            match additional_properties {
+                serde_json::Value::Bool(false) => {
+                    return Err(format!(
+                        "additional JSON Schema property {unknown:?} is not allowed at {path:?}"
+                    ));
+                }
+                serde_json::Value::Object(_) => validate_json_schema(
+                    unknown_value,
+                    additional_properties,
+                    &format!("{path}/{unknown}"),
+                )?,
+                serde_json::Value::Bool(true) => {}
+                _ => {}
+            }
         }
     }
     validate_json_schema_bound(
@@ -1327,6 +1338,23 @@ mod tests {
         assert!(validate_json_schema(
             &serde_json::json!({ "extra": true }),
             &closed_without_properties,
+            ""
+        )
+        .is_err());
+        let dynamic_properties = serde_json::json!({
+            "type": "object",
+            "properties": { "id": { "type": "integer" } },
+            "additionalProperties": { "type": "string" }
+        });
+        assert!(validate_json_schema(
+            &serde_json::json!({ "id": 7, "label": "ready" }),
+            &dynamic_properties,
+            ""
+        )
+        .is_ok());
+        assert!(validate_json_schema(
+            &serde_json::json!({ "id": 7, "label": false }),
+            &dynamic_properties,
             ""
         )
         .is_err());
