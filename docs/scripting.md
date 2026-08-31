@@ -20,6 +20,11 @@ post-response script failure does not hide the received response.
 
 The current prototype is a Rust-controlled, no-shell Node.js bridge. It uses a
 short-lived `node:vm` context with a two-second synchronous execution limit.
+Before Node starts, Postly also scans the user source outside strings and
+comments and rejects explicit host-capability references such as `require`,
+`process`, `globalThis`, `eval`, `Function`, workers and module globals. This
+preflight is defense in depth and an explicit compatibility boundary; the VM
+is still not a hostile-code sandbox.
 The supported compatibility slice includes:
 
 - `pm.environment.get/set/unset/has/clear/replaceIn`

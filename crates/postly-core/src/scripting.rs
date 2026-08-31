@@ -33,6 +33,10 @@ pub enum ScriptError {
     InputTooLarge { maximum_bytes: usize },
     #[error("script process output exceeded the {maximum_bytes}-byte pipe limit")]
     OutputTooLarge { maximum_bytes: usize },
+    #[error(
+        "script references unsupported host capability `{feature}`; Postly scripts expose only the local pm.* bridge"
+    )]
+    UnsupportedHostAccess { feature: String },
     #[error("script process exceeded the {timeout_seconds}-second execution limit")]
     Timeout { timeout_seconds: u64 },
 }
@@ -189,6 +193,7 @@ pub fn run_script(
             maximum_bytes: MAX_SCRIPT_BYTES,
         });
     }
+    validate_script_source(script)?;
     let input = ScriptInput {
         script: script.to_owned(),
         variables: context.clone(),
@@ -266,6 +271,85 @@ const MAX_LOG_ENTRIES: usize = 200;
 const MAX_LOG_MESSAGE_BYTES: usize = 4096;
 #[cfg(test)]
 const MAX_TEST_ENTRIES: usize = 1000;
+
+const UNSUPPORTED_HOST_IDENTIFIERS: [(&str, &str); 13] = [
+    ("require", "require"),
+    ("process", "process"),
+    ("globalThis", "globalThis"),
+    ("global", "global"),
+    ("module", "module"),
+    ("__dirname", "__dirname"),
+    ("__filename", "__filename"),
+    ("Deno", "Deno"),
+    ("Bun", "Bun"),
+    ("Worker", "Worker"),
+    ("WebAssembly", "WebAssembly"),
+    ("eval", "eval"),
+    ("Function", "Function"),
+];
+
+fn validate_script_source(script: &str) -> Result<(), ScriptError> {
+    let bytes = script.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index += 2;
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+                continue;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    index += 1;
+                }
+                index = (index + 2).min(bytes.len());
+                continue;
+            }
+            b'\'' | b'"' | b'`' => {
+                let quote = bytes[index];
+                index += 1;
+                let mut escaped = false;
+                while index < bytes.len() {
+                    let byte = bytes[index];
+                    index += 1;
+                    if escaped {
+                        escaped = false;
+                    } else if byte == b'\\' {
+                        escaped = true;
+                    } else if byte == quote {
+                        break;
+                    }
+                }
+                continue;
+            }
+            _ => {}
+        }
+
+        for (identifier, feature) in UNSUPPORTED_HOST_IDENTIFIERS {
+            let end = index.saturating_add(identifier.len());
+            if end > bytes.len() || &bytes[index..end] != identifier.as_bytes() {
+                continue;
+            }
+            let before_is_identifier = index > 0 && is_script_identifier_byte(bytes[index - 1]);
+            let after_is_identifier = end < bytes.len() && is_script_identifier_byte(bytes[end]);
+            if !before_is_identifier && !after_is_identifier {
+                return Err(ScriptError::UnsupportedHostAccess {
+                    feature: feature.to_owned(),
+                });
+            }
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn is_script_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
+}
 
 fn node_permission_flags() -> Vec<&'static str> {
     let Ok(output) = Command::new("node").arg("--help").output() else {
@@ -1551,6 +1635,38 @@ mod tests {
         );
         assert!(node_permission_flags_from_help("  --permission  enable permissions").is_empty());
         assert!(node_permission_flags_from_help("  --permission-audit  audit only").is_empty());
+    }
+
+    #[test]
+    fn rejects_explicit_host_access_before_starting_node() {
+        let request = Request::new("Unsafe script", "GET", "https://example.test");
+        for script in [
+            "const fs = require('node:fs');",
+            "process.exit(1);",
+            "globalThis.process;",
+            "eval('pm.test(\\\"escape\\\", () => {});');",
+            "new Function('return 1')();",
+        ] {
+            let error = run_script(script, &request, None, &VariableContext::default())
+                .expect_err("host access must be rejected before Node");
+            assert!(
+                matches!(error, ScriptError::UnsupportedHostAccess { .. }),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn ignores_host_like_words_inside_strings_and_comments() {
+        assert!(validate_script_source(
+            r#"
+                // process and require are only documentation
+                pm.test("globalThis Function", function () {
+                    pm.expect("eval(module)").to.be.a("string");
+                });
+            "#
+        )
+        .is_ok());
     }
 
     #[test]

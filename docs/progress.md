@@ -87,7 +87,9 @@ Implemented:
   bridge enables Node's permission model for defense in depth: bounded network
   callbacks remain available while filesystem, child-process, worker and addon
   permissions stay disabled by default; the VM is still not a hostile-code
-  sandbox.
+  sandbox. A source preflight also rejects explicit host globals and dynamic
+  code/module access before Node starts, while ignoring matching words inside
+  strings and comments.
 - Common response assertions now cover headers, cookies, status health/categories, numeric/type/regex and negated expectations.
 - The Node bridge now tests a broader explicit expectation subset including
   stable deep equality, keys, length, oneOf, empty and numeric range matchers;
