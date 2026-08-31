@@ -16,7 +16,7 @@ my-api/
     local.postly-env.toml
 ~~~
 
-Request files are independent merge units. The collection file stores metadata and collection-scoped variables; request files store method, URL, parameters, headers, body, auth, scripts and examples. Saved response examples can also carry an optional local mock delay in milliseconds; Postman exports preserve that value under the `x-postly-delay-ms` extension.
+Request files are independent merge units. The collection file stores metadata and collection-scoped variables; request files store method, URL, parameters, headers, body, auth, scripts and examples. Saved response examples can carry response cookies with common attributes and an optional local mock delay in milliseconds; Postman exports preserve cookies and the delay under the corresponding response fields and `x-postly-delay-ms` extension.
 
 The native GUI Body tab can edit raw text, JSON, XML, HTML, JavaScript and
 GraphQL envelopes as well as URL-encoded fields, multipart text/file parts and

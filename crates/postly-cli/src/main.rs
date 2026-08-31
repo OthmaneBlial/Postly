@@ -5540,6 +5540,38 @@ mod tests {
     }
 
     #[test]
+    fn mock_set_cookie_header_skips_header_injection_values() {
+        let unsafe_name = ResponseExampleCookie {
+            name: "sid\r\nX-Leak".to_owned(),
+            value: "secret".to_owned(),
+            domain: None,
+            path: None,
+            secure: false,
+            http_only: false,
+            same_site: None,
+            expires: None,
+            max_age_seconds: None,
+        };
+        assert!(mock_set_cookie_header(&unsafe_name).is_none());
+
+        let unsafe_attribute = ResponseExampleCookie {
+            name: "sid".to_owned(),
+            value: "secret".to_owned(),
+            domain: Some("example.test\nX-Leak".to_owned()),
+            path: None,
+            secure: false,
+            http_only: false,
+            same_site: None,
+            expires: None,
+            max_age_seconds: None,
+        };
+        assert_eq!(
+            mock_set_cookie_header(&unsafe_attribute).as_deref(),
+            Some("sid=secret")
+        );
+    }
+
+    #[test]
     fn mock_route_path_accepts_variable_based_urls() {
         assert_eq!(
             mock_route_path("{{baseUrl}}/users?limit=10"),
