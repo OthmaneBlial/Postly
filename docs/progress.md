@@ -338,7 +338,7 @@ targets (`curl_command`, `variables` and `postman_import`) each completed 256
 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`bfd9cbc606897cc5a1737c42cb251e8f4428f410ca4c1a3e0d189f5f2a870ded`.
+`62281326f0994898ef78c633eb026bff2a9e863f6e8ea1a5e13f16d8d5f41e9f`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
