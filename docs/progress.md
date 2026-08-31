@@ -30,6 +30,11 @@ Implemented:
 - Postman import now preserves both `disabled: true` and `enabled: false` for
   request headers, query/cookie pairs, multipart parts and response-example
   headers, with a dedicated regression covering every entry type.
+- Postman imports now preserve scalar environment values (including numeric and
+  boolean values with `currentValue`/`initialValue` fallbacks), and report
+  request-level `protocolProfileBehavior`, proxy/certificate settings and
+  response-example `originalRequest` data as explicit manual-review gaps
+  instead of silently dropping them.
 - Incomplete Postman OAuth2 exports now preserve an existing `accessToken` as
   bearer authentication so the request remains runnable, while the migration
   report keeps token renewal marked for manual review.
@@ -379,7 +384,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`5e0fc561abdfb87f73c4463087333a9197a7409fa9fc715b8b15eb7ceb650e19`.
+`4bd13ff047d17506d36874ac66d33d8110d71c9eadc0f57e0e27b9542e511974`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest

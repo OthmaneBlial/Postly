@@ -4,7 +4,9 @@
   "values": [
     { "key": "baseUrl", "value": "http://127.0.0.1:8080", "enabled": true, "type": "default" },
     { "key": "accessToken", "value": "replace-me", "enabled": true, "type": "secret" },
-    { "key": "disabledValue", "value": "kept-but-disabled", "enabled": false, "type": "default" }
+    { "key": "disabledValue", "value": "kept-but-disabled", "enabled": false, "type": "default" },
+    { "key": "numericValue", "value": 42, "enabled": true, "type": "default" },
+    { "key": "booleanValue", "value": true, "enabled": true, "type": "default" }
   ],
   "_postman_variable_scope": "environment"
 }

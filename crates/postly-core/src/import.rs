@@ -207,10 +207,12 @@ pub fn import_environment(
                 report.warn("Skipped an environment entry without a key.");
                 continue;
             };
-            let value = variable
-                .get("value")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let Some(value) = postman_environment_value(variable) else {
+                report.warn(format!(
+                    "Skipped environment variable {key}: it has no usable value."
+                ));
+                continue;
+            };
             let enabled = variable
                 .get("enabled")
                 .and_then(Value::as_bool)
@@ -219,7 +221,7 @@ pub fn import_environment(
             environment.variables.insert(
                 key.to_owned(),
                 EnvironmentVariable {
-                    value: value.to_owned(),
+                    value,
                     enabled,
                     secret,
                     secret_ref: None,
@@ -501,10 +503,11 @@ fn import_item(
     let mut scripts = inherited.scripts.clone();
     scripts.extend(parse_event_scripts(item, name, report));
     scripts.apply_to_request(&mut request);
-    request.examples = parse_examples(item, report);
+    let (examples, examples_require_review) = parse_examples(item, report);
+    request.examples = examples;
     let request_path = transaction.save_request(collection, &request)?;
     report.imported_requests += 1;
-    if auth_requires_review || request_needs_review(&request) {
+    if auth_requires_review || examples_require_review || request_needs_review(&request) {
         report.manual_review_requests += 1;
         report.warn(format!(
             "Request {name} requires manual review after import ({})",
@@ -611,7 +614,50 @@ fn parse_request(
         .find(|header| header.key.eq_ignore_ascii_case("content-type"))
         .map(|header| header.value.as_str());
     request.body = parse_body(name, value.get("body"), request_content_type, report);
-    (request, parsed_auth.requires_review)
+    let unsupported_fields_require_review = warn_unsupported_request_fields(name, value, report);
+    (
+        request,
+        parsed_auth.requires_review || unsupported_fields_require_review,
+    )
+}
+
+fn warn_unsupported_request_fields(name: &str, value: &Value, report: &mut ImportReport) -> bool {
+    let mut requires_review = false;
+    for field in ["protocolProfileBehavior", "proxy", "certificate"] {
+        let Some(field_value) = value.get(field) else {
+            continue;
+        };
+        if !has_meaningful_value(field_value) {
+            continue;
+        }
+        let detail = field_value
+            .as_object()
+            .map(|object| {
+                let mut keys = object.keys().cloned().collect::<Vec<_>>();
+                keys.sort();
+                if keys.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", keys.join(", "))
+                }
+            })
+            .unwrap_or_default();
+        report.warn(format!(
+            "Request {name} contains Postman {field}{detail}; this setting is not imported and requires manual review."
+        ));
+        requires_review = true;
+    }
+    requires_review
+}
+
+fn has_meaningful_value(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(value) => !value.trim().is_empty(),
+        Value::Array(values) => !values.is_empty(),
+        Value::Object(values) => !values.is_empty(),
+        Value::Bool(_) | Value::Number(_) => true,
+    }
 }
 
 fn parse_event_scripts(item: &Value, subject: &str, report: &mut ImportReport) -> ScriptSet {
@@ -1216,13 +1262,39 @@ fn postman_variable_value(variable: &Value) -> Option<String> {
     }
 }
 
-fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExample> {
-    item.get("response")
+fn postman_environment_value(variable: &Value) -> Option<String> {
+    let value = variable
+        .get("value")
+        .and_then(|value| string_value(Some(value)));
+    let current = variable
+        .get("currentValue")
+        .or_else(|| variable.get("current"))
+        .and_then(|value| string_value(Some(value)));
+    let initial = variable
+        .get("initialValue")
+        .and_then(|value| string_value(Some(value)));
+    match value {
+        Some(value) if !value.is_empty() => Some(value),
+        Some(value) => current.or(initial).or(Some(value)),
+        None => current.or(initial),
+    }
+}
+
+fn parse_examples(item: &Value, report: &mut ImportReport) -> (Vec<ResponseExample>, bool) {
+    let mut requires_review = false;
+    let examples = item
+        .get("response")
         .and_then(Value::as_array)
         .map(|examples| {
             examples
                 .iter()
                 .map(|example| {
+                    if has_meaningful_value(example.get("originalRequest").unwrap_or(&Value::Null)) {
+                        report.warn(
+                            "A Postman response example contains originalRequest; the saved response data was imported, but the embedded request needs manual review.",
+                        );
+                        requires_review = true;
+                    }
                     let name = example
                         .get("name")
                         .and_then(Value::as_str)
@@ -1324,9 +1396,11 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExampl
         .unwrap_or_else(|| {
             if item.get("response").is_some() {
                 report.warn("An example field was present but could not be parsed.");
+                requires_review = true;
             }
             Vec::new()
-        })
+        });
+    (examples, requires_review)
 }
 
 fn description_text(value: &Value) -> Option<String> {
@@ -1464,11 +1538,57 @@ mod tests {
                 ]
             }]
         });
-        let examples = parse_examples(&item, &mut report);
+        let (examples, examples_require_review) = parse_examples(&item, &mut report);
+        assert!(!examples_require_review);
         assert_eq!(examples[0].headers.len(), 3);
         assert!(!examples[0].headers[0].enabled);
         assert!(!examples[0].headers[1].enabled);
         assert!(examples[0].headers[2].enabled);
+    }
+
+    #[test]
+    fn reports_postman_transport_and_embedded_example_fields_for_manual_review() {
+        let mut report = ImportReport::default();
+        let value = serde_json::json!({
+            "method": "GET",
+            "url": "https://api.example.test/users",
+            "protocolProfileBehavior": {
+                "followRedirects": false,
+                "disableCookies": true
+            },
+            "proxy": { "host": "127.0.0.1", "port": 8080 },
+            "certificate": { "matches": ["api.example.test"] }
+        });
+        let (_, needs_review) = parse_request("Transport settings", &value, None, &mut report);
+        assert!(needs_review);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("protocolProfileBehavior")
+                && warning.contains("disableCookies, followRedirects")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Postman proxy")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Postman certificate")));
+
+        let item = serde_json::json!({
+            "response": [{
+                "name": "Saved response",
+                "code": 200,
+                "originalRequest": { "method": "GET", "url": "https://example.test" }
+            }]
+        });
+        let (examples, examples_require_review) = parse_examples(&item, &mut report);
+        assert!(examples_require_review);
+        assert_eq!(examples.len(), 1);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("originalRequest")));
     }
 
     #[test]
@@ -1579,6 +1699,8 @@ mod tests {
         let (_, environment) = workspace.environments().expect("environments").remove(0);
         assert!(environment.variables["accessToken"].secret);
         assert!(!environment.variables["disabledValue"].enabled);
+        assert_eq!(environment.variables["numericValue"].value, "42");
+        assert_eq!(environment.variables["booleanValue"].value, "true");
     }
 
     #[test]
