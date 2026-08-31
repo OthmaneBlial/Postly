@@ -14,15 +14,15 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use hyper_util::rt::TokioIo;
 use postly_core::{
-    connect_socks5_stream, export_openapi_collection, export_postman_collection,
-    export_postman_environment_with_store, generate_code_snippet, generate_markdown_docs,
-    import_curl_command, import_dotenv, import_environment, import_postman_collection,
-    message_from_json, message_to_json, parse_graphql_response, parse_graphql_schema,
-    parse_variables_json, run_requests, schema_introspection_query, Auth, CancellationToken,
-    Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, GrpcSchema,
-    HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody,
-    ResponseExample, RunnerOptions, ScriptResult, ScriptTestResult, SecretStore, SnippetLanguage,
-    SseParser, VariableContext, Workspace,
+    connect_socks5_stream, evaluate_response_assertions, export_openapi_collection,
+    export_postman_collection, export_postman_environment_with_store, generate_code_snippet,
+    generate_markdown_docs, import_curl_command, import_dotenv, import_environment,
+    import_postman_collection, message_from_json, message_to_json, parse_graphql_response,
+    parse_graphql_schema, parse_variables_json, run_requests, schema_introspection_query, Auth,
+    CancellationToken, Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest,
+    GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request,
+    RequestBody, ResponseExample, RunnerOptions, ScriptResult, ScriptTestResult, SecretStore,
+    SnippetLanguage, SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -3176,11 +3176,16 @@ async fn send_saved_request(options: SendOptions<'_>) -> Result<()> {
     if let Some(script_result) = &post_script {
         script_result.apply(&mut request, &mut context)?;
     }
+    let assertion_failures = evaluate_response_assertions(&request.assertions, &response);
     print_response_with_tests(
         &response,
         options.output_json,
         post_script.as_ref().map(|script| script.tests.as_slice()),
+        Some((request.assertions.len(), assertion_failures.as_slice())),
     )?;
+    if !assertion_failures.is_empty() {
+        bail!("native response assertions failed");
+    }
     if post_script
         .as_ref()
         .is_some_and(|script| script.failed_tests().next().is_some())
@@ -4246,13 +4251,14 @@ fn parse_cli_body(data: Option<String>, json_body: Option<String>) -> Result<Req
 }
 
 fn print_response(response: &postly_core::HttpResponse, output_json: bool) -> Result<()> {
-    print_response_with_tests(response, output_json, None)
+    print_response_with_tests(response, output_json, None, None)
 }
 
 fn print_response_with_tests(
     response: &postly_core::HttpResponse,
     output_json: bool,
     tests: Option<&[ScriptTestResult]>,
+    native_assertions: Option<(usize, &[String])>,
 ) -> Result<()> {
     if output_json {
         let mut payload = json!({
@@ -4268,6 +4274,13 @@ fn print_response_with_tests(
         });
         if let Some(tests) = tests {
             payload["tests"] = serde_json::to_value(tests)?;
+        }
+        if let Some((count, failures)) = native_assertions {
+            payload["assertions"] = json!({
+                "count": count,
+                "failed": failures.len(),
+                "failures": failures,
+            });
         }
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
@@ -4290,6 +4303,16 @@ fn print_response_with_tests(
                         test.duration_ms,
                         test.error.as_deref().unwrap_or("assertion failed")
                     );
+                }
+            }
+        }
+        if let Some((count, failures)) = native_assertions {
+            if failures.is_empty() {
+                println!("PASS native assertions: {count}");
+            } else {
+                println!("FAIL native assertions: {} of {count}", failures.len());
+                for failure in failures {
+                    println!("FAIL assertion: {failure}");
                 }
             }
         }

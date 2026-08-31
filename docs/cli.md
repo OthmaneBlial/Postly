@@ -95,7 +95,9 @@ postly send ./my-api/collections/my-api/requests/smoke/health.postly.toml \
 ~~~
 
 `request` is for an unsaved URL. `send` executes a saved request file and can
-run its preserved scripts with the explicit `--scripts` flag.
+run its preserved scripts with the explicit `--scripts` flag. It also evaluates
+the request's native response assertions, includes their pass/fail details in
+text or JSON output, and exits non-zero when one fails.
 
 ## Generate code snippets
 

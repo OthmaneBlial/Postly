@@ -28,6 +28,9 @@ Implemented:
 - collection/folder/request script source preservation and a truthful pm.* compatibility matrix.
 - collection and folder authentication inheritance is materialized into imported request files.
 - init, request, send, import, list and sequential run CLI commands.
+- `postly send` now evaluates persisted native response assertions with the
+  shared runner evaluator, reports failures in text/JSON output and exits
+  non-zero without hiding the received response.
 - new request creates and persists a saved request without editing files by hand.
 - env set creates local environments and saved requests resolve enabled environment variables.
 - postly env set --secret stores new environment secrets in the OS credential
