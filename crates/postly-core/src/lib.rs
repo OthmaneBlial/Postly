@@ -54,7 +54,10 @@ pub use openapi::{
     export_openapi_collection, import_openapi, import_openapi_text, OpenApiExportError,
     OpenApiExportReport, OpenApiImportError, OpenApiImportReport,
 };
-pub use runner::{run_requests, CancellationToken, RunnerItemResult, RunnerOptions, RunnerSummary};
+pub use runner::{
+    evaluate_response_assertions, run_requests, CancellationToken, RunnerItemResult, RunnerOptions,
+    RunnerSummary,
+};
 pub use scripting::{
     run_script, run_script_with_cancellation, ScriptError, ScriptLog, ScriptResult,
     ScriptTestResult,

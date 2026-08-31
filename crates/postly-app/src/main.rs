@@ -17,14 +17,14 @@ use eframe::egui::{self, Color32, FontId, RichText, TextEdit, TextStyle};
 use futures_util::{SinkExt, StreamExt};
 use hyper_util::rt::TokioIo;
 use postly_core::{
-    connect_socks5_stream, export_curl_command, message_from_json, message_to_json,
-    parse_curl_command, parse_graphql_response, parse_graphql_schema, run_script_with_cancellation,
-    schema_introspection_query, ApiKeyLocation, Assertion, Auth, CancellationToken,
-    CollectionFiles, EngineOptions, Environment, EnvironmentVariable, GraphqlSchema, GrpcRequest,
-    GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, JsonValueType,
-    KeyValue, MultipartPart, OAuthDeviceCodePrompt, Request, RequestBody, RequestSearchResult,
-    ResponseExample, ResponseView, ScriptResult, SecretStore, SseEvent, SseParser, VariableContext,
-    WebSocketMessage, Workspace,
+    connect_socks5_stream, evaluate_response_assertions, export_curl_command, message_from_json,
+    message_to_json, parse_curl_command, parse_graphql_response, parse_graphql_schema,
+    run_script_with_cancellation, schema_introspection_query, ApiKeyLocation, Assertion, Auth,
+    CancellationToken, CollectionFiles, EngineOptions, Environment, EnvironmentVariable,
+    GraphqlSchema, GrpcRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine,
+    HttpResponse, JsonValueType, KeyValue, MultipartPart, OAuthDeviceCodePrompt, Request,
+    RequestBody, RequestSearchResult, ResponseExample, ResponseView, ScriptResult, SecretStore,
+    SseEvent, SseParser, VariableContext, WebSocketMessage, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -178,6 +178,7 @@ struct HttpExecutionResult {
     response: HttpResponse,
     script_reports: Vec<ScriptRunReport>,
     script_error: Option<String>,
+    assertion_failures: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -768,6 +769,7 @@ pub struct PostlyApp {
     response_search: String,
     response: Option<HttpResponse>,
     response_error: Option<String>,
+    response_assertion_failures: Vec<String>,
     response_wrap: bool,
     pending: Option<Receiver<Result<HttpExecutionResult, String>>>,
     pending_device_code: Option<Receiver<OAuthDeviceCodePrompt>>,
@@ -900,6 +902,7 @@ impl PostlyApp {
             response_search: String::new(),
             response: None,
             response_error: None,
+            response_assertion_failures: Vec::new(),
             response_wrap: false,
             pending: None,
             pending_device_code: None,
@@ -1852,6 +1855,7 @@ impl PostlyApp {
         self.cancel_active();
         self.response = None;
         self.response_error = None;
+        self.response_assertion_failures.clear();
         self.graphql_schema = None;
         self.graphql_schema_search.clear();
         self.graphql_schema_error = None;
@@ -2802,10 +2806,13 @@ impl PostlyApp {
                             }
                         }
                     }
+                    let assertion_failures =
+                        evaluate_response_assertions(&request_for_send.assertions, &response);
                     Ok(HttpExecutionResult {
                         response,
                         script_reports,
                         script_error,
+                        assertion_failures,
                     })
                 })
             })();
@@ -2839,6 +2846,7 @@ impl PostlyApp {
         let worker_cancellation = cancellation.clone();
         let (sender, receiver) = mpsc::channel();
         let worker_request = request.clone();
+        let worker_assertions = worker_request.assertions.clone();
         thread::spawn(move || {
             let result = (|| {
                 let runtime = tokio::runtime::Builder::new_current_thread()
@@ -2848,10 +2856,15 @@ impl PostlyApp {
                 runtime.block_on(async move {
                     tokio::select! {
                         result = execute_grpc_request(worker_request, context, transport, root) => {
-                            result.map(|response| HttpExecutionResult {
-                                response,
-                                script_reports: Vec::new(),
-                                script_error: None,
+                            result.map(|response| {
+                                let assertion_failures =
+                                    evaluate_response_assertions(&worker_assertions, &response);
+                                HttpExecutionResult {
+                                    response,
+                                    script_reports: Vec::new(),
+                                    script_error: None,
+                                    assertion_failures,
+                                }
                             })
                         },
                         _ = worker_cancellation.cancelled() => Err("gRPC call cancelled".to_owned()),
@@ -2955,10 +2968,11 @@ impl PostlyApp {
                         result = engine.execute(&worker_request, &context) => {
                             result
                                 .map(|response| HttpExecutionResult {
-                                    response,
-                                    script_reports: Vec::new(),
-                                    script_error: None,
-                                })
+                                response,
+                                script_reports: Vec::new(),
+                                script_error: None,
+                                assertion_failures: Vec::new(),
+                            })
                                 .map_err(|error| error.to_string())
                         }
                         _ = worker_cancellation.cancelled() => {
@@ -3537,7 +3551,16 @@ impl PostlyApp {
                 response,
                 script_reports,
                 script_error,
+                assertion_failures,
             }) => {
+                self.response_assertion_failures = assertion_failures;
+                let assertion_failures = self.response_assertion_failures.clone();
+                for failure in assertion_failures {
+                    self.push_console(
+                        ConsoleLevel::Error,
+                        format!("Native response assertion failed: {failure}"),
+                    );
+                }
                 let failed_script_tests = script_reports
                     .iter()
                     .map(|report| report.result.failed_tests().count())
@@ -3577,7 +3600,14 @@ impl PostlyApp {
                 if failed_script_tests > 0 {
                     self.status_message
                         .push_str(&format!(" · {failed_script_tests} script test(s) failed"));
-                } else if script_error.is_some() {
+                }
+                if !self.response_assertion_failures.is_empty() {
+                    self.status_message.push_str(&format!(
+                        " · {} native assertion(s) failed",
+                        self.response_assertion_failures.len()
+                    ));
+                }
+                if script_error.is_some() {
                     self.status_message.push_str(" · script failed");
                 }
                 self.push_console(
@@ -6502,6 +6532,26 @@ impl PostlyApp {
                             self.open_response_example_editor();
                         }
                         ui.checkbox(&mut self.response_wrap, "Wrap");
+                    });
+                }
+                if !self.response_assertion_failures.is_empty() {
+                    ui.group(|ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "{} native response assertion{} failed",
+                                self.response_assertion_failures.len(),
+                                if self.response_assertion_failures.len() == 1 {
+                                    ""
+                                } else {
+                                    "s"
+                                }
+                            ))
+                            .strong()
+                            .color(Color32::from_rgb(240, 125, 105)),
+                        );
+                        for failure in &self.response_assertion_failures {
+                            ui.colored_label(Color32::from_rgb(240, 125, 105), failure);
+                        }
                     });
                 }
                 ui.separator();
@@ -10062,6 +10112,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
         app.request.url = format!("http://{address}/script-failure");
+        app.request.assertions = vec![Assertion::Status { expected: 201 }];
         app.test_script =
             "pm.test('expected failure', function () { pm.response.to.have.status(201); });"
                 .to_owned();
@@ -10086,10 +10137,15 @@ mod tests {
             app.status_message
         );
         assert!(app.script_error.is_none());
+        assert_eq!(
+            app.response_assertion_failures,
+            vec!["assertion 1: expected status 201, received 202".to_owned()]
+        );
         let report = app.script_report.as_ref().expect("test report");
         assert_eq!(report.kind, ScriptRunKind::Tests);
         assert_eq!(report.result.failed_tests().count(), 1);
         assert!(app.status_message.contains("1 script test(s) failed"));
+        assert!(app.status_message.contains("1 native assertion(s) failed"));
     }
 
     #[test]

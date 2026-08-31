@@ -323,7 +323,13 @@ fn json_value_type_matches(value: &serde_json::Value, expected: JsonValueType) -
     )
 }
 
-fn evaluate_assertions(assertions: &[Assertion], response: &HttpResponse) -> Vec<String> {
+/// Evaluate persisted native response assertions without invoking a script
+/// runtime. The GUI uses this same function as the collection runner so an
+/// interactive send and a headless run report identical failures.
+pub fn evaluate_response_assertions(
+    assertions: &[Assertion],
+    response: &HttpResponse,
+) -> Vec<String> {
     assertions
         .iter()
         .enumerate()
@@ -357,7 +363,7 @@ async fn execute_concurrent_request(
     let duration_ms = started.elapsed().as_millis();
     match response {
         Ok(response) => {
-            let assertion_failures = evaluate_assertions(&request.assertions, &response);
+            let assertion_failures = evaluate_response_assertions(&request.assertions, &response);
             let error = (!assertion_failures.is_empty())
                 .then(|| format!("{} explicit assertion(s) failed", assertion_failures.len()));
             Some(RunnerItemResult {
@@ -550,7 +556,8 @@ pub async fn run_requests(
                         .or_default() += 1;
                     let mut error = None;
                     assertions = request_to_run.assertions.len();
-                    assertion_failures = evaluate_assertions(&request_to_run.assertions, &response);
+                    assertion_failures =
+                        evaluate_response_assertions(&request_to_run.assertions, &response);
                     if !assertion_failures.is_empty() {
                         error = Some(format!(
                             "{} explicit assertion(s) failed",
