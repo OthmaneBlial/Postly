@@ -1416,6 +1416,17 @@ function makeScriptResponse(responseData) {
           return true;
         },
         status: (expected) => assert(responseData.status !== expected, "expected status " + responseData.status + " not to equal " + expected),
+        header: function (name, expected) {
+          const actual = responseHeaders.get(name);
+          if (arguments.length > 1) {
+            const matches = expected && typeof expected.test === "function"
+              ? expected.test(actual || "")
+              : actual === text(expected);
+            assert(actual === undefined || !matches, "expected response not to have header " + text(name) + " matching " + text(expected));
+          } else {
+            assert(actual === undefined, "expected response not to have header " + text(name));
+          }
+        },
         cookie: (name) => {
           const found = responseCookies.some((cookie) => text(cookie && cookie.name).toLowerCase() === text(name).toLowerCase());
           assert(!found, "expected response not to have cookie " + text(name));
@@ -2494,6 +2505,8 @@ mod tests {
                     pm.response.to.not.have.cookie("missing");
                     pm.response.to.have.header("content-type");
                     pm.response.to.have.header("content-type", /json/);
+                    pm.response.to.not.have.header("x-missing");
+                    pm.response.to.not.have.header("content-type", "text/plain");
                     pm.response.to.have.jsonBody("ok", true);
                     pm.expect(pm.response.headers.get("content-type")).to.include("json");
                     pm.expect(pm.response.headers.toObject()).to.have.property("Content-Type", "application/json");

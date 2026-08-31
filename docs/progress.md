@@ -114,7 +114,7 @@ Implemented:
   protocol/host/port/path/hash metadata and read-only path variables are also
   exposed.
 - Common response-side Postman assertions now include optional header values,
-  JSON body path checks, non-empty body and cookie checks, and header/cookie object views;
+  JSON body path checks, non-empty body and cookie checks, negated header presence/value checks, and header/cookie object views;
   matcher coverage includes exact/all/any keys, contain, deep properties and
   common numeric aliases with regression coverage.
 - Native JSON Pointer assertions now support deterministic deep inclusion for
