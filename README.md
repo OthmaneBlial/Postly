@@ -69,7 +69,8 @@ This repository contains working vertical slices, not a static interface mockup.
   native GUI can create, edit, disable and rename environments; existing secret
   references stay masked and new secret values go through the OS credential store.
 - **Transport controls:** explicit insecure-TLS opt-in for supported HTTP flows,
-  verified HTTPS, custom PEM CAs, combined PEM client identities, HTTP(S)/SOCKS
+  verified HTTPS, custom PEM CAs, combined PEM or password-protected PKCS#12
+  client identities, HTTP(S)/SOCKS
   proxy routing, CLI/GUI WebSocket and gRPC HTTP CONNECT routing, environment proxy support
   and bypass rules, with actionable
   diagnostics.

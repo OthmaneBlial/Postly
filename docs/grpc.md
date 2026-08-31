@@ -75,7 +75,7 @@ cargo run -- grpc call https://localhost:50051 \
   --client-identity ./certs/client-identity.pem
 ```
 
-The certificate flags are validated before the network call and only apply to `https://` endpoints. TLS verification remains enabled; an explicit insecure-TLS mode, encrypted/PKCS#12 identities and passphrase handling are not supported yet.
+The certificate flags are validated before the network call and only apply to `https://` endpoints. TLS verification remains enabled; an explicit insecure-TLS mode and encrypted/PKCS#12 identities with passphrases are not supported for gRPC yet. HTTP/SSE requests support password-protected `.p12`/`.pfx` identities; see [HTTPS certificates](certificates.md).
 
 For a server-streaming method, use its canonical path and the same request options:
 

@@ -172,7 +172,11 @@ Not yet implemented:
   individual TOML writes now use unique flushed temporary files, and failed
   request relocation rolls back its newly written destination. Recovery now
   covers multiple dirty GUI documents.
-- Encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association and explicit insecure TLS remain open; gRPC custom PEM CA/client identity and SOCKS5 routing are now available in CLI and GUI.
+- Encrypted PKCS#12 identities and transient passphrase handling now work for
+  the shared HTTP/SSE engine, CLI and native GUI; per-domain certificate
+  association, WebSocket certificate routing and gRPC PKCS#12 remain open.
+  gRPC custom PEM CA/client identity and SOCKS5 routing are available in CLI
+  and GUI.
 - OpenAPI cyclic/remote references, richer schema generation beyond the current composed/format-aware samples and deeper protocol-specific GUI tooling.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
   cross-client/memory benchmarks and production release validation beyond the

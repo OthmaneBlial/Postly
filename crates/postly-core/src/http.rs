@@ -33,6 +33,13 @@ use crate::{
 
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 100 * 1024 * 1024;
 
+fn is_pkcs12_identity_path(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        let extension = extension.to_string_lossy();
+        extension.eq_ignore_ascii_case("p12") || extension.eq_ignore_ascii_case("pfx")
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
     pub timeout: Duration,
@@ -47,6 +54,8 @@ pub struct EngineOptions {
     pub ca_cert: Option<PathBuf>,
     /// A PEM bundle containing the client certificate chain and private key.
     pub client_identity: Option<PathBuf>,
+    /// A transient passphrase for a `.p12`/`.pfx` client identity. Never persist it.
+    pub client_identity_passphrase: Option<String>,
     /// Optional ignored local cookie-jar file for saved-request sessions.
     pub cookie_jar: Option<PathBuf>,
 }
@@ -62,6 +71,7 @@ impl Default for EngineOptions {
             no_proxy: None,
             ca_cert: None,
             client_identity: None,
+            client_identity_passphrase: None,
             cookie_jar: None,
         }
     }
@@ -118,6 +128,15 @@ pub enum HttpError {
         path: String,
         source: reqwest::Error,
     },
+    #[error("PKCS#12 client identity {path} requires a passphrase")]
+    ClientIdentityPassphraseRequired { path: String },
+    #[error("could not unlock PKCS#12 client identity {path}: {source}")]
+    ClientIdentityPassphrase {
+        path: String,
+        source: reqwest::Error,
+    },
+    #[error("a client-identity passphrase only applies to .p12 or .pfx files: {path}")]
+    ClientIdentityPassphraseUnsupported { path: String },
     #[error("HTTP request failed: {0}")]
     Request(#[source] reqwest::Error),
     #[error("response body exceeds the configured limit of {limit} bytes")]
@@ -592,11 +611,24 @@ impl HttpEngine {
             .ca_cert
             .as_deref()
             .map(|path| path.display().to_string());
+        let client_identity_path = options
+            .client_identity
+            .as_deref()
+            .map(|path| path.display().to_string());
+        let uses_pkcs12_identity = options
+            .client_identity
+            .as_deref()
+            .is_some_and(is_pkcs12_identity_path);
         let mut builder = Client::builder()
             .timeout(options.timeout)
             .danger_accept_invalid_certs(options.accept_invalid_certs)
             .redirect(reqwest::redirect::Policy::limited(options.max_redirects))
             .cookie_provider(Arc::clone(&cookie_jar));
+        if uses_pkcs12_identity {
+            builder = builder.use_native_tls();
+        } else {
+            builder = builder.use_rustls_tls();
+        }
         if let Some(proxy) = options.proxy.as_deref() {
             let no_proxy = options
                 .no_proxy
@@ -633,16 +665,41 @@ impl HttpEngine {
                 path: path_display.clone(),
                 source,
             })?;
-            let identity =
+            let identity = if uses_pkcs12_identity {
+                let passphrase =
+                    options
+                        .client_identity_passphrase
+                        .as_deref()
+                        .ok_or_else(|| HttpError::ClientIdentityPassphraseRequired {
+                            path: path_display.clone(),
+                        })?;
+                reqwest::Identity::from_pkcs12_der(&pem, passphrase).map_err(|source| {
+                    HttpError::ClientIdentityPassphrase {
+                        path: path_display.clone(),
+                        source,
+                    }
+                })?
+            } else {
+                if options.client_identity_passphrase.is_some() {
+                    return Err(HttpError::ClientIdentityPassphraseUnsupported {
+                        path: path_display,
+                    });
+                }
                 reqwest::Identity::from_pem(&pem).map_err(|source| HttpError::ClientIdentity {
                     path: path_display,
                     source,
-                })?;
+                })?
+            };
             builder = builder.identity(identity);
         }
-        let client = builder.build().map_err(|source| match ca_cert_path {
-            Some(path) => HttpError::CaCertificate { path, source },
-            None => HttpError::Client(source),
+        let client = builder.build().map_err(|source| {
+            if let Some(path) = client_identity_path {
+                HttpError::ClientIdentity { path, source }
+            } else if let Some(path) = ca_cert_path {
+                HttpError::CaCertificate { path, source }
+            } else {
+                HttpError::Client(source)
+            }
         })?;
         Ok(Self {
             client,
@@ -2391,6 +2448,7 @@ mod tests {
     use crate::model::KeyValue;
     use std::{
         io::{Cursor, Write},
+        process::Command,
         sync::Arc,
     };
     use tokio::{
@@ -2452,6 +2510,28 @@ mod tests {
         file.flush().expect("flush test PEM");
     }
 
+    fn create_test_pkcs12_identity(directory: &Path) -> Option<PathBuf> {
+        let certificate = directory.join("client.pem");
+        let private_key = directory.join("client-key.pem");
+        let identity = directory.join("client-identity.p12");
+        fs::write(&certificate, TEST_CLIENT_CERT_PEM).expect("client certificate fixture");
+        fs::write(&private_key, TEST_CLIENT_KEY_PEM).expect("client key fixture");
+        let output = Command::new("openssl")
+            .args(["pkcs12", "-export", "-inkey"])
+            .arg(&private_key)
+            .args(["-in"])
+            .arg(&certificate)
+            .args([
+                "-out",
+                identity.to_str().expect("UTF-8 test path"),
+                "-passout",
+                "pass:postly-test-password",
+            ])
+            .output()
+            .ok()?;
+        output.status.success().then_some(identity)
+    }
+
     #[test]
     fn reports_a_missing_ca_certificate_path() {
         let path = PathBuf::from("/definitely-not-a-postly-test-ca.pem");
@@ -2492,6 +2572,53 @@ mod tests {
         })
         .expect_err("invalid identity must fail");
         assert!(matches!(identity_error, HttpError::ClientIdentity { .. }));
+    }
+
+    #[test]
+    fn requires_a_passphrase_for_pkcs12_identity() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let identity = directory.path().join("client-identity.p12");
+        fs::write(&identity, b"not a PKCS#12 container").expect("identity fixture");
+        let error = HttpEngine::new(&EngineOptions {
+            client_identity: Some(identity.clone()),
+            ..EngineOptions::default()
+        })
+        .expect_err("PKCS#12 passphrase must be required");
+        assert!(matches!(
+            error,
+            HttpError::ClientIdentityPassphraseRequired { .. }
+        ));
+        assert!(error.to_string().contains("client-identity.p12"));
+    }
+
+    #[test]
+    fn accepts_a_password_protected_pkcs12_identity() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let Some(identity) = create_test_pkcs12_identity(directory.path()) else {
+            return;
+        };
+        let engine = HttpEngine::new(&EngineOptions {
+            client_identity: Some(identity),
+            client_identity_passphrase: Some("postly-test-password".to_owned()),
+            ..EngineOptions::default()
+        })
+        .expect("valid PKCS#12 identity");
+        drop(engine);
+    }
+
+    #[test]
+    fn rejects_an_incorrect_pkcs12_passphrase() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let Some(identity) = create_test_pkcs12_identity(directory.path()) else {
+            return;
+        };
+        let error = HttpEngine::new(&EngineOptions {
+            client_identity: Some(identity),
+            client_identity_passphrase: Some("wrong-password".to_owned()),
+            ..EngineOptions::default()
+        })
+        .expect_err("incorrect PKCS#12 passphrase must fail");
+        assert!(matches!(error, HttpError::ClientIdentityPassphrase { .. }));
     }
 
     #[tokio::test]
@@ -2585,6 +2712,56 @@ mod tests {
         server.await.expect("mTLS server");
         assert_eq!(response.status, 200);
         assert_eq!(response.body_text(), "mtls-ok");
+    }
+
+    #[tokio::test]
+    async fn sends_a_pkcs12_client_identity_to_a_mutual_tls_server() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let Some(identity_path) = create_test_pkcs12_identity(directory.path()) else {
+            return;
+        };
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("mTLS listener");
+        let address = listener.local_addr().expect("mTLS address");
+        let acceptor = TlsAcceptor::from(Arc::new(test_tls_server_config(true)));
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("mTLS connection");
+            let mut socket = acceptor.accept(socket).await.expect("mTLS handshake");
+            let request = read_request_headers(&mut socket).await;
+            assert!(request.contains("GET /pkcs12 HTTP/1.1"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 11\r\nconnection: close\r\n\r\npkcs12-mtls",
+                )
+                .await
+                .expect("mTLS response");
+            socket.shutdown().await.expect("TLS shutdown");
+        });
+
+        let mut ca_file = tempfile::NamedTempFile::new().expect("CA file");
+        write_test_pem(&mut ca_file, TEST_CA_PEM);
+        let engine = HttpEngine::new(&EngineOptions {
+            accept_invalid_certs: true,
+            ca_cert: Some(ca_file.path().to_path_buf()),
+            client_identity: Some(identity_path),
+            client_identity_passphrase: Some("postly-test-password".to_owned()),
+            ..EngineOptions::default()
+        })
+        .expect("HTTP engine with PKCS#12 client identity");
+        let request = Request::new(
+            "PKCS#12 mTLS request",
+            "GET",
+            format!("https://127.0.0.1:{}/pkcs12", address.port()),
+        );
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("PKCS#12 mTLS response");
+
+        server.await.expect("TLS server");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "pkcs12-mtls");
     }
 
     #[tokio::test]

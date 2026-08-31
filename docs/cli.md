@@ -168,9 +168,11 @@ exposed by shell history or process arguments, so use a controlled shell for
 high-risk credentials; prefer `--secret-stdin KEY` for non-interactive safe
 entry. `env migrate --key KEY` moves an existing plaintext value to the OS
 credential store without printing it, while `--all` migrates only imported
-variables marked as secrets. Certificate options
-read PEM files from disk; private-key contents are never command-line output
-or history data. Request, GraphQL, SSE, send and run accept the same
+variables marked as secrets. Certificate options read PEM or `.p12`/`.pfx` files
+from disk; private-key contents and PKCS#12 passphrases are never command-line
+output or history data. For encrypted PKCS#12 identities, set
+`POSTLY_CLIENT_IDENTITY_PASSPHRASE` for the current process. Request, GraphQL,
+SSE, send and run accept the same
 HTTP(S)/SOCKS proxy, `--no-proxy` bypass and certificate flags where the
 transport applies. WebSocket and gRPC support HTTP CONNECT and SOCKS5/SOCKS5H
 routing with the same bypass rules. When `--proxy` is omitted, platform

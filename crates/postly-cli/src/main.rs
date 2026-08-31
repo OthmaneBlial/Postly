@@ -171,6 +171,16 @@ fn configure_grpc_endpoint(
     Ok(endpoint)
 }
 
+fn client_identity_passphrase(path: Option<&Path>) -> Option<String> {
+    let is_pkcs12 = path.and_then(Path::extension).is_some_and(|extension| {
+        let extension = extension.to_string_lossy();
+        extension.eq_ignore_ascii_case("p12") || extension.eq_ignore_ascii_case("pfx")
+    });
+    is_pkcs12
+        .then(|| std::env::var("POSTLY_CLIENT_IDENTITY_PASSPHRASE").ok())
+        .flatten()
+}
+
 #[derive(Clone)]
 struct GrpcProxyConnector {
     proxy_host: String,
@@ -2651,6 +2661,7 @@ async fn stream_sse(options: SseOptions) -> Result<()> {
         no_proxy: options.no_proxy.clone(),
         ca_cert: options.ca_cert.clone(),
         client_identity: options.client_identity.clone(),
+        client_identity_passphrase: client_identity_passphrase(options.client_identity.as_deref()),
         cookie_jar: None,
         ..EngineOptions::default()
     })?;
@@ -3616,6 +3627,7 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
         no_proxy: options.no_proxy.map(ToOwned::to_owned),
         ca_cert: options.ca_cert.map(Path::to_path_buf),
         client_identity: options.client_identity.map(Path::to_path_buf),
+        client_identity_passphrase: client_identity_passphrase(options.client_identity),
         cookie_jar: Some(workspace.root().join(".postly/cookies.json")),
         ..EngineOptions::default()
     })?;
@@ -3822,6 +3834,7 @@ async fn execute(
         no_proxy: options.no_proxy.map(ToOwned::to_owned),
         ca_cert: options.ca_cert.map(Path::to_path_buf),
         client_identity: options.client_identity.map(Path::to_path_buf),
+        client_identity_passphrase: client_identity_passphrase(options.client_identity),
         cookie_jar: options.cookie_jar.map(Path::to_path_buf),
         ..EngineOptions::default()
     })?;

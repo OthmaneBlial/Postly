@@ -451,6 +451,8 @@ struct TransportSettings {
     no_proxy_hosts: String,
     ca_cert_path: String,
     client_identity_path: String,
+    #[serde(skip)]
+    client_identity_passphrase: String,
     insecure_tls: bool,
     theme: ThemeMode,
 }
@@ -464,6 +466,7 @@ impl Default for TransportSettings {
             no_proxy_hosts: String::new(),
             ca_cert_path: String::new(),
             client_identity_path: String::new(),
+            client_identity_passphrase: String::new(),
             insecure_tls: false,
             theme: ThemeMode::default(),
         }
@@ -501,6 +504,8 @@ impl TransportSettings {
                 .then(|| self.no_proxy_hosts.trim().to_owned()),
             ca_cert: path(&self.ca_cert_path),
             client_identity: path(&self.client_identity_path),
+            client_identity_passphrase: (!self.client_identity_passphrase.is_empty())
+                .then(|| self.client_identity_passphrase.clone()),
             cookie_jar: Some(root.join(".postly/cookies.json")),
             ..EngineOptions::default()
         }
@@ -5783,6 +5788,25 @@ impl PostlyApp {
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("PKCS#12 passphrase (session only)")
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+        changed |= ui
+            .add(
+                TextEdit::singleline(&mut self.transport.client_identity_passphrase)
+                    .password(true)
+                    .desired_width(460.0)
+                    .hint_text("Required only for .p12 / .pfx identities"),
+            )
+            .changed();
+        ui.label(
+            RichText::new("This passphrase is kept in memory for the session and is never saved to workspace settings.")
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
         ui.add_space(8.0);
         if ui
             .checkbox(
@@ -7445,6 +7469,12 @@ fn build_grpc_endpoint(
             "gRPC GUI calls require verified TLS; disable insecure TLS for this request".to_owned(),
         );
     }
+    if is_pkcs12_identity_path(&transport.client_identity_path) {
+        return Err(
+            "gRPC GUI calls currently require a combined PEM client identity; PKCS#12 is available for HTTP/SSE"
+                .to_owned(),
+        );
+    }
     let parsed = url::Url::parse(endpoint_url).map_err(|error| error.to_string())?;
     let mut endpoint = Endpoint::from_shared(endpoint_url.to_owned())
         .map_err(|error| format!("invalid gRPC endpoint: {error}"))?
@@ -7501,6 +7531,13 @@ fn build_grpc_endpoint(
         }
     }
     Ok(endpoint)
+}
+
+fn is_pkcs12_identity_path(path: &str) -> bool {
+    Path::new(path.trim()).extension().is_some_and(|extension| {
+        let extension = extension.to_string_lossy();
+        extension.eq_ignore_ascii_case("p12") || extension.eq_ignore_ascii_case("pfx")
+    })
 }
 
 async fn connect_grpc_endpoint(
@@ -9361,6 +9398,7 @@ mod tests {
         app.transport.no_proxy_hosts = "localhost,127.0.0.1".to_owned();
         app.transport.ca_cert_path = "/tmp/company-ca.pem".to_owned();
         app.transport.client_identity_path = "/tmp/client-identity.pem".to_owned();
+        app.transport.client_identity_passphrase = "do-not-persist".to_owned();
         app.transport.insecure_tls = true;
         app.transport.theme = ThemeMode::Light;
         app.transport_settings_dirty = true;
@@ -9370,6 +9408,7 @@ mod tests {
             .expect("settings file");
         assert!(settings.contains("company-ca.pem"));
         assert!(!settings.contains("BEGIN PRIVATE KEY"));
+        assert!(!settings.contains("do-not-persist"));
 
         let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
         assert_eq!(reopened.transport.timeout_seconds, 45);
@@ -9381,6 +9420,7 @@ mod tests {
             reopened.transport.client_identity_path,
             "/tmp/client-identity.pem"
         );
+        assert!(reopened.transport.client_identity_passphrase.is_empty());
         assert!(reopened.transport.insecure_tls);
         assert_eq!(reopened.transport.theme, ThemeMode::Light);
         assert!(!reopened.transport_settings_dirty);
