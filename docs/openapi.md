@@ -17,7 +17,7 @@ remote dependency.
 
 The importer creates one request per local HTTP operation, using the first
 server, operation IDs, tags as folders, path/query/header/cookie parameters,
-JSON or text request-body examples, local `$ref` components, and common
+JSON or text request-body examples, response examples, local `$ref` components, and common
 HTTP/API-key security schemes. JSON Schema examples/defaults, composed schemas
 (`allOf`/`oneOf`/`anyOf`), format-aware scalar values and array item samples
 are used to create useful sample bodies. Server defaults become
@@ -27,8 +27,8 @@ as warnings rather than silently invented.
 
 The JSON report is part of the migration artifact. Cyclic graphs, remote or
 out-of-source `$ref` targets, OAuth coordination, binary/multipart body
-generation, OpenAPI 2/Swagger documents and response examples still require
-manual review or a future milestone.
+generation and OpenAPI 2/Swagger documents still require manual review or a
+future milestone.
 
 ## Export a native collection
 

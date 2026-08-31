@@ -210,6 +210,7 @@ pub fn import_openapi_text(
                 security_schemes,
                 &mut warnings,
             );
+            apply_response_examples(&mut request, operation, &mut warnings);
             request_paths.push(workspace.save_request(&collection_files, &request)?);
             imported_operations += 1;
         }
@@ -1500,6 +1501,137 @@ fn apply_request_body(
     }
 }
 
+fn apply_response_examples(
+    request: &mut Request,
+    operation: &Map<String, Value>,
+    warnings: &mut Vec<String>,
+) {
+    let Some(responses) = operation.get("responses").and_then(Value::as_object) else {
+        return;
+    };
+
+    let mut response_keys = responses.keys().cloned().collect::<Vec<_>>();
+    response_keys.sort();
+    for status_key in response_keys.into_iter().take(64) {
+        let Some(response) = responses.get(&status_key).and_then(Value::as_object) else {
+            warnings.push(format!(
+                "{} {} response {status_key} is not an object.",
+                request.method, request.url
+            ));
+            continue;
+        };
+        let status = if status_key.eq_ignore_ascii_case("default") {
+            None
+        } else {
+            let parsed = status_key
+                .parse::<u16>()
+                .ok()
+                .filter(|status| (100..=599).contains(status));
+            if parsed.is_none() {
+                warnings.push(format!(
+                    "{} {} response key {status_key} is not a supported HTTP status.",
+                    request.method, request.url
+                ));
+                continue;
+            }
+            parsed
+        };
+        let mut headers = Vec::new();
+        if let Some(response_headers) = response.get("headers").and_then(Value::as_object) {
+            let mut header_names = response_headers.keys().cloned().collect::<Vec<_>>();
+            header_names.sort();
+            for name in header_names {
+                let Some(header) = response_headers.get(&name).and_then(Value::as_object) else {
+                    continue;
+                };
+                if let Some(value) = example_value(header).and_then(|value| value_to_text(&value)) {
+                    headers.push(HeaderEntry::enabled(name, value));
+                }
+            }
+        }
+
+        let mut body = None;
+        if let Some(content) = response.get("content").and_then(Value::as_object) {
+            let media_type = content
+                .keys()
+                .find(|media_type| {
+                    media_type.eq_ignore_ascii_case("application/json")
+                        || media_type.to_ascii_lowercase().ends_with("+json")
+                })
+                .cloned()
+                .or_else(|| content.keys().next().cloned());
+            if let Some(media_type) = media_type {
+                if let Some(media) = content.get(&media_type).and_then(Value::as_object) {
+                    if let Some(value) = example_value(media) {
+                        body = Some(
+                            if media_type.eq_ignore_ascii_case("application/json")
+                                || media_type.to_ascii_lowercase().ends_with("+json")
+                            {
+                                value.to_string()
+                            } else {
+                                value
+                                    .as_str()
+                                    .map(ToOwned::to_owned)
+                                    .unwrap_or_else(|| value.to_string())
+                            },
+                        );
+                    }
+                    if !headers
+                        .iter()
+                        .any(|header: &HeaderEntry| header.key.eq_ignore_ascii_case("content-type"))
+                    {
+                        headers.push(HeaderEntry::enabled("content-type", media_type));
+                    }
+                }
+            }
+        }
+
+        let name = response
+            .get("description")
+            .and_then(Value::as_str)
+            .filter(|description| !description.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| status.map(|status| format!("HTTP {status}")))
+            .unwrap_or_else(|| "Default response".to_owned());
+        let delay_ms = response
+            .get("x-postly-delay-ms")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        request.examples.push(crate::model::ResponseExample {
+            name,
+            status,
+            headers,
+            body,
+            delay_ms,
+        });
+    }
+    if responses.len() > 64 {
+        warnings.push(format!(
+            "{} {} has more than 64 response examples; the remainder was skipped.",
+            request.method, request.url
+        ));
+    }
+}
+
+fn example_value(object: &Map<String, Value>) -> Option<Value> {
+    object
+        .get("example")
+        .cloned()
+        .or_else(|| {
+            object
+                .get("examples")
+                .and_then(Value::as_object)
+                .and_then(|examples| examples.values().next())
+                .and_then(|example| {
+                    example
+                        .get("value")
+                        .cloned()
+                        .or_else(|| Some(example.clone()))
+                })
+        })
+        .or_else(|| object.get("schema").and_then(sample_from_schema))
+}
+
 fn sample_from_schema(schema: &Value) -> Option<Value> {
     let schema = schema.as_object()?;
     if let Some(example) = schema.get("example") {
@@ -1793,6 +1925,67 @@ mod tests {
             other => panic!("expected JSON body, got {other:?}"),
         }
         assert!(matches!(replace_user.1.auth, Auth::Bearer { .. }));
+    }
+
+    #[test]
+    fn imports_openapi_response_examples_into_native_requests() {
+        let output = tempfile::tempdir().expect("output");
+        let input = output.path().join("responses.openapi.yaml");
+        fs::write(
+            &input,
+            r#"openapi: 3.0.3
+info:
+  title: Responses API
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: Healthy
+          headers:
+            X-Request-Id:
+              schema:
+                type: string
+              example: local-123
+          content:
+            application/json:
+              example:
+                ok: true
+          x-postly-delay-ms: 25
+        "404":
+          description: Missing
+          content:
+            text/plain:
+              example: not found
+        default:
+          description: Unexpected response
+"#,
+        )
+        .expect("OpenAPI fixture");
+
+        let report = import_openapi(&input, output.path()).expect("import");
+        assert_eq!(report.imported_operations, 1);
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let collections = workspace.collections().expect("collections");
+        let requests = workspace.requests(&collections[0]).expect("requests");
+        let examples = &requests[0].1.examples;
+        assert_eq!(examples.len(), 3);
+        assert_eq!(examples[0].status, Some(200));
+        assert_eq!(examples[0].name, "Healthy");
+        assert_eq!(examples[0].body.as_deref(), Some(r#"{"ok":true}"#));
+        assert_eq!(examples[0].delay_ms, 25);
+        assert_eq!(
+            examples[0].headers,
+            vec![
+                HeaderEntry::enabled("X-Request-Id", "local-123"),
+                HeaderEntry::enabled("content-type", "application/json"),
+            ]
+        );
+        assert_eq!(examples[1].status, Some(404));
+        assert_eq!(examples[1].body.as_deref(), Some("not found"));
+        assert_eq!(examples[2].status, None);
+        assert_eq!(examples[2].name, "Unexpected response");
     }
 
     #[test]
