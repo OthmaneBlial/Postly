@@ -139,7 +139,8 @@ Implemented:
 - Native response assertions can validate a bounded JSON Schema subset at the
   root or any JSON Pointer: types, const/enum, required/properties,
   additionalProperties, array/string/object bounds, unique items and
-  allOf/anyOf/oneOf/not composition are covered by runner and GUI tests.
+  allOf/anyOf/oneOf/not composition, exclusive numeric bounds and
+  `multipleOf` are covered by runner and GUI tests.
 - Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; the GUI and `postly cookies` inspect active session cookies by domain/path with masked values and can clear the jar explicitly; saved workspaces persist a bounded ignored local jar.
 - reusable runner results with pass/fail status, deterministic order, bounded
   script-free concurrency, fail-fast and cooperative cancellation; scripts and

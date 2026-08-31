@@ -613,6 +613,45 @@ fn validate_json_schema_number(
             ));
         }
     }
+    let exclusive_minimum = match schema.get("exclusiveMinimum") {
+        Some(serde_json::Value::Number(expected)) => expected.as_f64(),
+        Some(serde_json::Value::Bool(true)) => {
+            schema.get("minimum").and_then(serde_json::Value::as_f64)
+        }
+        _ => None,
+    };
+    if let Some(expected) = exclusive_minimum {
+        if number <= expected {
+            return Err(format!(
+                "number at {path:?} must be above exclusive schema minimum {expected}"
+            ));
+        }
+    }
+    let exclusive_maximum = match schema.get("exclusiveMaximum") {
+        Some(serde_json::Value::Number(expected)) => expected.as_f64(),
+        Some(serde_json::Value::Bool(true)) => {
+            schema.get("maximum").and_then(serde_json::Value::as_f64)
+        }
+        _ => None,
+    };
+    if let Some(expected) = exclusive_maximum {
+        if number >= expected {
+            return Err(format!(
+                "number at {path:?} must be below exclusive schema maximum {expected}"
+            ));
+        }
+    }
+    if let Some(expected) = schema.get("multipleOf").and_then(serde_json::Value::as_f64) {
+        if expected > 0.0 && expected.is_finite() {
+            let quotient = number / expected;
+            let tolerance = 1e-12_f64 * quotient.abs().max(1.0);
+            if (quotient - quotient.round()).abs() > tolerance {
+                return Err(format!(
+                    "number at {path:?} is not a multiple of schema value {expected}"
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1291,6 +1330,25 @@ mod tests {
             ""
         )
         .is_err());
+
+        let numeric = serde_json::json!({
+            "type": "number",
+            "exclusiveMinimum": 1,
+            "exclusiveMaximum": 10,
+            "multipleOf": 0.5
+        });
+        assert!(validate_json_schema(&serde_json::json!(1.5), &numeric, "").is_ok());
+        assert!(validate_json_schema(&serde_json::json!(1), &numeric, "").is_err());
+        assert!(validate_json_schema(&serde_json::json!(10), &numeric, "").is_err());
+        assert!(validate_json_schema(&serde_json::json!(1.25), &numeric, "").is_err());
+        let legacy_exclusive = serde_json::json!({
+            "minimum": 2,
+            "exclusiveMinimum": true,
+            "maximum": 8,
+            "exclusiveMaximum": true
+        });
+        assert!(validate_json_schema(&serde_json::json!(4), &legacy_exclusive, "").is_ok());
+        assert!(validate_json_schema(&serde_json::json!(2), &legacy_exclusive, "").is_err());
     }
 
     #[tokio::test]
