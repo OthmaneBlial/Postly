@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Postly logo</title>
+  <desc id="desc">A lime P-shaped API route with a coral endpoint on a dark square.</desc>
+  <rect width="512" height="512" rx="116" fill="#101315"/>
+  <path d="M146 386V126h126c62 0 102 33 102 84s-40 84-102 84h-68" fill="none" stroke="#d8f36a" stroke-linecap="round" stroke-linejoin="round" stroke-width="28"/>
+  <path d="M204 210h82" fill="none" stroke="#ff765f" stroke-linecap="round" stroke-width="18"/>
+  <circle cx="370" cy="386" r="25" fill="#ff765f"/>
+  <circle cx="370" cy="386" r="9" fill="#101315"/>
+</svg>

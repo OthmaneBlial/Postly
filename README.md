@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="website/logo.svg" alt="Postly logo" width="96">
+
 # Postly — the open-source Postman alternative
 
 ### A fast, local-first API client for REST, GraphQL, streaming APIs and gRPC.
@@ -15,7 +17,8 @@ Build requests. Inspect real responses. Commit the workflow with your code.
 
 <p>
   <a href="#quick-start">Try it in 60 seconds</a> ·
-  <a href="website/index.html">Open the project site</a> ·
+  <a href="https://othmaneblial.github.io/Postly/">Open the project site</a> ·
+  <a href="https://othmaneblial.github.io/Postly/docs.html">Read the docs</a> ·
   <a href="docs/migration-from-postman.md">Migrate from Postman</a> ·
   <a href="docs/compatibility.md">See compatibility</a> ·
   <a href="docs/progress.md">Read the evidence</a>
@@ -108,16 +111,19 @@ verified locally and which release gates still require external validation.
 
 ## Project site
 
-The repository includes a dependency-free static showcase in [`website/`](website/)
-with responsive layout, accessible navigation, protocol highlights and honest
-links back to the source documentation. Preview it locally with:
+Postly has a dependency-free public showcase and documentation hub at
+[`othmaneblial.github.io/Postly/`](https://othmaneblial.github.io/Postly/), with
+responsive layout, accessible navigation, protocol highlights and honest links
+back to the versioned source documentation. The source lives in
+[`website/`](website/) and can be previewed locally with:
 
 ```bash
 python3 -m http.server 4173 --directory website
 ```
 
-The site is source-ready but not presented as a deployed public URL until a
-separate hosting and live-QA pass is completed.
+The [documentation hub](https://othmaneblial.github.io/Postly/docs.html)
+organizes the guides for setup, migration, protocols, scripting, privacy and
+compatibility.
 
 ## Quick start
 

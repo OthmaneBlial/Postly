@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101315">
+    <meta name="description" content="Postly documentation: install locally, migrate from Postman, build API workflows and understand the compatibility boundary.">
+    <meta property="og:title" content="Postly Docs — Local-first API development">
+    <meta property="og:description" content="Guides for the Postly CLI, desktop workspace, protocols, migration and privacy model.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://othmaneblial.github.io/Postly/docs.html">
+    <meta property="og:image" content="https://othmaneblial.github.io/Postly/logo.svg">
+    <link rel="canonical" href="https://othmaneblial.github.io/Postly/docs.html">
+    <link rel="icon" href="logo.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <title>Postly Docs — Local-first API development</title>
+  </head>
+  <body class="docs-body">
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <div class="noise" aria-hidden="true"></div>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="index.html" aria-label="Postly home">
+          <img class="brand-logo" src="logo.svg" width="24" height="24" alt="">
+          <span>postly</span>
+          <small>DOCUMENTATION</small>
+        </a>
+        <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle navigation</span>
+        </button>
+        <nav id="site-nav" class="site-nav" aria-label="Primary navigation">
+          <a href="index.html">Overview</a>
+          <a href="#start">Start here</a>
+          <a href="#guides">Guides</a>
+          <a href="#trust">Trust</a>
+        </nav>
+        <a class="nav-cta" href="https://github.com/OthmaneBlial/Postly">
+          View source <span aria-hidden="true">↗</span>
+        </a>
+      </header>
+
+      <main id="main-content" class="docs-main">
+        <section class="docs-hero section">
+          <div class="docs-hero-copy reveal">
+            <p class="eyebrow">POSTLY / DOCUMENTATION <span>/ 06</span></p>
+            <h1>A clear path from first request to <em>repeatable proof.</em></h1>
+            <p>Versioned guides for a local-first API client that keeps requests,
+              environments and evidence close to your code.</p>
+          </div>
+          <div class="docs-command reveal reveal-delay">
+            <span class="docs-command-label">START IN YOUR REPOSITORY</span>
+            <button class="command-button" type="button" data-copy="cargo run -- init ./my-api --name &quot;My API&quot;">
+              <span class="prompt" aria-hidden="true">$</span>
+              <code>cargo run -- init ./my-api</code>
+              <span class="copy-label">Copy</span>
+            </button>
+            <p class="copy-status" aria-live="polite"></p>
+          </div>
+        </section>
+
+        <section id="start" class="docs-section section">
+          <div class="docs-section-heading">
+            <p class="eyebrow">START HERE <span>/ 01</span></p>
+            <h2>Get moving<br><em>without ceremony.</em></h2>
+          </div>
+          <div class="docs-grid">
+            <a class="doc-card doc-card-featured reveal" data-doc-card data-doc-title="quick start install first request" href="https://github.com/OthmaneBlial/Postly#quick-start">
+              <span class="doc-card-kicker">01 / FIRST RUN</span>
+              <h3>Quick start</h3>
+              <p>Build from source, initialize a local API project and make a first request in under a minute.</p>
+              <span class="doc-card-link">Open guide <b aria-hidden="true">↗</b></span>
+            </a>
+            <a class="doc-card reveal reveal-delay-short" data-doc-card data-doc-title="postman migration collections environments" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/migration-from-postman.md">
+              <span class="doc-card-kicker">02 / MOVE WORKFLOWS</span>
+              <h3>From Postman</h3>
+              <p>Import collections and environments with explicit diagnostics for fields that need review.</p>
+              <span class="doc-card-link">Open guide <b aria-hidden="true">↗</b></span>
+            </a>
+            <a class="doc-card reveal reveal-delay" data-doc-card data-doc-title="collections git files workspace" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/collections.md">
+              <span class="doc-card-kicker">03 / OWN YOUR FILES</span>
+              <h3>Collections</h3>
+              <p>Understand the TOML layout, deterministic discovery, folders and request identity.</p>
+              <span class="doc-card-link">Open guide <b aria-hidden="true">↗</b></span>
+            </a>
+          </div>
+        </section>
+
+        <section id="guides" class="docs-section docs-section-paper section">
+          <div class="docs-section-heading">
+            <p class="eyebrow">THE GUIDES <span>/ 02</span></p>
+            <h2>One surface.<br><em>Every protocol.</em></h2>
+          </div>
+          <label class="docs-search">
+            <span>Filter guides</span>
+            <input id="docs-filter" type="search" placeholder="Try “GraphQL” or “privacy”" autocomplete="off">
+          </label>
+          <div class="docs-list" id="docs-list">
+            <a class="docs-list-row" data-doc-card data-doc-title="cli command line automation reports" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/cli.md"><span>CLI</span><strong>Headless requests, runs and reports</strong><b>↗</b></a>
+            <a class="docs-list-row" data-doc-card data-doc-title="graphql schema introspection" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/graphql.md"><span>GRAPHQL</span><strong>Queries, variables and schema introspection</strong><b>↗</b></a>
+            <a class="docs-list-row" data-doc-card data-doc-title="sse server sent events streaming" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/sse.md"><span>SSE</span><strong>Progressive streams, reconnects and event history</strong><b>↗</b></a>
+            <a class="docs-list-row" data-doc-card data-doc-title="websocket messages reconnect proxy" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/websocket.md"><span>WEBSOCKET</span><strong>Bidirectional messages, auth and reconnects</strong><b>↗</b></a>
+            <a class="docs-list-row" data-doc-card data-doc-title="grpc proto reflection streaming" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/grpc.md"><span>gRPC</span><strong>Proto discovery, reflection and streaming calls</strong><b>↗</b></a>
+            <a class="docs-list-row" data-doc-card data-doc-title="scripting postman pm assertions" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/scripting.md"><span>SCRIPTS</span><strong>Scoped pm.* compatibility and response assertions</strong><b>↗</b></a>
+            <p class="docs-empty" id="docs-empty" hidden>No guide matches that search.</p>
+          </div>
+        </section>
+
+        <section id="trust" class="docs-section docs-trust section">
+          <div class="docs-section-heading">
+            <p class="eyebrow">TRUST &amp; BOUNDARIES <span>/ 03</span></p>
+            <h2>Know what is<br><em>actually measured.</em></h2>
+          </div>
+          <div class="trust-grid">
+            <a class="trust-card reveal" data-doc-card data-doc-title="privacy secrets keychain local first" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/privacy.md"><span>PRIVACY</span><strong>Local files, opaque secret references and no account wall.</strong><b>↗</b></a>
+            <a class="trust-card reveal reveal-delay-short" data-doc-card data-doc-title="compatibility postman evidence" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/compatibility.md"><span>COMPATIBILITY</span><strong>Fixture-backed support with review boundaries instead of a fake score.</strong><b>↗</b></a>
+            <a class="trust-card reveal reveal-delay" data-doc-card data-doc-title="certificates tls ca mtls proxy" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/certificates.md"><span>TRANSPORT</span><strong>Verified TLS, custom PEM material, proxies and explicit open gaps.</strong><b>↗</b></a>
+          </div>
+          <div class="docs-note">
+            <span class="note-mark">P</span>
+            <p>Each guide opens the matching versioned source document in the repository. The compatibility and progress logs are the final word on what has been verified.</p>
+            <a href="https://github.com/OthmaneBlial/Postly/blob/main/docs/progress.md">Read the evidence ↗</a>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="footer-brand"><img class="brand-logo" src="logo.svg" width="24" height="24" alt=""><span>postly</span></div>
+        <p>Open-source API development without the account wall.</p>
+        <div class="footer-links">
+          <a href="index.html">Overview</a>
+          <a href="https://github.com/OthmaneBlial/Postly">GitHub ↗</a>
+          <a href="https://github.com/OthmaneBlial/Postly/blob/main/LICENSE">MIT License</a>
+        </div>
+        <small>© 2026 Postly / built in public</small>
+      </footer>
+    </div>
+    <script src="script.js" defer></script>
+  </body>
+</html>

@@ -39,6 +39,21 @@
     });
   });
 
+  const docsFilter = document.querySelector("#docs-filter");
+  const docsCards = [...document.querySelectorAll("[data-doc-card]")];
+  const docsEmpty = document.querySelector("#docs-empty");
+  docsFilter?.addEventListener("input", () => {
+    const query = docsFilter.value.trim().toLowerCase();
+    let visible = 0;
+    docsCards.forEach((card) => {
+      const searchable = `${card.dataset.docTitle || ""} ${card.textContent}`.toLowerCase();
+      const matches = !query || searchable.includes(query);
+      card.hidden = !matches;
+      if (matches) visible += 1;
+    });
+    if (docsEmpty) docsEmpty.hidden = visible !== 0;
+  });
+
   const revealItems = document.querySelectorAll(".reveal");
   if ("IntersectionObserver" in window) {
     const observer = new IntersectionObserver((entries, currentObserver) => {
