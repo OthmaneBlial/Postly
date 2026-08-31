@@ -38,6 +38,9 @@ The supported compatibility slice includes:
   query strings plus query-list mutations are converted back to
   the native request model; request headers/cookies/query lists expose bounded
   `get`, `has`, `all`, `count`, `each`, `toObject` and mutation helpers;
+  `pm.request.body.update(...)` replaces a body with a bounded raw, JSON,
+  URL-encoded, form-data, GraphQL or file-shaped Postman body and serializes it
+  back into the native request model;
   `pm.request.auth` supports parameter access and
   mutation for no-auth, Basic, Digest, Bearer, API key and common OAuth shapes
 - `pm.info` request name/ID, event name and iteration metadata (runner passes

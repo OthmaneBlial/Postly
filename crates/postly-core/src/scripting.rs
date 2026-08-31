@@ -935,6 +935,66 @@ function postmanBodyToNative(body) {
   return { type: "raw", text: JSON.stringify(body), content_type: "application/json" };
 }
 
+function bodyUpdateValue(next) {
+  if (typeof next === "string") return { mode: "raw", raw: next };
+  if (!next || typeof next !== "object" || Array.isArray(next)) {
+    throw new Error("pm.request.body.update expects a Postman body object or raw string");
+  }
+  try {
+    return JSON.parse(JSON.stringify(next));
+  } catch (_) {
+    throw new Error("pm.request.body.update received a non-serializable body");
+  }
+}
+
+function decoratePostmanBody(body) {
+  const decorateCollections = () => {
+    if (Array.isArray(body.urlencoded)) {
+      body.urlencoded = decorateKeyValueList(body.urlencoded.map((field) => ({
+        key: text(field && (field.key || field.name)),
+        value: text(field && field.value),
+        disabled: field && field.disabled === true
+      })), (entry) => ({
+        key: text(entry && (entry.key || entry.name)),
+        value: text(entry && entry.value),
+        disabled: entry && entry.disabled === true
+      }));
+    }
+    if (Array.isArray(body.formdata)) {
+      body.formdata = decorateKeyValueList(body.formdata.map((part) => ({
+        key: text(part && (part.key || part.name)),
+        value: text(part && part.value),
+        src: part && part.src ? text(part.src) : undefined,
+        contentType: part && (part.contentType || part.content_type)
+          ? text(part.contentType || part.content_type)
+          : undefined,
+        disabled: part && part.disabled === true
+      })), (entry) => ({
+        key: text(entry && (entry.key || entry.name)),
+        value: text(entry && entry.value),
+        src: entry && entry.src ? text(entry.src) : undefined,
+        contentType: entry && (entry.contentType || entry.content_type)
+          ? text(entry.contentType || entry.content_type)
+          : undefined,
+        disabled: entry && entry.disabled === true
+      }));
+    }
+  };
+
+  Object.defineProperty(body, "update", {
+    enumerable: false,
+    configurable: true,
+    value: (next) => {
+      const replacement = bodyUpdateValue(next);
+      Object.keys(body).forEach((key) => delete body[key]);
+      Object.assign(body, replacement);
+      decorateCollections();
+    }
+  });
+  decorateCollections();
+  return body;
+}
+
 function makeUrlFacade(rawValue, structuredQuery) {
   const raw = text(rawValue);
   const variablePattern = /\{\{\s*([^}]+?)\s*\}\}/g;
@@ -1124,7 +1184,7 @@ const runtime = {
 const request = { ...(input.request || {}) };
 request.url = makeUrlFacade(request.url, request.query);
 request.auth = nativeAuthToPostman(request.auth);
-request.body = nativeBodyToPostman(request.body);
+request.body = decoratePostmanBody(nativeBodyToPostman(request.body) || { mode: "none" });
 const requestHeaders = request.headers || [];
 requestHeaders.get = (name) => {
   const found = requestHeaders.find((header) => header.key && header.key.toLowerCase() === text(name).toLowerCase() && header.enabled !== false);
@@ -2705,7 +2765,15 @@ mod tests {
                     pm.expect(JSON.parse(pm.request.body.raw).name).to.eql("Ada");
                 });
                 pm.request.url.query.add({ key: "filter", value: "active users" });
-                pm.request.body.raw = JSON.stringify({ name: "Grace", role: "admin" });
+                pm.request.body.update({
+                    mode: "raw",
+                    raw: JSON.stringify({ name: "Grace", role: "admin" }),
+                    options: { raw: { language: "json" } }
+                });
+                pm.test("body update is visible", function () {
+                    pm.expect(pm.request.body.mode).to.eql("raw");
+                    pm.expect(JSON.parse(pm.request.body.raw).role).to.eql("admin");
+                });
                 pm.request.cookies.add({ key: "session", value: "local" });
             "#,
             &request,

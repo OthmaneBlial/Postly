@@ -125,7 +125,9 @@ Implemented:
   claim Postly transport parity.
 - The script bridge now exposes Postman-shaped request URL, query, cookie and
   body facades, with URL/query mutations and raw/JSON/form body edits converted
-  back into the native request model through dedicated regression tests; URL
+  back into the native request model through dedicated regression tests;
+  `pm.request.body.update(...)` replaces supported Postman body modes and is
+  serialized back to the native request model; URL
   protocol/host/port/path/hash metadata and mutable path-variable helpers are
   also exposed and materialized back into the request URL.
 - Common response-side Postman assertions now include optional header values,
