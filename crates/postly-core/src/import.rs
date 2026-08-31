@@ -165,7 +165,7 @@ pub fn import_postman_collection(
         for item in items {
             import_item(
                 &mut transaction,
-                &collection_files,
+                &mut collection_files,
                 item,
                 None,
                 &inherited,
@@ -437,7 +437,7 @@ struct InheritedItemContext {
 
 fn import_item(
     transaction: &mut WorkspaceTransaction<'_>,
-    collection: &CollectionFiles,
+    collection: &mut CollectionFiles,
     item: &Value,
     folder: Option<String>,
     inherited: &InheritedItemContext,
@@ -486,6 +486,14 @@ fn import_item(
     };
     let (mut request, mut auth_requires_review) =
         parse_request(name, request_value, folder, report);
+    import_url_variables(
+        request_value.get("url"),
+        &mut request,
+        &mut collection.collection,
+        name,
+        report,
+    );
+    transaction.save_collection(collection)?;
     if request_value.get("auth").is_none() {
         request.auth = inherited.auth.clone();
         auth_requires_review = inherited.auth_requires_review;
@@ -506,6 +514,52 @@ fn import_item(
         report.fully_supported_requests += 1;
     }
     Ok(())
+}
+
+fn import_url_variables(
+    value: Option<&Value>,
+    request: &mut Request,
+    collection: &mut Collection,
+    subject: &str,
+    report: &mut ImportReport,
+) {
+    let Some(variables) = value
+        .and_then(Value::as_object)
+        .and_then(|url| url.get("variable"))
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    for variable in variables {
+        let Some(key) = variable.get("key").and_then(Value::as_str) else {
+            report.warn(format!("{subject} has a path variable without a key."));
+            continue;
+        };
+        if key.is_empty() {
+            report.warn(format!("{subject} has an empty path variable key."));
+            continue;
+        }
+        let placeholder = format!("{{{{{key}}}}}");
+        request.url = request.url.replace(&format!(":{key}"), &placeholder);
+        let disabled = variable
+            .get("disabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || variable.get("enabled").and_then(Value::as_bool) == Some(false);
+        if disabled {
+            report.warn(format!(
+                "Path variable {key} on {subject} is disabled and was not activated."
+            ));
+            continue;
+        }
+        let Some(value) = postman_variable_value(variable) else {
+            report.warn(format!(
+                "Path variable {key} on {subject} has no usable value."
+            ));
+            continue;
+        };
+        collection.variables.insert(key.to_owned(), value);
+    }
 }
 
 fn parse_request(
@@ -1544,13 +1598,29 @@ TOKEN='last value'
             .join("../../compat/postman-import/body-and-url-variants-v2.1.json");
 
         let report = import_postman_collection(&fixture, output.path()).expect("import");
-        assert_eq!(report.imported_requests, 6);
-        assert_eq!(report.fully_supported_requests, 6);
+        assert_eq!(report.imported_requests, 7);
+        assert_eq!(report.fully_supported_requests, 7);
         assert_eq!(report.manual_review_requests, 0);
 
         let workspace = Workspace::open(output.path()).expect("workspace");
         let collection = workspace.collections().expect("collections").remove(0);
+        assert_eq!(
+            collection.collection.variables.get("teamId"),
+            Some(&"7".to_owned())
+        );
+        assert_eq!(
+            collection.collection.variables.get("memberId"),
+            Some(&"42".to_owned())
+        );
         let requests = workspace.requests(&collection).expect("requests");
+        let path_variables = requests
+            .iter()
+            .find(|(_, request)| request.name == "Path variable metadata")
+            .expect("path variable request");
+        assert_eq!(
+            path_variables.1.url,
+            "{{baseUrl}}/teams/{{teamId}}/members/{{memberId}}"
+        );
         let request = requests
             .iter()
             .find(|(_, request)| request.name == "Header-inferred JSON")

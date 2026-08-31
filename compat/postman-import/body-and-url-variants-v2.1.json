@@ -103,6 +103,22 @@
           "hash": "details"
         }
       }
+    },
+    {
+      "name": "Path variable metadata",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/teams/:teamId/members/:memberId",
+          "protocol": "https",
+          "host": ["api", "example", "test"],
+          "path": ["teams", ":teamId", "members", ":memberId"],
+          "variable": [
+            { "key": "teamId", "value": "7" },
+            { "key": "memberId", "value": 42 }
+          ]
+        }
+      }
     }
   ]
 }

@@ -317,13 +317,15 @@ OpenAPI import slice now also resolves bounded remote references from local
 files and URL documents, with local loopback server tests covering relative and
 absolute HTTP references. The Postman import slice now also infers JSON raw bodies
 from an `application/json` Content-Type header when the body language metadata is
-absent. The OpenAPI export slice is covered by native JSON/YAML
+absent, and materializes structured `url.variable` path metadata as collection
+variables plus Postly `{{name}}` placeholders. The OpenAPI export slice is covered
+by native JSON/YAML
 serialization tests and a real CLI smoke run from a temporary workspace;
 operation paths, server variables, security metadata, request/response examples
 and nested inferred schemas were inspected.
 
 On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 9
-checked-in fixtures; its separate request-mapping signal was 22/26 (84.6%),
+checked-in fixtures; its separate request-mapping signal was 23/27 (85.2%),
 with file bodies, scripts and other review-worthy cases retained as explicit manual review. The latest local
 `cargo xtask bench --json` run on macOS arm64 at revision `b44d6f2` reported a
 CLI `--help` startup median of 11.493 ms and peak RSS of 12,752 KiB, 51.356 ms
