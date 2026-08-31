@@ -123,6 +123,7 @@ pub struct CollectionFiles {
 pub(crate) struct WorkspaceTransaction<'a> {
     workspace: &'a Workspace,
     originals: BTreeMap<PathBuf, Option<Vec<u8>>>,
+    created_directories: Vec<PathBuf>,
     committed: bool,
 }
 
@@ -220,6 +221,7 @@ impl Workspace {
         WorkspaceTransaction {
             workspace: self,
             originals: BTreeMap::new(),
+            created_directories: Vec::new(),
             committed: false,
         }
     }
@@ -784,10 +786,7 @@ impl WorkspaceTransaction<'_> {
             .root
             .join("collections")
             .join(slugify(&collection.name)?);
-        fs::create_dir_all(directory.join("requests")).map_err(|source| WorkspaceError::Io {
-            path: directory.join("requests"),
-            source,
-        })?;
+        self.ensure_directory(&directory.join("requests"))?;
         self.write_toml(&directory.join(COLLECTION_FILE), collection)?;
         Ok(CollectionFiles {
             directory,
@@ -817,6 +816,9 @@ impl WorkspaceTransaction<'_> {
         environment: &Environment,
     ) -> Result<PathBuf, WorkspaceError> {
         let path = self.workspace.environment_path(environment)?;
+        if let Some(parent) = path.parent() {
+            self.ensure_directory(parent)?;
+        }
         self.write_toml(&path, environment)?;
         Ok(path)
     }
@@ -827,12 +829,30 @@ impl WorkspaceTransaction<'_> {
 
     fn write_request_file(&mut self, path: &Path, request: &Request) -> Result<(), WorkspaceError> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|source| WorkspaceError::Io {
-                path: parent.to_path_buf(),
-                source,
-            })?;
+            self.ensure_directory(parent)?;
         }
         self.write_toml(path, request)
+    }
+
+    fn ensure_directory(&mut self, directory: &Path) -> Result<(), WorkspaceError> {
+        let mut missing = Vec::new();
+        let mut current = directory;
+        while !current.exists() {
+            missing.push(current.to_path_buf());
+            current = current.parent().ok_or_else(|| WorkspaceError::Io {
+                path: directory.to_path_buf(),
+                source: io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "directory has no existing ancestor",
+                ),
+            })?;
+        }
+        fs::create_dir_all(directory).map_err(|source| WorkspaceError::Io {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+        self.created_directories.extend(missing);
+        Ok(())
     }
 
     fn write_toml<T: serde::Serialize>(
@@ -877,6 +897,9 @@ impl Drop for WorkspaceTransaction<'_> {
                     let _ = fs::remove_file(path);
                 }
             }
+        }
+        for directory in &self.created_directories {
+            let _ = fs::remove_dir(directory);
         }
     }
 }
@@ -1140,8 +1163,37 @@ mod tests {
 
         assert!(workspace.collections().expect("collections").is_empty());
         let collection_root = directory.path().join("collections/imported");
+        assert!(!collection_root.exists());
         assert!(!collection_root.join(COLLECTION_FILE).exists());
         assert!(!collection_root.join("requests/first.postly.toml").exists());
+    }
+
+    #[test]
+    fn transaction_rollback_preserves_existing_directories() {
+        let directory = tempfile::tempdir().expect("workspace directory");
+        let workspace = Workspace::init(directory.path(), "Demo API").expect("init");
+        let collection = workspace
+            .create_collection(&Collection::new("Existing"))
+            .expect("collection");
+
+        {
+            let mut transaction = workspace.begin_transaction();
+            let mut request = Request::new("Nested", "GET", "https://example.test");
+            request.folder = Some("Team/Nested".to_owned());
+            transaction
+                .save_request(&collection, &request)
+                .expect("nested request");
+            assert!(transaction
+                .save_request(
+                    &collection,
+                    &Request::new("", "GET", "https://example.test")
+                )
+                .is_err());
+        }
+
+        assert!(collection.directory.is_dir());
+        assert!(collection.directory.join("requests").is_dir());
+        assert!(!collection.directory.join("requests/team").exists());
     }
 
     #[test]

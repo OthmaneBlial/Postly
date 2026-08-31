@@ -200,9 +200,9 @@ Not yet implemented:
   native slice, including richer matcher composition and schema-aware checks.
 - Full multi-file transactional restore for arbitrary caller-managed canonical
   workspace batches remains open; imports now have a best-effort rollback
-  journal, while individual TOML writes use unique flushed temporary files and
+  journal that also removes empty directories created by the transaction, while
+  individual TOML writes use unique flushed temporary files and
   request/environment relocations roll back their newly written destination.
-  Empty-directory cleanup after a failed import remains intentionally deferred.
 - Encrypted PKCS#12 identities and transient passphrase handling now work for
   the shared HTTP/SSE engine, CLI and native GUI; per-domain certificate
   association, WebSocket certificate routing and gRPC PKCS#12 remain open.
