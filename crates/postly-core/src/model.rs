@@ -253,6 +253,14 @@ pub enum Assertion {
     BodyContains {
         value: String,
     },
+    BodyIsJson,
+    CookiePresent {
+        name: String,
+    },
+    CookieEquals {
+        name: String,
+        expected: String,
+    },
     ResponseTimeUnder {
         max_ms: u64,
     },

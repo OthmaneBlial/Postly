@@ -179,6 +179,29 @@ fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<
                 Err(format!("expected response body to contain {value:?}"))
             }
         }
+        Assertion::BodyIsJson => serde_json::from_slice::<serde_json::Value>(&response.body)
+            .map(|_| ())
+            .map_err(|error| format!("response body is not JSON: {error}")),
+        Assertion::CookiePresent { name } => {
+            if response.cookies.iter().any(|cookie| cookie.name == *name) {
+                Ok(())
+            } else {
+                Err(format!("expected response cookie {name}"))
+            }
+        }
+        Assertion::CookieEquals { name, expected } => {
+            if response
+                .cookies
+                .iter()
+                .any(|cookie| cookie.name == *name && cookie.value == *expected)
+            {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected response cookie {name} to equal {expected}"
+                ))
+            }
+        }
         Assertion::ResponseTimeUnder { max_ms } => {
             if response.duration_ms <= u128::from(*max_ms) {
                 Ok(())
@@ -605,7 +628,7 @@ mod tests {
             use tokio::io::AsyncWriteExt;
             let body = r#"{"ok":true,"count":3}"#;
             let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-request-id: local\r\ncontent-length: {}\r\n\r\n{}",
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-request-id: local\r\nset-cookie: session=abc; Path=/\r\ncontent-length: {}\r\n\r\n{}",
                 body.len(), body
             );
             socket.write_all(response.as_bytes()).await.expect("write");
@@ -625,6 +648,14 @@ mod tests {
             },
             Assertion::BodyContains {
                 value: "\"ok\":true".to_owned(),
+            },
+            Assertion::BodyIsJson,
+            Assertion::CookiePresent {
+                name: "session".to_owned(),
+            },
+            Assertion::CookieEquals {
+                name: "session".to_owned(),
+                expected: "abc".to_owned(),
             },
             Assertion::ResponseTimeUnder { max_ms: 5_000 },
             Assertion::JsonPointerPresent {
@@ -646,10 +677,10 @@ mod tests {
         server.await.expect("server");
 
         assert!(summary.succeeded());
-        assert_eq!(summary.assertions, 8);
+        assert_eq!(summary.assertions, 11);
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.status_distribution.get(&200), Some(&1));
-        assert_eq!(summary.results[0].assertions, 8);
+        assert_eq!(summary.results[0].assertions, 11);
     }
 
     #[tokio::test]

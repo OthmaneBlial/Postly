@@ -351,6 +351,9 @@ enum AssertionKind {
     HeaderEquals,
     HeaderContains,
     BodyContains,
+    BodyIsJson,
+    CookiePresent,
+    CookieEquals,
     ResponseTimeUnder,
     JsonPointerPresent,
     JsonPointerEquals,
@@ -365,6 +368,9 @@ impl AssertionKind {
             Self::HeaderEquals => "Header equals",
             Self::HeaderContains => "Header contains",
             Self::BodyContains => "Body contains",
+            Self::BodyIsJson => "Body is valid JSON",
+            Self::CookiePresent => "Cookie exists",
+            Self::CookieEquals => "Cookie equals",
             Self::ResponseTimeUnder => "Response time is under",
             Self::JsonPointerPresent => "JSON Pointer exists",
             Self::JsonPointerEquals => "JSON Pointer equals",
@@ -388,6 +394,14 @@ impl AssertionKind {
             },
             Self::BodyContains => Assertion::BodyContains {
                 value: String::new(),
+            },
+            Self::BodyIsJson => Assertion::BodyIsJson,
+            Self::CookiePresent => Assertion::CookiePresent {
+                name: "session".to_owned(),
+            },
+            Self::CookieEquals => Assertion::CookieEquals {
+                name: "session".to_owned(),
+                expected: String::new(),
             },
             Self::ResponseTimeUnder => Assertion::ResponseTimeUnder { max_ms: 1000 },
             Self::JsonPointerPresent => Assertion::JsonPointerPresent {
@@ -6120,6 +6134,16 @@ impl PostlyApp {
                     Assertion::BodyContains { value } => {
                         changed |= labeled_singleline(ui, "Text", value);
                     }
+                    Assertion::BodyIsJson => {
+                        ui.label("The response body must parse as JSON.");
+                    }
+                    Assertion::CookiePresent { name } => {
+                        changed |= labeled_singleline(ui, "Cookie name", name);
+                    }
+                    Assertion::CookieEquals { name, expected } => {
+                        changed |= labeled_singleline(ui, "Cookie name", name);
+                        changed |= labeled_singleline(ui, "Expected value", expected);
+                    }
                     Assertion::ResponseTimeUnder { max_ms } => {
                         ui.horizontal(|ui| {
                             ui.label("Maximum response time (ms)");
@@ -6168,6 +6192,9 @@ impl PostlyApp {
                         AssertionKind::HeaderEquals,
                         AssertionKind::HeaderContains,
                         AssertionKind::BodyContains,
+                        AssertionKind::BodyIsJson,
+                        AssertionKind::CookiePresent,
+                        AssertionKind::CookieEquals,
                         AssertionKind::ResponseTimeUnder,
                         AssertionKind::JsonPointerPresent,
                         AssertionKind::JsonPointerEquals,
@@ -8446,6 +8473,14 @@ mod tests {
             Assertion::BodyContains {
                 value: "created".to_owned(),
             },
+            Assertion::BodyIsJson,
+            Assertion::CookiePresent {
+                name: "session".to_owned(),
+            },
+            Assertion::CookieEquals {
+                name: "session".to_owned(),
+                expected: "abc".to_owned(),
+            },
             Assertion::ResponseTimeUnder { max_ms: 1_000 },
             Assertion::JsonPointerPresent {
                 pointer: "/data/active".to_owned(),
@@ -8456,13 +8491,13 @@ mod tests {
             },
         ];
         app.load_request_editors();
-        assert_eq!(app.assertion_json_text.len(), 9);
-        app.assertion_json_text[8] = "false".to_owned();
+        assert_eq!(app.assertion_json_text.len(), 12);
+        app.assertion_json_text[11] = "false".to_owned();
 
         let edited = app.edited_request().expect("valid assertion editor state");
         assert_eq!(edited.assertions, app.request.assertions);
         assert_eq!(
-            edited.assertions[8],
+            edited.assertions[11],
             Assertion::JsonPointerEquals {
                 pointer: "/data/active".to_owned(),
                 expected: serde_json::Value::Bool(false),
@@ -8472,7 +8507,7 @@ mod tests {
         app.save_current().expect("save assertions");
         let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
         assert_eq!(reopened.request.assertions, edited.assertions);
-        assert_eq!(reopened.assertion_json_text[8], "false");
+        assert_eq!(reopened.assertion_json_text[11], "false");
     }
 
     #[test]
