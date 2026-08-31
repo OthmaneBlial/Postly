@@ -119,6 +119,7 @@ enum EditorTab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResponseTab {
     Pretty,
+    Preview,
     Raw,
     JsonTree,
     Headers,
@@ -6763,6 +6764,13 @@ impl PostlyApp {
                         }
                     }
                     if self.response.as_ref().is_some_and(|response| {
+                        response_preview_language(response) == ResponsePreviewLanguage::Html
+                    }) && tab_button(ui, self.response_tab == ResponseTab::Preview, "Preview")
+                        .clicked()
+                    {
+                        self.response_tab = ResponseTab::Preview;
+                    }
+                    if self.response.as_ref().is_some_and(|response| {
                         response_preview_language(response) == ResponsePreviewLanguage::Json
                     }) && tab_button(ui, self.response_tab == ResponseTab::JsonTree, "Tree")
                         .clicked()
@@ -6807,7 +6815,10 @@ impl PostlyApp {
                         }
                     });
                 } else if self.response.is_some()
-                    && matches!(self.response_tab, ResponseTab::Pretty | ResponseTab::Raw)
+                    && matches!(
+                        self.response_tab,
+                        ResponseTab::Pretty | ResponseTab::Preview | ResponseTab::Raw
+                    )
                 {
                     ui.horizontal(|ui| {
                         ui.label(
@@ -6822,12 +6833,8 @@ impl PostlyApp {
                         );
                         if ui.button("Copy").clicked() {
                             if let Some(response) = &self.response {
-                                let view = if self.response_tab == ResponseTab::Pretty {
-                                    ResponseView::Pretty
-                                } else {
-                                    ResponseView::Raw
-                                };
-                                ui.ctx().copy_text(response.formatted_body(view));
+                                ui.ctx()
+                                    .copy_text(response_display_text(response, self.response_tab));
                                 self.status_message = "Response copied to clipboard".to_owned();
                             }
                         }
@@ -7396,6 +7403,60 @@ impl PostlyApp {
                         }
                     });
             }
+            ResponseTab::Preview => match response_preview_text(response) {
+                Ok(text) => {
+                    let line_count = text.lines().count().max(1);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("Safe HTML preview")
+                                .strong()
+                                .color(ui.visuals().text_color()),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "{} line{} · scripts/styles omitted · no active links",
+                                line_count,
+                                if line_count == 1 { "" } else { "s" }
+                            ))
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                        );
+                    });
+                    let lines = text.lines().collect::<Vec<_>>();
+                    let line_height = ui.text_style_height(&TextStyle::Body);
+                    egui::ScrollArea::both()
+                        .auto_shrink([false, false])
+                        .show_rows(ui, line_height, line_count, |ui, row_range| {
+                            for index in row_range {
+                                ui.horizontal(|ui| {
+                                    ui.add_sized(
+                                        [52.0, line_height],
+                                        egui::Label::new(
+                                            RichText::new(format!("{:>5}", index + 1))
+                                                .monospace()
+                                                .color(ui.visuals().weak_text_color()),
+                                        ),
+                                    );
+                                    let line = lines.get(index).copied().unwrap_or_default();
+                                    let label = egui::Label::new(line);
+                                    if self.response_wrap {
+                                        ui.add(label.wrap());
+                                    } else {
+                                        ui.add(label);
+                                    }
+                                });
+                            }
+                        });
+                }
+                Err(error) => {
+                    ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+                    ui.label(
+                        RichText::new("Preview is available for bounded HTML responses only; use Pretty or Raw for the original body.")
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                }
+            },
             ResponseTab::JsonTree => match response_json_value(response) {
                 Ok(value) => render_json_tree(ui, "response", &value, true),
                 Err(error) => {
@@ -8553,6 +8614,207 @@ fn response_preview_language(response: &HttpResponse) -> ResponsePreviewLanguage
     } else {
         ResponsePreviewLanguage::Text
     }
+}
+
+fn response_display_text(response: &HttpResponse, tab: ResponseTab) -> String {
+    match tab {
+        ResponseTab::Pretty => response.formatted_body(ResponseView::Pretty),
+        ResponseTab::Preview => response_preview_text(response)
+            .unwrap_or_else(|error| format!("Preview unavailable: {error}")),
+        _ => response.formatted_body(ResponseView::Raw),
+    }
+}
+
+const MAX_HTML_PREVIEW_BYTES: usize = 2 * 1024 * 1024;
+
+fn response_preview_text(response: &HttpResponse) -> Result<String, String> {
+    if response_preview_language(response) != ResponsePreviewLanguage::Html {
+        return Err("safe preview is available for HTML responses only".to_owned());
+    }
+    if response.body.len() > MAX_HTML_PREVIEW_BYTES {
+        return Err(format!(
+            "HTML preview is limited to {} MiB for responsive rendering",
+            MAX_HTML_PREVIEW_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let source = response.body_text();
+    let mut output = String::new();
+    let mut cursor = 0;
+    let mut suppressed_tag = None;
+    while cursor < source.len() {
+        if let Some(tag_name) = suppressed_tag.as_deref() {
+            let Some(relative_start) = source[cursor..].find('<') else {
+                break;
+            };
+            cursor += relative_start;
+            let Some(relative_end) = source[cursor..].find('>') else {
+                break;
+            };
+            let tag = &source[cursor + 1..cursor + relative_end];
+            if let Some((closing, name)) = html_tag_name(tag) {
+                if closing && name == tag_name {
+                    suppressed_tag = None;
+                }
+            }
+            cursor += relative_end + 1;
+            continue;
+        }
+
+        if source[cursor..].starts_with("<!--") {
+            if let Some(relative_end) = source[cursor + 4..].find("-->") {
+                cursor += relative_end + 7;
+            } else {
+                break;
+            }
+            continue;
+        }
+
+        let character = source[cursor..]
+            .chars()
+            .next()
+            .expect("cursor stays on a character boundary");
+        if character != '<' {
+            let relative_end = source[cursor..].find('<').unwrap_or(source.len() - cursor);
+            append_preview_text(&mut output, &source[cursor..cursor + relative_end]);
+            cursor += relative_end;
+            continue;
+        }
+
+        let Some(relative_end) = source[cursor..].find('>') else {
+            append_preview_text(&mut output, &source[cursor..]);
+            break;
+        };
+        let tag = &source[cursor + 1..cursor + relative_end];
+        if let Some((closing, name)) = html_tag_name(tag) {
+            if !closing && matches!(name.as_str(), "script" | "style" | "noscript" | "template") {
+                suppressed_tag = Some(name);
+            } else if !closing && name == "br" {
+                append_preview_newline(&mut output);
+            } else if name == "li" && !closing {
+                append_preview_newline(&mut output);
+                output.push_str("• ");
+            } else if is_preview_block_tag(&name) {
+                append_preview_newline(&mut output);
+            }
+        }
+        cursor += relative_end + 1;
+    }
+
+    let mut preview = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if preview.is_empty() {
+        preview = "(empty HTML document)".to_owned();
+    }
+    Ok(preview)
+}
+
+fn html_tag_name(tag: &str) -> Option<(bool, String)> {
+    let trimmed = tag.trim_start();
+    let (closing, name_start) = if let Some(rest) = trimmed.strip_prefix('/') {
+        (true, rest.trim_start())
+    } else {
+        (false, trimmed)
+    };
+    if name_start.starts_with('!') || name_start.starts_with('?') {
+        return None;
+    }
+    let name = name_start
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    (!name.is_empty()).then_some((closing, name))
+}
+
+fn is_preview_block_tag(name: &str) -> bool {
+    matches!(
+        name,
+        "address"
+            | "article"
+            | "aside"
+            | "blockquote"
+            | "div"
+            | "footer"
+            | "form"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "hr"
+            | "main"
+            | "nav"
+            | "ol"
+            | "p"
+            | "pre"
+            | "section"
+            | "table"
+            | "tr"
+            | "ul"
+    )
+}
+
+fn append_preview_newline(output: &mut String) {
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+}
+
+fn append_preview_text(output: &mut String, text: &str) {
+    output.push_str(&decode_html_preview_entities(text));
+}
+
+fn decode_html_preview_entities(text: &str) -> String {
+    let mut decoded = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while cursor < text.len() {
+        let Some(relative_ampersand) = text[cursor..].find('&') else {
+            decoded.push_str(&text[cursor..]);
+            break;
+        };
+        let ampersand = cursor + relative_ampersand;
+        decoded.push_str(&text[cursor..ampersand]);
+        let Some(relative_semicolon) = text[ampersand..].find(';') else {
+            decoded.push('&');
+            cursor = ampersand + 1;
+            continue;
+        };
+        let semicolon = ampersand + relative_semicolon;
+        let entity = &text[ampersand + 1..semicolon];
+        let replacement = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" | "#39" => Some('\''),
+            "nbsp" => Some(' '),
+            _ => entity
+                .strip_prefix("#x")
+                .or_else(|| entity.strip_prefix("#X"))
+                .and_then(|value| u32::from_str_radix(value, 16).ok())
+                .or_else(|| {
+                    entity
+                        .strip_prefix('#')
+                        .and_then(|value| value.parse().ok())
+                })
+                .and_then(char::from_u32),
+        };
+        if let Some(replacement) = replacement {
+            decoded.push(replacement);
+            cursor = semicolon + 1;
+        } else {
+            decoded.push_str(&text[ampersand..=semicolon]);
+            cursor = semicolon + 1;
+        }
+    }
+    decoded
 }
 
 const MAX_JSON_TREE_BYTES: usize = 2 * 1024 * 1024;
@@ -10518,6 +10780,51 @@ mod tests {
             response_preview_language(&text),
             ResponsePreviewLanguage::Text
         );
+    }
+
+    #[test]
+    fn html_response_preview_is_safe_decoded_and_bounded() {
+        let body = br#"<!doctype html>
+            <html><head><style>body { color: red }</style></head>
+            <body><h1>Hello &amp; welcome</h1>
+            <script>window.steal('token')</script>
+            <p>Read <a href="javascript:alert(1)">the guide</a>.</p>
+            <ul><li>Local first</li><li>No account</li></ul>
+            </body></html>"#;
+        let response = HttpResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: Vec::new(),
+            body: body.to_vec(),
+            response_size: body.len(),
+            content_type: Some("text/html; charset=utf-8".to_owned()),
+            duration_ms: 1,
+            ttfb_ms: 0,
+            download_ms: 0,
+            protocol: "HTTP/1.1".to_owned(),
+            url: "http://example.test".to_owned(),
+            cookies: Vec::new(),
+        };
+
+        let preview = response_preview_text(&response).expect("HTML preview");
+        assert!(preview.contains("Hello & welcome"));
+        assert!(preview.contains("Read the guide."));
+        assert!(preview.contains("• Local first"));
+        assert!(preview.contains("• No account"));
+        assert!(!preview.contains("steal"));
+        assert!(!preview.contains("color: red"));
+        assert!(!preview.contains("javascript:"));
+        assert!(!preview.contains('<'));
+
+        let oversized = HttpResponse {
+            body: vec![b'a'; MAX_HTML_PREVIEW_BYTES + 1],
+            response_size: MAX_HTML_PREVIEW_BYTES + 1,
+            content_type: Some("text/html".to_owned()),
+            ..response
+        };
+        assert!(response_preview_text(&oversized)
+            .expect_err("oversized preview should be rejected")
+            .contains("limited to 2 MiB"));
     }
 
     #[test]

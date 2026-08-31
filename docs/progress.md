@@ -60,6 +60,9 @@ Implemented:
   before unbounded accumulation, while SSE remains progressive. The GUI
   Transport tab exposes the limit in MiB and persists it locally.
 - response Pretty/Raw views now use virtualized line rows with optional wrapping, clipboard copy and workspace-local response snapshots; JSON responses also expose a bounded, collapsible tree view.
+- HTML responses now also expose a bounded safe `Preview` tab that renders only
+  decoded text and block structure; scripts, styles, comments and active links
+  are omitted, and oversized documents remain on Pretty/Raw.
 - OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, same-source-directory external refs and bounded remote HTTP(S) refs, parameters, JSON bodies, response examples and auth placeholders.
 - OpenAPI import accepts local files or explicit HTTP(S) URLs with bounded root/reference downloads and a source-preserving report; remote references are cached per import and cycles remain visible as warnings.
 - Native collections export to OpenAPI 3.0 JSON/YAML with operation paths,
@@ -229,8 +232,8 @@ Implemented:
 
 Not yet implemented:
 
-- Desktop GUI polish, richer response preview features beyond the current
-  lightweight format detection/coloring, and manual responsive/accessibility QA.
+- Desktop GUI polish beyond the current response viewer, and manual responsive/
+  accessibility QA.
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit
@@ -344,7 +347,7 @@ checked-in targets (`curl_command`, `variables` and `postman_import`) each
 completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`07fbc0c5c3246413368d37b397b655764f8537665e7fb3d10a56f8586ff4d058`.
+`97e6dbe00be7f16b0ae3cc8dd5f3a1e9d1cc84a0a4562eed93fe38843259f2a6`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
@@ -352,6 +355,12 @@ retry in the opt-in `pm.sendRequest` bridge and runner-provided `pm.info`
 execution metadata plus the request-cookie `pm.cookies` snapshot, iteration data
 object view and bounded JSON Schema assertions; the CLI, HTTP core, runner and
 script loopback tests remain covered in the workspace suite.
+
+The latest native GUI response slice adds a safe HTML `Preview` tab with bounded
+text extraction, entity decoding, block formatting and explicit omission of
+scripts/styles/comments/active links. Its unit coverage verifies the safety
+boundary and the 2 MiB rendering limit; browser-based desktop accessibility and
+responsive QA remain manual gates.
 
 ## Next highest-value work
 
@@ -361,4 +370,4 @@ script loopback tests remain covered in the workspace suite.
    its resource guards.
 3. Extend the explicit assertion model with richer Postman-compatible matcher
    composition and broader JSON Schema dialect coverage.
-4. Extend response preview features and complete desktop accessibility/responsive QA.
+4. Complete desktop accessibility/responsive QA and polish the remaining GUI gaps.
