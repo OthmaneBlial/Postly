@@ -600,26 +600,7 @@ fn parse_request(
     request.headers = value
         .get("header")
         .and_then(Value::as_array)
-        .map(|headers| {
-            headers
-                .iter()
-                .filter_map(|header| {
-                    let key = header.get("key").and_then(Value::as_str)?;
-                    let value = header
-                        .get("value")
-                        .and_then(|value| string_value(Some(value)))
-                        .unwrap_or_default();
-                    Some(HeaderEntry {
-                        key: key.to_owned(),
-                        value: value.to_owned(),
-                        enabled: !header
-                            .get("disabled")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                    })
-                })
-                .collect()
-        })
+        .map(|headers| headers.iter().filter_map(parse_header_entry).collect())
         .unwrap_or_default();
     request.cookies = parse_pairs(value.get("cookie"));
     let parsed_auth = parse_auth(value.get("auth"), name, report);
@@ -796,10 +777,7 @@ fn parse_body(
                                     .or_else(|| part.get("content_type"))
                                     .and_then(Value::as_str)
                                     .map(ToOwned::to_owned),
-                                enabled: !part
-                                    .get("disabled")
-                                    .and_then(Value::as_bool)
-                                    .unwrap_or(false),
+                                enabled: postman_entry_enabled(part),
                             })
                         })
                         .collect::<Vec<_>>()
@@ -900,15 +878,28 @@ fn parse_pairs(value: Option<&Value>) -> Vec<KeyValue> {
                     Some(KeyValue {
                         key: pair.get("key").and_then(Value::as_str)?.to_owned(),
                         value: string_value(pair.get("value")).unwrap_or_default(),
-                        enabled: !pair
-                            .get("disabled")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
+                        enabled: postman_entry_enabled(pair),
                     })
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn postman_entry_enabled(value: &Value) -> bool {
+    value.get("disabled").and_then(Value::as_bool) != Some(true)
+        && value.get("enabled").and_then(Value::as_bool) != Some(false)
+}
+
+fn parse_header_entry(value: &Value) -> Option<HeaderEntry> {
+    Some(HeaderEntry {
+        key: value.get("key").and_then(Value::as_str)?.to_owned(),
+        value: value
+            .get("value")
+            .and_then(|value| string_value(Some(value)))
+            .unwrap_or_default(),
+        enabled: postman_entry_enabled(value),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1191,20 +1182,7 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExampl
                     let headers = example
                         .get("header")
                         .and_then(Value::as_array)
-                        .map(|headers| {
-                            headers
-                                .iter()
-                                .filter_map(|header| {
-                                    Some(HeaderEntry::enabled(
-                                        header.get("key").and_then(Value::as_str)?,
-                                        header
-                                            .get("value")
-                                            .and_then(|value| string_value(Some(value)))
-                                            .unwrap_or_default(),
-                                    ))
-                                })
-                                .collect()
-                        })
+                        .map(|headers| headers.iter().filter_map(parse_header_entry).collect())
                         .unwrap_or_default();
                     let delay_ms = example
                         .get("x-postly-delay-ms")
@@ -1301,6 +1279,73 @@ mod tests {
             .as_deref()
             .is_some_and(|script| script.contains("pm.response.to.have.status(200)")));
         assert!(matches!(list.1.auth, Auth::Bearer { .. }));
+    }
+
+    #[test]
+    fn honors_both_postman_entry_enable_flags() {
+        let mut report = ImportReport::default();
+        let value = serde_json::json!({
+            "method": "POST",
+            "url": {
+                "raw": "https://api.example.test/users?disabled=1&enabled=1",
+                "query": [
+                    { "key": "disabled", "value": "1", "disabled": true },
+                    { "key": "enabled", "value": "1", "enabled": false },
+                    { "key": "kept", "value": "1" }
+                ]
+            },
+            "header": [
+                { "key": "X-Disabled", "value": "1", "disabled": true },
+                { "key": "X-Also-Disabled", "value": "1", "enabled": false },
+                { "key": "X-Kept", "value": "1" }
+            ],
+            "cookie": [
+                { "key": "disabled", "value": "1", "enabled": false },
+                { "key": "kept", "value": "1" }
+            ],
+            "body": {
+                "mode": "formdata",
+                "formdata": [
+                    { "key": "disabled", "value": "1", "enabled": false },
+                    { "key": "kept", "value": "1" }
+                ]
+            }
+        });
+        let (request, needs_review) = parse_request("flags", &value, None, &mut report);
+        assert!(!needs_review);
+        assert_eq!(request.headers.len(), 3);
+        assert!(!request.headers[0].enabled);
+        assert!(!request.headers[1].enabled);
+        assert!(request.headers[2].enabled);
+        assert_eq!(request.query.len(), 3);
+        assert!(!request.query[0].enabled);
+        assert!(!request.query[1].enabled);
+        assert!(request.query[2].enabled);
+        assert!(!request.cookies[0].enabled);
+        assert!(request.cookies[1].enabled);
+        match request.body {
+            RequestBody::Multipart { parts } => {
+                assert!(!parts[0].enabled);
+                assert!(parts[1].enabled);
+            }
+            other => panic!("expected multipart body, got {other:?}"),
+        }
+
+        let item = serde_json::json!({
+            "response": [{
+                "name": "disabled response header",
+                "header": [
+                    { "key": "X-Disabled", "value": "1", "disabled": true },
+                    { "key": "X-Also-Disabled", "value": "1", "enabled": false },
+                    { "key": "X-Kept", "value": "1" }
+                ]
+            }]
+        });
+        let examples = parse_examples(&item, &mut report);
+        assert_eq!(examples[0].headers.len(), 3);
+        assert!(!examples[0].headers[0].enabled);
+        assert!(!examples[0].headers[1].enabled);
+        assert!(examples[0].headers[2].enabled);
     }
 
     #[test]
