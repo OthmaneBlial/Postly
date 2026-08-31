@@ -366,6 +366,7 @@ enum AssertionKind {
     JsonPointerEquals,
     JsonPointerContains,
     JsonPointerType,
+    JsonSchema,
 }
 
 impl AssertionKind {
@@ -388,6 +389,7 @@ impl AssertionKind {
             Self::JsonPointerEquals => "JSON Pointer equals",
             Self::JsonPointerContains => "JSON Pointer contains",
             Self::JsonPointerType => "JSON Pointer type",
+            Self::JsonSchema => "JSON Schema validates",
         }
     }
 
@@ -441,6 +443,13 @@ impl AssertionKind {
             Self::JsonPointerType => Assertion::JsonPointerType {
                 pointer: "/status".to_owned(),
                 expected: JsonValueType::String,
+            },
+            Self::JsonSchema => Assertion::JsonSchema {
+                pointer: String::new(),
+                schema: serde_json::json!({
+                    "type": "object",
+                    "required": []
+                }),
             },
         }
     }
@@ -1744,9 +1753,10 @@ impl PostlyApp {
             .iter()
             .map(|assertion| match assertion {
                 Assertion::JsonPointerEquals { expected, .. }
-                | Assertion::JsonPointerContains { expected, .. } => {
-                    serde_json::to_string_pretty(expected).unwrap_or_else(|_| "null".to_owned())
-                }
+                | Assertion::JsonPointerContains { expected, .. }
+                | Assertion::JsonSchema {
+                    schema: expected, ..
+                } => serde_json::to_string_pretty(expected).unwrap_or_else(|_| "null".to_owned()),
                 _ => String::new(),
             })
             .collect();
@@ -2599,7 +2609,10 @@ impl PostlyApp {
         };
         for (index, assertion) in request.assertions.iter_mut().enumerate() {
             if let Assertion::JsonPointerEquals { expected, .. }
-            | Assertion::JsonPointerContains { expected, .. } = assertion
+            | Assertion::JsonPointerContains { expected, .. }
+            | Assertion::JsonSchema {
+                schema: expected, ..
+            } = assertion
             {
                 let text = self
                     .assertion_json_text
@@ -6555,6 +6568,23 @@ impl PostlyApp {
                                 });
                         });
                     }
+                    Assertion::JsonSchema { pointer, .. } => {
+                        changed |= labeled_singleline(ui, "JSON Pointer (blank = root)", pointer);
+                        if let Some(value) = self.assertion_json_text.get_mut(index) {
+                            ui.label("JSON Schema");
+                            if ui
+                                .add(
+                                    TextEdit::multiline(value)
+                                        .font(TextStyle::Monospace)
+                                        .desired_rows(5)
+                                        .desired_width(f32::INFINITY),
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        }
+                    }
                 }
             });
             ui.add_space(5.0);
@@ -6588,6 +6618,7 @@ impl PostlyApp {
                         AssertionKind::JsonPointerEquals,
                         AssertionKind::JsonPointerContains,
                         AssertionKind::JsonPointerType,
+                        AssertionKind::JsonSchema,
                     ] {
                         ui.selectable_value(&mut self.new_assertion_kind, kind, kind.label());
                     }
@@ -6596,7 +6627,10 @@ impl PostlyApp {
                 let assertion = self.new_assertion_kind.default_assertion();
                 self.assertion_json_text.push(match &assertion {
                     Assertion::JsonPointerEquals { expected, .. }
-                    | Assertion::JsonPointerContains { expected, .. } => {
+                    | Assertion::JsonPointerContains { expected, .. }
+                    | Assertion::JsonSchema {
+                        schema: expected, ..
+                    } => {
                         serde_json::to_string_pretty(expected).unwrap_or_else(|_| "null".to_owned())
                     }
                     _ => String::new(),
@@ -9155,9 +9189,19 @@ mod tests {
                 pointer: "/data/active".to_owned(),
                 expected: JsonValueType::Boolean,
             },
+            Assertion::JsonSchema {
+                pointer: String::new(),
+                schema: serde_json::json!({
+                    "type": "object",
+                    "required": ["data"],
+                    "properties": {
+                        "data": { "type": "object" }
+                    }
+                }),
+            },
         ];
         app.load_request_editors();
-        assert_eq!(app.assertion_json_text.len(), 17);
+        assert_eq!(app.assertion_json_text.len(), 18);
         app.assertion_json_text[14] = "false".to_owned();
         app.assertion_json_text[15] = r#"{"active":false}"#.to_owned();
 
@@ -9184,6 +9228,19 @@ mod tests {
                 expected: JsonValueType::Boolean,
             }
         );
+        assert_eq!(
+            edited.assertions[17],
+            Assertion::JsonSchema {
+                pointer: String::new(),
+                schema: serde_json::json!({
+                    "type": "object",
+                    "required": ["data"],
+                    "properties": {
+                        "data": { "type": "object" }
+                    }
+                }),
+            }
+        );
 
         app.save_current().expect("save assertions");
         let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
@@ -9195,6 +9252,7 @@ mod tests {
             serde_json::json!({"active": false})
         );
         assert_eq!(reopened.request.assertions[15], edited.assertions[15]);
+        assert_eq!(reopened.request.assertions[17], edited.assertions[17]);
     }
 
     #[test]

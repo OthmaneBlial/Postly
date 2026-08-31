@@ -312,6 +312,12 @@ pub enum Assertion {
         pointer: String,
         expected: JsonValueType,
     },
+    /// Validate the value at a JSON Pointer against a bounded JSON Schema
+    /// subset. The schema is persisted as JSON so it remains Git-friendly.
+    JsonSchema {
+        pointer: String,
+        schema: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

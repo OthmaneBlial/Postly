@@ -298,6 +298,14 @@ fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<
                 ))
             }
         }
+        Assertion::JsonSchema { pointer, schema } => {
+            let body = serde_json::from_slice::<serde_json::Value>(&response.body)
+                .map_err(|error| format!("response body is not JSON: {error}"))?;
+            let actual = body
+                .pointer(pointer)
+                .ok_or_else(|| format!("JSON Pointer {pointer:?} was not found"))?;
+            validate_json_schema(actual, schema, pointer)
+        }
     }
 }
 
@@ -341,6 +349,286 @@ fn json_value_type_matches(value: &serde_json::Value, expected: JsonValueType) -
             | (serde_json::Value::Array(_), JsonValueType::Array)
             | (serde_json::Value::Object(_), JsonValueType::Object)
     )
+}
+
+/// Validate the deliberately bounded JSON Schema subset used by persisted
+/// response assertions. It is JSON-native, deterministic and dependency-free;
+/// unsupported annotation keywords are ignored, while the structural and
+/// composition keywords below are enforced.
+fn validate_json_schema(
+    value: &serde_json::Value,
+    schema: &serde_json::Value,
+    path: &str,
+) -> Result<(), String> {
+    match schema {
+        serde_json::Value::Bool(true) => return Ok(()),
+        serde_json::Value::Bool(false) => {
+            return Err(format!("schema rejects value at {path:?}"));
+        }
+        serde_json::Value::Object(schema) => {
+            if let Some(reference) = schema.get("$ref") {
+                return Err(format!(
+                    "JSON Schema $ref is not supported in native assertions: {reference}"
+                ));
+            }
+
+            if let Some(expected) = schema.get("type") {
+                let matches = match expected {
+                    serde_json::Value::String(expected) => {
+                        json_schema_type_matches(value, expected)
+                    }
+                    serde_json::Value::Array(expected) => expected
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .any(|expected| json_schema_type_matches(value, expected)),
+                    _ => false,
+                };
+                if !matches {
+                    return Err(format!(
+                        "expected JSON Schema type at {path:?} to match {expected}, received {value}"
+                    ));
+                }
+            }
+
+            if let Some(expected) = schema.get("const") {
+                if value != expected {
+                    return Err(format!(
+                        "expected JSON Schema const at {path:?} to equal {expected}, received {value}"
+                    ));
+                }
+            }
+            if let Some(expected) = schema.get("enum").and_then(serde_json::Value::as_array) {
+                if !expected.iter().any(|candidate| candidate == value) {
+                    return Err(format!(
+                        "expected JSON Schema enum at {path:?} to contain {value}"
+                    ));
+                }
+            }
+
+            validate_json_schema_composition(value, schema, path)?;
+            validate_json_schema_object(value, schema, path)?;
+            validate_json_schema_array(value, schema, path)?;
+            validate_json_schema_string(value, schema, path)?;
+            validate_json_schema_number(value, schema, path)?;
+        }
+        _ => {
+            return Err(format!(
+                "JSON Schema must be a boolean or object at {path:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn json_schema_type_matches(value: &serde_json::Value, expected: &str) -> bool {
+    match expected {
+        "null" => value.is_null(),
+        "boolean" => value.is_boolean(),
+        "number" => value.is_number(),
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "string" => value.is_string(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => false,
+    }
+}
+
+fn validate_json_schema_composition(
+    value: &serde_json::Value,
+    schema: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+) -> Result<(), String> {
+    if let Some(all_of) = schema.get("allOf").and_then(serde_json::Value::as_array) {
+        for (index, branch) in all_of.iter().enumerate() {
+            validate_json_schema(value, branch, path)
+                .map_err(|error| format!("allOf branch {index}: {error}"))?;
+        }
+    }
+    if let Some(any_of) = schema.get("anyOf").and_then(serde_json::Value::as_array) {
+        if !any_of
+            .iter()
+            .any(|branch| validate_json_schema(value, branch, path).is_ok())
+        {
+            return Err(format!("no anyOf schema matched value at {path:?}"));
+        }
+    }
+    if let Some(one_of) = schema.get("oneOf").and_then(serde_json::Value::as_array) {
+        let matches = one_of
+            .iter()
+            .filter(|branch| validate_json_schema(value, branch, path).is_ok())
+            .count();
+        if matches != 1 {
+            return Err(format!(
+                "expected exactly one oneOf schema to match at {path:?}, matched {matches}"
+            ));
+        }
+    }
+    if let Some(not) = schema.get("not") {
+        if validate_json_schema(value, not, path).is_ok() {
+            return Err(format!("not schema unexpectedly matched value at {path:?}"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_json_schema_object(
+    value: &serde_json::Value,
+    schema: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+) -> Result<(), String> {
+    let Some(object) = value.as_object() else {
+        return Ok(());
+    };
+    if let Some(required) = schema.get("required").and_then(serde_json::Value::as_array) {
+        for property in required.iter().filter_map(serde_json::Value::as_str) {
+            if !object.contains_key(property) {
+                return Err(format!(
+                    "required JSON Schema property {property:?} is missing at {path:?}"
+                ));
+            }
+        }
+    }
+    if let Some(properties) = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+    {
+        for (property, property_schema) in properties {
+            if let Some(property_value) = object.get(property) {
+                let property_path = format!("{path}/{property}");
+                validate_json_schema(property_value, property_schema, &property_path)?;
+            }
+        }
+        if schema.get("additionalProperties") == Some(&serde_json::Value::Bool(false)) {
+            if let Some((unknown, _)) = object
+                .iter()
+                .find(|(property, _)| !properties.contains_key(*property))
+            {
+                return Err(format!(
+                    "additional JSON Schema property {unknown:?} is not allowed at {path:?}"
+                ));
+            }
+        }
+    }
+    validate_json_schema_bound(
+        object.len(),
+        schema.get("minProperties"),
+        |actual, expected| actual >= expected,
+        "minimum properties",
+        path,
+    )?;
+    validate_json_schema_bound(
+        object.len(),
+        schema.get("maxProperties"),
+        |actual, expected| actual <= expected,
+        "maximum properties",
+        path,
+    )?;
+    Ok(())
+}
+
+fn validate_json_schema_array(
+    value: &serde_json::Value,
+    schema: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+) -> Result<(), String> {
+    let Some(array) = value.as_array() else {
+        return Ok(());
+    };
+    validate_json_schema_bound(
+        array.len(),
+        schema.get("minItems"),
+        |actual, expected| actual >= expected,
+        "minimum items",
+        path,
+    )?;
+    validate_json_schema_bound(
+        array.len(),
+        schema.get("maxItems"),
+        |actual, expected| actual <= expected,
+        "maximum items",
+        path,
+    )?;
+    if schema.get("uniqueItems") == Some(&serde_json::Value::Bool(true))
+        && (0..array.len()).any(|index| array[index + 1..].contains(&array[index]))
+    {
+        return Err(format!("array items are not unique at {path:?}"));
+    }
+    if let Some(item_schema) = schema.get("items") {
+        for (index, item) in array.iter().enumerate() {
+            validate_json_schema(item, item_schema, &format!("{path}/{index}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_json_schema_string(
+    value: &serde_json::Value,
+    schema: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+) -> Result<(), String> {
+    let Some(string) = value.as_str() else {
+        return Ok(());
+    };
+    validate_json_schema_bound(
+        string.chars().count(),
+        schema.get("minLength"),
+        |actual, expected| actual >= expected,
+        "minimum length",
+        path,
+    )?;
+    validate_json_schema_bound(
+        string.chars().count(),
+        schema.get("maxLength"),
+        |actual, expected| actual <= expected,
+        "maximum length",
+        path,
+    )?;
+    Ok(())
+}
+
+fn validate_json_schema_number(
+    value: &serde_json::Value,
+    schema: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+) -> Result<(), String> {
+    let Some(number) = value.as_f64() else {
+        return Ok(());
+    };
+    if let Some(expected) = schema.get("minimum").and_then(serde_json::Value::as_f64) {
+        if number < expected {
+            return Err(format!(
+                "number at {path:?} is below schema minimum {expected}"
+            ));
+        }
+    }
+    if let Some(expected) = schema.get("maximum").and_then(serde_json::Value::as_f64) {
+        if number > expected {
+            return Err(format!(
+                "number at {path:?} is above schema maximum {expected}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_json_schema_bound(
+    actual: usize,
+    expected: Option<&serde_json::Value>,
+    predicate: impl Fn(usize, usize) -> bool,
+    label: &str,
+    path: &str,
+) -> Result<(), String> {
+    let Some(expected) = expected.and_then(serde_json::Value::as_u64) else {
+        return Ok(());
+    };
+    let expected = usize::try_from(expected).unwrap_or(usize::MAX);
+    if predicate(actual, expected) {
+        Ok(())
+    } else {
+        Err(format!(
+            "expected {label} {expected} at {path:?}, received {actual}"
+        ))
+    }
 }
 
 /// Evaluate persisted native response assertions without invoking a script
@@ -874,6 +1162,19 @@ mod tests {
                 pointer: "/ok".to_owned(),
                 expected: JsonValueType::Boolean,
             },
+            Assertion::JsonSchema {
+                pointer: String::new(),
+                schema: serde_json::json!({
+                    "type": "object",
+                    "required": ["ok", "count", "tags", "message"],
+                    "properties": {
+                        "ok": { "const": true },
+                        "count": { "type": "integer", "minimum": 1 },
+                        "tags": { "type": "array", "minItems": 2, "items": { "type": "string" } },
+                        "message": { "type": "string", "minLength": 1 }
+                    }
+                }),
+            },
         ];
         let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
         let summary = run_requests(
@@ -886,10 +1187,10 @@ mod tests {
         server.await.expect("server");
 
         assert!(summary.succeeded());
-        assert_eq!(summary.assertions, 18);
+        assert_eq!(summary.assertions, 19);
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.status_distribution.get(&200), Some(&1));
-        assert_eq!(summary.results[0].assertions, 18);
+        assert_eq!(summary.results[0].assertions, 19);
     }
 
     #[test]
@@ -933,6 +1234,44 @@ mod tests {
             &serde_json::json!("3"),
             JsonValueType::Number
         ));
+    }
+
+    #[test]
+    fn json_schema_assertions_cover_structure_and_composition() {
+        let actual = serde_json::json!({
+            "id": 7,
+            "role": "admin",
+            "tags": ["api", "rust"]
+        });
+        let schema = serde_json::json!({
+            "allOf": [{
+                "type": "object",
+                "required": ["id", "role"],
+                "properties": {
+                    "id": { "type": "integer", "minimum": 1 },
+                    "role": { "enum": ["admin", "maintainer"] }
+                }
+            }, {
+                "properties": {
+                    "tags": {
+                        "type": "array",
+                        "minItems": 2,
+                        "uniqueItems": true,
+                        "items": { "type": "string", "minLength": 2 }
+                    }
+                }
+            }]
+        });
+        validate_json_schema(&actual, &schema, "").expect("schema should accept the response");
+
+        let invalid = serde_json::json!({ "id": 0, "role": "viewer", "tags": ["x", "x"] });
+        assert!(validate_json_schema(&invalid, &schema, "").is_err());
+        assert!(validate_json_schema(
+            &actual,
+            &serde_json::json!({ "not": { "type": "object" } }),
+            ""
+        )
+        .is_err());
     }
 
     #[tokio::test]
