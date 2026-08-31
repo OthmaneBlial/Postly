@@ -573,9 +573,73 @@ fn validate_json_schema_array(
     {
         return Err(format!("array items are not unique at {path:?}"));
     }
+
+    let prefix_items = schema
+        .get("prefixItems")
+        .and_then(serde_json::Value::as_array);
+    if let Some(prefix_items) = prefix_items {
+        for (index, item_schema) in prefix_items.iter().enumerate() {
+            if let Some(item) = array.get(index) {
+                validate_json_schema(item, item_schema, &format!("{path}/{index}"))?;
+            }
+        }
+    }
+
     if let Some(item_schema) = schema.get("items") {
-        for (index, item) in array.iter().enumerate() {
-            validate_json_schema(item, item_schema, &format!("{path}/{index}"))?;
+        match item_schema {
+            serde_json::Value::Array(tuple_items) => {
+                let offset = prefix_items.map_or(0, |items| items.len());
+                for (index, item) in array.iter().enumerate().skip(offset) {
+                    let tuple_index = index - offset;
+                    if let Some(tuple_schema) = tuple_items.get(tuple_index) {
+                        validate_json_schema(item, tuple_schema, &format!("{path}/{index}"))?;
+                    } else if let Some(additional_items) = schema.get("additionalItems") {
+                        validate_json_schema(item, additional_items, &format!("{path}/{index}"))?;
+                    }
+                }
+            }
+            _ => {
+                let offset = prefix_items.map_or(0, |items| items.len());
+                for (index, item) in array.iter().enumerate().skip(offset) {
+                    validate_json_schema(item, item_schema, &format!("{path}/{index}"))?;
+                }
+            }
+        }
+    }
+
+    if let Some(contains_schema) = schema.get("contains") {
+        let matching_items = array
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                validate_json_schema(item, contains_schema, &format!("{path}/contains")).is_ok()
+            })
+            .count();
+        let minimum = schema
+            .get("minContains")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(1);
+        let maximum = schema
+            .get("maxContains")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok());
+        if maximum.is_some_and(|maximum| maximum < minimum) {
+            return Err(format!(
+                "JSON Schema contains bounds are invalid at {path:?}: maxContains is below minContains"
+            ));
+        }
+        if matching_items < minimum {
+            return Err(format!(
+                "expected at least {minimum} array item(s) to match contains at {path:?}, received {matching_items}"
+            ));
+        }
+        if let Some(maximum) = maximum {
+            if matching_items > maximum {
+                return Err(format!(
+                    "expected at most {maximum} array item(s) to match contains at {path:?}, received {matching_items}"
+                ));
+            }
         }
     }
     Ok(())
@@ -1419,6 +1483,60 @@ mod tests {
             ""
         )
         .is_err());
+
+        let tuple = serde_json::json!({
+            "type": "array",
+            "prefixItems": [
+                { "type": "string" },
+                { "type": "integer" }
+            ],
+            "items": { "type": "boolean" }
+        });
+        assert!(
+            validate_json_schema(&serde_json::json!(["ready", 2, true, false]), &tuple, "").is_ok()
+        );
+        assert!(
+            validate_json_schema(&serde_json::json!(["ready", "not-an-integer"]), &tuple, "")
+                .is_err()
+        );
+        assert!(validate_json_schema(
+            &serde_json::json!(["ready", 2, "not-a-boolean"]),
+            &tuple,
+            ""
+        )
+        .is_err());
+
+        let legacy_tuple = serde_json::json!({
+            "type": "array",
+            "items": [{ "type": "string" }, { "type": "integer" }],
+            "additionalItems": false
+        });
+        assert!(validate_json_schema(&serde_json::json!(["ready", 2]), &legacy_tuple, "").is_ok());
+        assert!(
+            validate_json_schema(&serde_json::json!(["ready", 2, true]), &legacy_tuple, "")
+                .is_err()
+        );
+
+        let contains = serde_json::json!({
+            "type": "array",
+            "contains": { "type": "number", "minimum": 10 },
+            "minContains": 2,
+            "maxContains": 2
+        });
+        assert!(
+            validate_json_schema(&serde_json::json!([1, 10, 12, "ignored"]), &contains, "").is_ok()
+        );
+        assert!(validate_json_schema(&serde_json::json!([1, 10]), &contains, "").is_err());
+        assert!(validate_json_schema(&serde_json::json!([10, 12, 14]), &contains, "").is_err());
+        assert!(validate_json_schema(
+            &serde_json::json!([]),
+            &serde_json::json!({
+                "contains": { "type": "string" },
+                "minContains": 0
+            }),
+            ""
+        )
+        .is_ok());
 
         let numeric = serde_json::json!({
             "type": "number",

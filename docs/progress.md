@@ -147,6 +147,7 @@ Implemented:
 - Native response assertions can validate a bounded JSON Schema subset at the
   root or any JSON Pointer: types, const/enum, required/properties,
   boolean/object `additionalProperties`, array/string/object bounds, unique items and
+  tuple/`prefixItems` items, `contains` with `minContains`/`maxContains`,
   allOf/anyOf/oneOf/not composition, exclusive numeric bounds,
   `multipleOf` and common string formats (`date`, `date-time`, `uuid`, `uri`,
   `email`, `hostname`, `ipv4`, `ipv6`) are covered by runner and GUI tests.
@@ -238,7 +239,8 @@ Not yet implemented:
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit
   native slice, including richer matcher composition and full JSON Schema
-  dialect coverage.
+  dialect coverage; the native subset now also covers tuple/`prefixItems` arrays
+  and `contains` cardinality.
 - Full multi-file transactional restore for arbitrary caller-managed canonical
   workspace batches remains open; imports now have a best-effort rollback
   journal that also removes empty directories created by the transaction, while
@@ -347,7 +349,7 @@ checked-in targets (`curl_command`, `variables` and `postman_import`) each
 completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`97e6dbe00be7f16b0ae3cc8dd5f3a1e9d1cc84a0a4562eed93fe38843259f2a6`.
+`e0403185b0b538219c99c7890f0099c20a00cf85be8b7bfe0ef2445e192b91db`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
@@ -361,6 +363,11 @@ text extraction, entity decoding, block formatting and explicit omission of
 scripts/styles/comments/active links. Its unit coverage verifies the safety
 boundary and the 2 MiB rendering limit; browser-based desktop accessibility and
 responsive QA remain manual gates.
+
+The latest native assertion slice adds JSON Schema tuple validation through
+`items` arrays and `prefixItems`, plus `contains` with deterministic
+`minContains`/`maxContains` bounds. Runner tests cover valid and invalid
+positional items, additional-item rejection and exact/zero-match cardinality.
 
 ## Next highest-value work
 
