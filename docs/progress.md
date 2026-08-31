@@ -303,8 +303,10 @@ notes. It is intentionally not presented as notarized, cross-platform or
 production-ready; those release gates remain explicit.
 
 The latest scripting slice now covers mutable Postman-shaped URL variables,
-including `replace`/`upsert` and direct value edits, with the materialized URL
-round-tripped through the native request model. The OpenAPI import slice now also resolves bounded remote references from local
+including `replace`/`upsert` and direct value edits, plus
+`pm.request.body.update(...)` for supported Postman body modes, with the
+materialized URL and body round-tripped through the native request model. The
+OpenAPI import slice now also resolves bounded remote references from local
 files and URL documents, with local loopback server tests covering relative and
 absolute HTTP references. The OpenAPI export slice is covered by a native JSON/YAML serialization test
 and a real CLI smoke run from a temporary workspace; operation paths, server
@@ -326,7 +328,7 @@ targets (`curl_command`, `variables` and `postman_import`) each completed 256
 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`19d7e216d32042a094086cd552dec1507fd9a5fb700a93f7c3b93dff82bbd990`.
+`2982fbc4444570cb6c215f03eb583b014f02189c130516609d4963094f7b8a21`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
