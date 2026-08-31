@@ -1146,6 +1146,23 @@ function deepIncludes(actual, expected) {
   );
 }
 
+function membersInclude(actual, expected) {
+  if (!Array.isArray(actual) || !Array.isArray(expected)) return false;
+  const remaining = actual.slice();
+  return expected.every((candidate) => {
+    const index = remaining.findIndex((item) => deepEqual(item, candidate));
+    if (index < 0) return false;
+    remaining.splice(index, 1);
+    return true;
+  });
+}
+
+function membersEqual(actual, expected) {
+  return Array.isArray(actual) && Array.isArray(expected)
+    && actual.length === expected.length
+    && membersInclude(actual, expected);
+}
+
 function typeMatches(value, type) {
   const expected = text(type).toLowerCase();
   if (expected === "array") return Array.isArray(value);
@@ -1190,22 +1207,22 @@ function expect(value) {
       typeMatches(value, type),
       "expected value to" + prefix + " be a " + type
     );
+    const include = (expected) => {
+      const included = typeof value === "string"
+        ? value.includes(expected)
+        : deepIncludes(value, expected);
+      check(included, "expected " + JSON.stringify(value) + " to" + prefix + " include " + JSON.stringify(expected));
+    };
+    include.members = (expected) => check(
+      membersInclude(value, expected),
+      "expected " + JSON.stringify(value) + " to" + prefix + " include members " + JSON.stringify(expected)
+    );
     const to = {
       equal: (expected) => check(value === expected, "expected " + JSON.stringify(value) + " to" + prefix + " equal " + JSON.stringify(expected)),
       equals: (expected) => check(value === expected, "expected " + JSON.stringify(value) + " to" + prefix + " equal " + JSON.stringify(expected)),
       eql: (expected) => check(deepEqual(value, expected), "expected " + JSON.stringify(value) + " to" + prefix + " deeply equal " + JSON.stringify(expected)),
-      include: (expected) => {
-        const included = typeof value === "string"
-          ? value.includes(expected)
-          : deepIncludes(value, expected);
-        check(included, "expected " + JSON.stringify(value) + " to" + prefix + " include " + JSON.stringify(expected));
-      },
-      contain: (expected) => {
-        const included = typeof value === "string"
-          ? value.includes(expected)
-          : deepIncludes(value, expected);
-        check(included, "expected " + JSON.stringify(value) + " to" + prefix + " contain " + JSON.stringify(expected));
-      },
+      include,
+      contain: include,
       match: (pattern) => check(typeof value === "string" && pattern.test(value), "expected " + JSON.stringify(value) + " to" + prefix + " match the pattern"),
       have: {
         property: function (name, expected) {
@@ -1223,6 +1240,10 @@ function expect(value) {
           }
         },
         lengthOf,
+        members: (expected) => check(
+          membersEqual(value, expected),
+          "expected " + JSON.stringify(value) + " to" + prefix + " have members " + JSON.stringify(expected)
+        ),
         keys,
         all: { keys },
         any: { keys: anyKeys }
@@ -1797,6 +1818,9 @@ mod tests {
                 pm.test("extended matchers", function () {
                     pm.expect({ b: [2], a: 1 }).to.deep.equal({ a: 1, b: [2] });
                     pm.expect([1, 2, 3]).to.have.lengthOf(3);
+                    pm.expect([1, { ready: true }, 3]).to.have.members([3, { ready: true }, 1]);
+                    pm.expect(["postly", "rust"]).to.include.members(["rust"]);
+                    pm.expect([1, 1]).to.not.have.members([1]);
                     pm.expect({ ready: true }).to.have.keys(["ready"]);
                     pm.expect({ ready: true, pending: false }).to.have.all.keys("ready", "pending");
                     pm.expect({ ready: true }).to.have.any.keys("missing", "ready");
