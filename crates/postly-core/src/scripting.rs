@@ -389,18 +389,31 @@ function contentTypeForLanguage(language) {
   }
 }
 
-function decorateKeyValueList(list, makeEntry) {
+function decorateKeyValueList(list, makeEntry, onChange = () => {}) {
   list.add = (entry) => {
     const normalized = makeEntry(entry);
-    if (normalized && normalized.key) list.push(normalized);
+    if (normalized && normalized.key) {
+      list.push(normalized);
+      onChange();
+    }
   };
   list.remove = (key) => {
     const normalized = text(key).toLowerCase();
+    let changed = false;
     for (let index = list.length - 1; index >= 0; index -= 1) {
-      if (text(list[index] && list[index].key).toLowerCase() === normalized) list.splice(index, 1);
+      if (text(list[index] && list[index].key).toLowerCase() === normalized) {
+        list.splice(index, 1);
+        changed = true;
+      }
+    }
+    if (changed) onChange();
+  };
+  list.clear = () => {
+    if (list.length > 0) {
+      list.splice(0, list.length);
+      onChange();
     }
   };
-  list.clear = () => { list.splice(0, list.length); };
   return list;
 }
 
@@ -523,7 +536,8 @@ function postmanBodyToNative(body) {
 
 function makeUrlFacade(rawValue, structuredQuery) {
   const url = { raw: text(rawValue), query: [], variables: [] };
-  const usesStructuredQuery = Array.isArray(structuredQuery);
+  const usesStructuredQuery = Array.isArray(structuredQuery) && structuredQuery.length > 0;
+  let queryDirty = false;
   const resolvedUrl = () => replaceIn(url.raw);
   const parsedUrl = () => {
     try { return new URL(resolvedUrl()); } catch (_) { return null; }
@@ -556,11 +570,22 @@ function makeUrlFacade(rawValue, structuredQuery) {
   };
   const query = decorateKeyValueList(url.query, (entry) => ({
     key: text(entry && entry.key), value: text(entry && entry.value), disabled: entry && entry.disabled === true
-  }));
+  }), () => { queryDirty = true; });
+  query.upsert = (entry) => {
+    const normalized = text(entry && entry.key).toLowerCase();
+    const found = query.find((candidate) => text(candidate && candidate.key).toLowerCase() === normalized);
+    if (found) {
+      found.value = text(entry.value);
+      found.disabled = entry.disabled === true;
+      queryDirty = true;
+    } else {
+      query.add(entry);
+    }
+  };
   refreshQuery();
   url.query = query;
   Object.defineProperties(url, {
-    toString: { value: () => url.query.length > 0 ? serializeQuery() : text(url.raw) },
+    toString: { value: () => (usesStructuredQuery || queryDirty) ? serializeQuery() : text(url.raw) },
     getPath: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.pathname : text(url.raw).split("?")[0]; } },
     getQueryString: { value: () => {
       if (url.query.length > 0) {
@@ -572,7 +597,8 @@ function makeUrlFacade(rawValue, structuredQuery) {
     } },
     host: { get: () => { const parsed = parsedUrl(); return parsed ? parsed.hostname : undefined; } },
     path: { get: () => { const parsed = parsedUrl(); return parsed ? parsed.pathname.split("/").filter(Boolean) : []; } },
-    _usesStructuredQuery: { value: usesStructuredQuery, enumerable: false }
+    _usesStructuredQuery: { value: usesStructuredQuery, enumerable: false },
+    _queryDirty: { get: () => queryDirty, enumerable: false }
   });
   return url;
 }
@@ -676,7 +702,7 @@ request.cookies = decorateKeyValueList(request.cookies || [], (cookie) => ({
 function serializeRequest() {
   const serialized = { ...request };
   if (request.url && typeof request.url === "object" && Array.isArray(request.url.query)
-      && (request.url._usesStructuredQuery || request.url.query.length > 0)) {
+      && (request.url._usesStructuredQuery || request.url._queryDirty)) {
     const rawUrl = text(request.url.raw);
     const fragmentIndex = rawUrl.indexOf("#");
     const fragment = fragmentIndex >= 0 ? rawUrl.slice(fragmentIndex) : "";
@@ -1222,6 +1248,41 @@ mod tests {
             request.cookies,
             vec![crate::model::KeyValue::enabled("session", "local")]
         );
+        assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+    }
+
+    #[test]
+    fn preserves_raw_url_queries_until_a_script_mutates_them() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let request = Request::new(
+            "Raw URL query",
+            "GET",
+            "https://api.example.test/search?term={{term}}",
+        );
+        let mut context = VariableContext::default();
+        context
+            .environment
+            .insert("term".to_owned(), "Ada Lovelace".to_owned());
+        let result = run_script(
+            r#"
+                pm.test("read raw URL query", function () {
+                    pm.expect(pm.request.url.getQueryString()).to.eql("term=Ada%20Lovelace");
+                });
+            "#,
+            &request,
+            None,
+            &context,
+        )
+        .expect("script");
+
+        let mut applied = request.clone();
+        result
+            .apply(&mut applied, &mut context)
+            .expect("apply script changes");
+        assert_eq!(applied.url, request.url);
+        assert!(applied.query.is_empty());
         assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
     }
 
