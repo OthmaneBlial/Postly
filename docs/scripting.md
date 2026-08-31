@@ -33,6 +33,11 @@ The supported compatibility slice includes:
 - `pm.response.to.be.ok`, response header checks and `pm.response.cookies.get`
 - `console.log`, `console.warn` and `console.error` capture
 
+The tested expectation subset also includes deep equality with stable object-key
+comparison, lengthOf, keys, oneOf, empty, numeric at.least/at.most/within and
+the a/an type aliases. This remains a compatibility slice rather than a claim
+of complete Chai or Postman assertion parity.
+
 Script output is kept local. CLI output reports assertions but deliberately
 does not print captured console logs, because a script can log a secret. The
 bridge rejects source larger than 512 KiB, caps the serialized input payload at

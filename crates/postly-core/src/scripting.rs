@@ -459,13 +459,54 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function deepEqual(left, right) {
+  if (left === right) return true;
+  if (left === null || right === null || typeof left !== typeof right) return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right)
+      && left.length === right.length
+      && left.every((item, index) => deepEqual(item, right[index]));
+  }
+  if (typeof left !== "object") return false;
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return deepEqual(leftKeys, rightKeys)
+    && leftKeys.every((key) => deepEqual(left[key], right[key]));
+}
+
+function typeMatches(value, type) {
+  const expected = text(type).toLowerCase();
+  if (expected === "array") return Array.isArray(value);
+  if (expected === "object") return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (expected === "null") return value === null;
+  return typeof value === expected;
+}
+
 function expect(value) {
   function expectation(negated) {
     const prefix = negated ? " not" : "";
     const check = (condition, message) => assert(negated ? !condition : condition, message);
+    const lengthOf = (expected) => check(
+      value !== null && value !== undefined && value.length === expected,
+      "expected " + JSON.stringify(value) + " to" + prefix + " have length " + expected
+    );
+    const oneOf = (expected) => check(
+      Array.isArray(expected) && expected.some((candidate) => deepEqual(value, candidate)),
+      "expected " + JSON.stringify(value) + " to" + prefix + " be one of " + JSON.stringify(expected)
+    );
+    const keys = function (...expected) {
+      const expectedKeys = expected.length === 1 && Array.isArray(expected[0]) ? expected[0] : expected;
+      const actualKeys = value !== null && value !== undefined && typeof value === "object"
+        ? Object.keys(value).sort()
+        : [];
+      check(
+        deepEqual(actualKeys, expectedKeys.map(text).sort()),
+        "expected " + JSON.stringify(value) + " to" + prefix + " have keys " + JSON.stringify(expectedKeys)
+      );
+    };
     const to = {
       equal: (expected) => check(value === expected, "expected " + JSON.stringify(value) + " to" + prefix + " equal " + JSON.stringify(expected)),
-      eql: (expected) => check(JSON.stringify(value) === JSON.stringify(expected), "expected " + JSON.stringify(value) + " to" + prefix + " deeply equal " + JSON.stringify(expected)),
+      eql: (expected) => check(deepEqual(value, expected), "expected " + JSON.stringify(value) + " to" + prefix + " deeply equal " + JSON.stringify(expected)),
       include: (expected) => {
         const included = typeof value === "string" || Array.isArray(value)
           ? value.includes(expected)
@@ -478,9 +519,16 @@ function expect(value) {
           const present = value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, name);
           check(present, "expected property " + name);
           if (arguments.length > 1 && present) check(value[name] === expected, "expected property " + name + " to" + prefix + " equal " + JSON.stringify(expected));
-        }
+        },
+        lengthOf,
+        keys
       }
     };
+    Object.defineProperty(to, "deep", {
+      get: () => ({
+        equal: (expected) => check(deepEqual(value, expected), "expected " + JSON.stringify(value) + " to" + prefix + " deeply equal " + JSON.stringify(expected))
+      })
+    });
     Object.defineProperty(to, "be", {
       value: {
         get true() { check(value === true, "expected " + JSON.stringify(value) + " to" + prefix + " be true"); return true; },
@@ -488,7 +536,22 @@ function expect(value) {
         get ok() { check(Boolean(value), "expected " + JSON.stringify(value) + " to" + prefix + " be truthy"); return true; },
         above: (expected) => check(value > expected, "expected " + JSON.stringify(value) + " to" + prefix + " be above " + expected),
         below: (expected) => check(value < expected, "expected " + JSON.stringify(value) + " to" + prefix + " be below " + expected),
-        a: (type) => check(typeof value === text(type), "expected value to" + prefix + " be a " + type)
+        at: {
+          least: (expected) => check(value >= expected, "expected " + JSON.stringify(value) + " to" + prefix + " be at least " + expected),
+          most: (expected) => check(value <= expected, "expected " + JSON.stringify(value) + " to" + prefix + " be at most " + expected)
+        },
+        within: (minimum, maximum) => check(value >= minimum && value <= maximum, "expected " + JSON.stringify(value) + " to" + prefix + " be within " + minimum + ".." + maximum),
+        oneOf,
+        get empty() {
+          const length = value !== null && value !== undefined && value.length;
+          const empty = length !== undefined
+            ? length === 0
+            : value !== null && value !== undefined && typeof value === "object" && Object.keys(value).length === 0;
+          check(empty, "expected " + JSON.stringify(value) + " to" + prefix + " be empty");
+          return true;
+        },
+        a: (type) => check(typeMatches(value, type), "expected value to" + prefix + " be a " + type),
+        an: (type) => check(typeMatches(value, type), "expected value to" + prefix + " be an " + type)
       }
     });
     Object.defineProperty(to, "not", { get: () => expectation(!negated) });
@@ -631,6 +694,36 @@ mod tests {
         )
         .expect("script");
         assert_eq!(result.environment_updates["token"], "new");
+        assert_eq!(result.tests.len(), 1);
+        assert!(result.tests[0].passed);
+    }
+
+    #[test]
+    fn supports_extended_postman_expect_matchers() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let request = Request::new("Matchers", "GET", "https://example.test");
+        let result = run_script(
+            r#"
+                pm.test("extended matchers", function () {
+                    pm.expect({ b: [2], a: 1 }).to.deep.equal({ a: 1, b: [2] });
+                    pm.expect([1, 2, 3]).to.have.lengthOf(3);
+                    pm.expect({ ready: true }).to.have.keys(["ready"]);
+                    pm.expect("ready").to.be.oneOf(["ready", "done"]);
+                    pm.expect(3).to.be.at.least(2);
+                    pm.expect(3).to.be.at.most(4);
+                    pm.expect(3).to.be.within(3, 3);
+                    pm.expect([]).to.be.empty;
+                    pm.expect({}).to.be.empty;
+                    pm.expect([]).to.be.an("array");
+                });
+            "#,
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("script");
         assert_eq!(result.tests.len(), 1);
         assert!(result.tests[0].passed);
     }

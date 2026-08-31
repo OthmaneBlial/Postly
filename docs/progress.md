@@ -78,6 +78,9 @@ Implemented:
   pipes have explicit size caps, and the worker bounds process duration plus
   captured logs and test results.
 - Common response assertions now cover headers, cookies, status health, numeric/type/regex and negated expectations.
+- The Node bridge now tests a broader explicit expectation subset including
+  stable deep equality, keys, length, oneOf, empty and numeric range matchers;
+  broad Chai/Postman parity remains intentionally partial.
 - Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; saved workspaces persist a bounded ignored local jar.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
 - runner iteration data from JSON objects/arrays plus pretty, JSON and JUnit reporters.
