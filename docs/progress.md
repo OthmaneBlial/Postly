@@ -60,8 +60,8 @@ Implemented:
   before unbounded accumulation, while SSE remains progressive. The GUI
   Transport tab exposes the limit in MiB and persists it locally.
 - response Pretty/Raw views now use virtualized line rows with optional wrapping, clipboard copy and workspace-local response snapshots; JSON responses also expose a bounded, collapsible tree view.
-- OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components and same-source-directory external refs, parameters, JSON bodies, response examples and auth placeholders.
-- OpenAPI import accepts local files or explicit HTTP(S) URLs with a bounded download and source-preserving report.
+- OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, same-source-directory external refs and bounded remote HTTP(S) refs, parameters, JSON bodies, response examples and auth placeholders.
+- OpenAPI import accepts local files or explicit HTTP(S) URLs with bounded root/reference downloads and a source-preserving report; remote references are cached per import and cycles remain visible as warnings.
 - Native collections export to OpenAPI 3.0 JSON/YAML with operation paths,
   parameters, request bodies, common security schemes, response examples and
   explicit x-postly-* warnings/extensions for lossy or non-standard cases.
@@ -223,7 +223,7 @@ Not yet implemented:
   gRPC PKCS#12 remains open.
   gRPC custom PEM CA/client identity and SOCKS5 routing are available in CLI
   and GUI.
-- OpenAPI cyclic/remote references, richer schema generation beyond the current composed/format-aware samples and deeper protocol-specific GUI tooling.
+- OpenAPI richer schema generation beyond the current composed/format-aware samples and deeper protocol-specific GUI tooling; remote references are bounded but still need broader corpus coverage.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
   cross-client/memory benchmarks and production release validation beyond the
   local package smoke checks.
@@ -279,7 +279,9 @@ published as a GitHub Release with the validated archive and installation
 notes. It is intentionally not presented as notarized, cross-platform or
 production-ready; those release gates remain explicit.
 
-The OpenAPI export slice is covered by a native JSON/YAML serialization test
+The OpenAPI import slice now also resolves bounded remote references from local
+files and URL documents, with local loopback server tests covering relative and
+absolute HTTP references. The OpenAPI export slice is covered by a native JSON/YAML serialization test
 and a real CLI smoke run from a temporary workspace; operation paths, server
 variables, security metadata and request/response examples were inspected.
 

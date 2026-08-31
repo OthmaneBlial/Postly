@@ -51,7 +51,8 @@ pub use http::{
 pub use import::{import_dotenv, import_environment, import_postman_collection, ImportReport};
 pub use model::*;
 pub use openapi::{
-    export_openapi_collection, import_openapi, import_openapi_text, OpenApiExportError,
+    export_openapi_collection, import_openapi, import_openapi_text,
+    import_openapi_text_with_remote_refs, import_openapi_with_remote_refs, OpenApiExportError,
     OpenApiExportReport, OpenApiImportError, OpenApiImportReport,
 };
 pub use runner::{

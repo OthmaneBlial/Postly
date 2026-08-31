@@ -3438,10 +3438,15 @@ async fn import_openapi_source(
         .map(|url| matches!(url.scheme(), "http" | "https"))
         .unwrap_or(false);
     if !is_http_url {
-        return Ok(postly_core::import_openapi(input, output)?);
+        return Ok(postly_core::import_openapi_with_remote_refs(input, output).await?);
     }
 
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .context("could not build the bounded OpenAPI HTTP client")?;
+    let mut response = client
         .get(&input_label)
         .send()
         .await
@@ -3456,15 +3461,22 @@ async fn import_openapi_source(
     {
         bail!("OpenAPI URL response exceeds {MAX_OPENAPI_DOWNLOAD_BYTES} bytes");
     }
-    let bytes = response
-        .bytes()
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .context("could not read OpenAPI URL response")?;
-    if bytes.len() > MAX_OPENAPI_DOWNLOAD_BYTES {
-        bail!("OpenAPI URL response exceeds {MAX_OPENAPI_DOWNLOAD_BYTES} bytes");
+        .context("could not read OpenAPI URL response")?
+    {
+        if bytes.len().saturating_add(chunk.len()) > MAX_OPENAPI_DOWNLOAD_BYTES {
+            bail!("OpenAPI URL response exceeds {MAX_OPENAPI_DOWNLOAD_BYTES} bytes");
+        }
+        bytes.extend_from_slice(&chunk);
     }
-    let text = String::from_utf8(bytes.to_vec()).context("OpenAPI URL response is not UTF-8")?;
-    Ok(postly_core::import_openapi_text(input, &text, output)?)
+    let text = String::from_utf8(bytes).context("OpenAPI URL response is not UTF-8")?;
+    Ok(
+        postly_core::import_openapi_text_with_remote_refs(input, &input_label, &text, output)
+            .await?,
+    )
 }
 
 fn export_command(kind: ExportKind) -> Result<()> {

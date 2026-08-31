@@ -13,10 +13,13 @@ postly list ./project
 ~~~
 
 HTTP(S) imports are explicit network reads performed by the CLI, capped at
-16 MiB and labeled with the source URL in the JSON report. URL documents may
-be JSON or YAML; the importer detects YAML when JSON parsing is not applicable.
-Downloaded documents are imported as local project files and are not kept as a
-remote dependency.
+16 MiB for the root document and labeled with the source URL in the JSON
+report. URL documents may be JSON or YAML; the importer detects YAML when JSON
+parsing is not applicable. `$ref` documents reached from a local or URL import
+are also resolved over HTTP(S), with a 15-second timeout, at most five
+redirects, 16 MiB per document and 32 remote documents per import. Downloaded
+documents are imported as local project files and are not kept as a remote
+dependency.
 
 The importer creates one request per local HTTP operation, using the first
 server, operation IDs, tags as folders, path/query/header/cookie parameters,
@@ -28,8 +31,10 @@ collection variables. Parameters without an
 example/default remain explicit `{{variable}}` placeholders and are reported
 as warnings rather than silently invented.
 
-The JSON report is part of the migration artifact. Cyclic graphs, remote or
-out-of-source `$ref` targets, OAuth coordination, binary/multipart body
+The JSON report is part of the migration artifact. Cyclic graphs are detected
+and left unresolved with a warning. Local relative references cannot escape
+the source directory, and remote references accept only HTTP(S) URLs within
+the bounded fetch policy. OAuth coordination, binary/multipart body
 generation and OpenAPI 2/Swagger documents still require manual review or a
 future milestone.
 

@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
 };
@@ -7,6 +7,7 @@ use std::{
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use thiserror::Error;
+use url::Url;
 
 use crate::{
     model::{ApiKeyLocation, Auth, Collection, HeaderEntry, KeyValue, Request, RequestBody},
@@ -16,6 +17,8 @@ use crate::{
 const HTTP_METHODS: [&str; 8] = [
     "get", "post", "put", "patch", "delete", "head", "options", "trace",
 ];
+const MAX_OPENAPI_REMOTE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_OPENAPI_REMOTE_DOCUMENTS: usize = 32;
 
 #[derive(Debug, Error)]
 pub enum OpenApiImportError {
@@ -28,6 +31,8 @@ pub enum OpenApiImportError {
     Json(#[from] serde_json::Error),
     #[error("invalid OpenAPI YAML: {0}")]
     Yaml(#[from] serde_yaml::Error),
+    #[error("could not fetch OpenAPI reference {url}: {message}")]
+    RemoteReference { url: String, message: String },
     #[error("OpenAPI document is not an object")]
     NotAnObject,
     #[error("unsupported or missing OpenAPI version: {0}")]
@@ -80,6 +85,31 @@ pub fn import_openapi(
     import_openapi_text(&input_path, &text, output_directory)
 }
 
+/// Import a local OpenAPI document while resolving absolute HTTP(S) `$ref`
+/// documents with the same bounded remote loader used for URL imports.
+pub async fn import_openapi_with_remote_refs(
+    input_path: impl AsRef<Path>,
+    output_directory: impl AsRef<Path>,
+) -> Result<OpenApiImportReport, OpenApiImportError> {
+    let input_path = input_path.as_ref().to_path_buf();
+    let text = fs::read_to_string(&input_path).map_err(|source| OpenApiImportError::Io {
+        path: input_path.clone(),
+        source,
+    })?;
+    let document = parse_document(&input_path, &text)?;
+    let mut warnings = Vec::new();
+    let mut remote_documents = HashMap::new();
+    prefetch_remote_references(&document, None, &mut remote_documents).await?;
+    let source = input_path.canonicalize().ok().map(ReferenceSource::Local);
+    let document = expand_references_with_sources(
+        &document,
+        source.as_ref(),
+        &remote_documents,
+        &mut warnings,
+    );
+    import_openapi_document(document, input_path, output_directory, warnings)
+}
+
 /// Import an OpenAPI document already fetched by a caller, preserving the
 /// source label in the migration report. This is used by the CLI's explicit
 /// URL import path and keeps document parsing independent from network I/O.
@@ -92,6 +122,50 @@ pub fn import_openapi_text(
     let document = parse_document(&input_path, text)?;
     let mut warnings = Vec::new();
     let document = expand_references(&document, &input_path, &mut warnings);
+    import_openapi_document(document, input_path, output_directory, warnings)
+}
+
+/// Import an OpenAPI document with bounded HTTP(S) resolution for remote
+/// `$ref` documents. The caller must pass the URL used to fetch `text` so
+/// relative references can be resolved against the remote document's URL.
+pub async fn import_openapi_text_with_remote_refs(
+    source: impl AsRef<Path>,
+    source_url: &str,
+    text: &str,
+    output_directory: impl AsRef<Path>,
+) -> Result<OpenApiImportReport, OpenApiImportError> {
+    let input_path = source.as_ref().to_path_buf();
+    let base_url = Url::parse(source_url).map_err(|error| OpenApiImportError::RemoteReference {
+        url: source_url.to_owned(),
+        message: format!("invalid base URL: {error}"),
+    })?;
+    if !matches!(base_url.scheme(), "http" | "https") {
+        return Err(OpenApiImportError::RemoteReference {
+            url: source_url.to_owned(),
+            message: "only http:// and https:// URLs are supported".to_owned(),
+        });
+    }
+    let document = parse_document(&input_path, text)?;
+    let mut warnings = Vec::new();
+    let mut remote_documents = HashMap::new();
+    remote_documents.insert(base_url.to_string(), document.clone());
+    prefetch_remote_references(&document, Some(&base_url), &mut remote_documents).await?;
+    let remote_source = ReferenceSource::Remote(base_url.to_string());
+    let document = expand_references_with_sources(
+        &document,
+        Some(&remote_source),
+        &remote_documents,
+        &mut warnings,
+    );
+    import_openapi_document(document, input_path, output_directory, warnings)
+}
+
+fn import_openapi_document(
+    document: Value,
+    input_path: PathBuf,
+    output_directory: impl AsRef<Path>,
+    mut warnings: Vec<String>,
+) -> Result<OpenApiImportReport, OpenApiImportError> {
     let root = document
         .as_object()
         .ok_or(OpenApiImportError::NotAnObject)?;
@@ -1011,10 +1085,27 @@ fn parse_document(path: &Path, text: &str) -> Result<Value, OpenApiImportError> 
     }
 }
 
+#[derive(Clone, Debug)]
+enum ReferenceSource {
+    Local(PathBuf),
+    Remote(String),
+}
+
 fn expand_references(document: &Value, source: &Path, warnings: &mut Vec<String>) -> Value {
+    let source = source.canonicalize().ok().map(ReferenceSource::Local);
+    expand_references_with_sources(document, source.as_ref(), &HashMap::new(), warnings)
+}
+
+fn expand_references_with_sources(
+    document: &Value,
+    source: Option<&ReferenceSource>,
+    remote_documents: &HashMap<String, Value>,
+    warnings: &mut Vec<String>,
+) -> Value {
     struct Resolver<'a> {
         source_root: Option<PathBuf>,
         documents: HashMap<PathBuf, Value>,
+        remote_documents: &'a HashMap<String, Value>,
         warnings: &'a mut Vec<String>,
     }
 
@@ -1023,7 +1114,7 @@ fn expand_references(document: &Value, source: &Path, warnings: &mut Vec<String>
             &mut self,
             value: &Value,
             document: &Value,
-            source: Option<&Path>,
+            source: Option<&ReferenceSource>,
             stack: &mut Vec<String>,
         ) -> Value {
             let Value::Object(object) = value else {
@@ -1043,16 +1134,13 @@ fn expand_references(document: &Value, source: &Path, warnings: &mut Vec<String>
                 let (target_document, target_source, reference_key) = if path_part.is_empty() {
                     (
                         document.clone(),
-                        source.map(Path::to_path_buf),
+                        source.cloned(),
                         format!("{}#{fragment}", source_label(source)),
                     )
-                } else if let Some((path, loaded)) = self.load_external_document(source, path_part)
+                } else if let Some((loaded_source, loaded, reference_key)) =
+                    self.load_external_document(source, path_part, fragment)
                 {
-                    (
-                        loaded,
-                        Some(path.clone()),
-                        format!("{}#{fragment}", path.display()),
-                    )
+                    (loaded, Some(loaded_source), reference_key)
                 } else {
                     return self.expand_object(object, document, source, stack);
                 };
@@ -1076,7 +1164,7 @@ fn expand_references(document: &Value, source: &Path, warnings: &mut Vec<String>
                 if let Some(target) = target {
                     stack.push(reference_key);
                     let expanded_target =
-                        self.expand(target, &target_document, target_source.as_deref(), stack);
+                        self.expand(target, &target_document, target_source.as_ref(), stack);
                     stack.pop();
                     if let Value::Object(mut resolved) = expanded_target {
                         for (key, value) in object {
@@ -1100,7 +1188,7 @@ fn expand_references(document: &Value, source: &Path, warnings: &mut Vec<String>
             &mut self,
             object: &Map<String, Value>,
             document: &Value,
-            source: Option<&Path>,
+            source: Option<&ReferenceSource>,
             stack: &mut Vec<String>,
         ) -> Value {
             Value::Object(
@@ -1113,90 +1201,281 @@ fn expand_references(document: &Value, source: &Path, warnings: &mut Vec<String>
 
         fn load_external_document(
             &mut self,
-            source: Option<&Path>,
+            source: Option<&ReferenceSource>,
             reference_path: &str,
-        ) -> Option<(PathBuf, Value)> {
-            let Some(source) = source else {
-                self.warnings.push(format!(
-                    "OpenAPI reference {reference_path} is external and has no local source file."
-                ));
-                return None;
-            };
-            let path = Path::new(reference_path);
-            if path.is_absolute() || reference_path.starts_with("file:") {
+            fragment: &str,
+        ) -> Option<(ReferenceSource, Value, String)> {
+            if reference_path.starts_with("file:") {
                 self.warnings.push(format!(
                     "OpenAPI reference {reference_path} is an absolute path and was rejected."
                 ));
                 return None;
             }
-            if reference_path.starts_with("http://") || reference_path.starts_with("https://") {
-                self.warnings.push(format!(
-                    "OpenAPI reference {reference_path} is a remote URL and needs manual review."
-                ));
-                return None;
-            }
-            let Some(source_root) = self.source_root.as_deref() else {
-                self.warnings.push(format!(
-                    "OpenAPI reference {reference_path} has no local source root."
-                ));
-                return None;
-            };
-            let candidate = source.parent().unwrap_or(source_root).join(path);
-            let Ok(canonical) = fs::canonicalize(&candidate) else {
-                self.warnings.push(format!(
-                    "OpenAPI reference {reference_path} does not resolve to a local file."
-                ));
-                return None;
-            };
-            if !canonical.starts_with(source_root) {
-                self.warnings.push(format!(
-                    "OpenAPI reference {reference_path} points outside the source directory and was rejected."
-                ));
-                return None;
-            }
-            if let Some(document) = self.documents.get(&canonical) {
-                return Some((canonical, document.clone()));
-            }
-            let text = match fs::read_to_string(&canonical) {
-                Ok(text) => text,
-                Err(error) => {
+            if let Ok(url) = Url::parse(reference_path) {
+                if !matches!(url.scheme(), "http" | "https") {
                     self.warnings.push(format!(
-                        "OpenAPI reference {reference_path} could not be read: {error}."
+                        "OpenAPI reference {reference_path} uses an unsupported URL scheme."
                     ));
                     return None;
                 }
-            };
-            let document = match parse_document(&canonical, &text) {
-                Ok(document) => document,
-                Err(error) => {
-                    self.warnings.push(format!(
-                        "OpenAPI reference {reference_path} is invalid: {error}."
-                    ));
-                    return None;
+                return self.load_remote_document(url, fragment);
+            }
+
+            match source {
+                Some(ReferenceSource::Remote(base_url)) => {
+                    let Ok(base_url) = Url::parse(base_url) else {
+                        self.warnings.push(format!(
+                            "OpenAPI reference {reference_path} has an invalid remote source URL."
+                        ));
+                        return None;
+                    };
+                    let Ok(url) = base_url.join(reference_path) else {
+                        self.warnings.push(format!(
+                            "OpenAPI reference {reference_path} is not a valid remote URL."
+                        ));
+                        return None;
+                    };
+                    self.load_remote_document(url, fragment)
                 }
+                Some(ReferenceSource::Local(source_path)) => {
+                    let path = Path::new(reference_path);
+                    if path.is_absolute() {
+                        self.warnings.push(format!(
+                            "OpenAPI reference {reference_path} is an absolute path and was rejected."
+                        ));
+                        return None;
+                    }
+                    let Some(source_root) = self.source_root.as_deref() else {
+                        self.warnings.push(format!(
+                            "OpenAPI reference {reference_path} has no local source root."
+                        ));
+                        return None;
+                    };
+                    let candidate = source_path.parent().unwrap_or(source_root).join(path);
+                    let Ok(canonical) = fs::canonicalize(&candidate) else {
+                        self.warnings.push(format!(
+                            "OpenAPI reference {reference_path} does not resolve to a local file."
+                        ));
+                        return None;
+                    };
+                    if !canonical.starts_with(source_root) {
+                        self.warnings.push(format!(
+                            "OpenAPI reference {reference_path} points outside the source directory and was rejected."
+                        ));
+                        return None;
+                    }
+                    if let Some(document) = self.documents.get(&canonical) {
+                        return Some((
+                            ReferenceSource::Local(canonical.clone()),
+                            document.clone(),
+                            format!("{}#{fragment}", canonical.display()),
+                        ));
+                    }
+                    let text = match fs::read_to_string(&canonical) {
+                        Ok(text) => text,
+                        Err(error) => {
+                            self.warnings.push(format!(
+                                "OpenAPI reference {reference_path} could not be read: {error}."
+                            ));
+                            return None;
+                        }
+                    };
+                    let document = match parse_document(&canonical, &text) {
+                        Ok(document) => document,
+                        Err(error) => {
+                            self.warnings.push(format!(
+                                "OpenAPI reference {reference_path} is invalid: {error}."
+                            ));
+                            return None;
+                        }
+                    };
+                    self.documents.insert(canonical.clone(), document.clone());
+                    Some((
+                        ReferenceSource::Local(canonical.clone()),
+                        document,
+                        format!("{}#{fragment}", canonical.display()),
+                    ))
+                }
+                None => {
+                    self.warnings.push(format!(
+                        "OpenAPI reference {reference_path} is external and has no local source file."
+                    ));
+                    None
+                }
+            }
+        }
+
+        fn load_remote_document(
+            &mut self,
+            url: Url,
+            fragment: &str,
+        ) -> Option<(ReferenceSource, Value, String)> {
+            let key = url.to_string();
+            let Some(document) = self.remote_documents.get(&key) else {
+                self.warnings.push(format!(
+                    "OpenAPI remote reference {url} was not fetched and was left unresolved."
+                ));
+                return None;
             };
-            self.documents.insert(canonical.clone(), document.clone());
-            Some((canonical, document))
+            Some((
+                ReferenceSource::Remote(key.clone()),
+                document.clone(),
+                format!("{key}#{fragment}"),
+            ))
         }
     }
 
-    let source = source.canonicalize().ok();
-    let source_root = source
-        .as_deref()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf);
+    let source_root = source.and_then(|source| match source {
+        ReferenceSource::Local(path) => path.parent().map(Path::to_path_buf),
+        ReferenceSource::Remote(_) => None,
+    });
     let mut resolver = Resolver {
         source_root,
         documents: HashMap::new(),
+        remote_documents,
         warnings,
     };
-    resolver.expand(document, document, source.as_deref(), &mut Vec::new())
+    resolver.expand(document, document, source, &mut Vec::new())
 }
 
-fn source_label(source: Option<&Path>) -> String {
-    source
-        .map(|source| source.display().to_string())
-        .unwrap_or_else(|| "<inline>".to_owned())
+fn source_label(source: Option<&ReferenceSource>) -> String {
+    match source {
+        Some(ReferenceSource::Local(source)) => source.display().to_string(),
+        Some(ReferenceSource::Remote(source)) => source.clone(),
+        None => "<inline>".to_owned(),
+    }
+}
+
+fn collect_remote_reference_urls(value: &Value, base_url: Option<&Url>, urls: &mut Vec<Url>) {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                collect_remote_reference_urls(value, base_url, urls);
+            }
+        }
+        Value::Object(object) => {
+            if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+                let (path_part, _) = reference.split_once('#').unwrap_or((reference, ""));
+                if !path_part.is_empty() {
+                    if let Ok(url) = Url::parse(path_part) {
+                        if matches!(url.scheme(), "http" | "https") {
+                            urls.push(url);
+                        }
+                    } else if let Some(base_url) = base_url {
+                        if let Ok(url) = base_url.join(path_part) {
+                            if matches!(url.scheme(), "http" | "https") {
+                                urls.push(url);
+                            }
+                        }
+                    }
+                }
+            }
+            for value in object.values() {
+                collect_remote_reference_urls(value, base_url, urls);
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn prefetch_remote_references(
+    document: &Value,
+    base_url: Option<&Url>,
+    remote_documents: &mut HashMap<String, Value>,
+) -> Result<(), OpenApiImportError> {
+    let mut queue = VecDeque::new();
+    let mut queued = HashSet::new();
+    let mut initial = Vec::new();
+    collect_remote_reference_urls(document, base_url, &mut initial);
+    for url in initial {
+        if queued.insert(url.to_string()) {
+            queue.push_back(url);
+        }
+    }
+
+    while let Some(url) = queue.pop_front() {
+        let key = url.to_string();
+        if remote_documents.contains_key(&key) {
+            continue;
+        }
+        if remote_documents.len() >= MAX_OPENAPI_REMOTE_DOCUMENTS {
+            return Err(OpenApiImportError::RemoteReference {
+                url: key,
+                message: format!(
+                    "remote reference limit of {MAX_OPENAPI_REMOTE_DOCUMENTS} documents exceeded"
+                ),
+            });
+        }
+        let document = fetch_remote_document(&url).await?;
+        let mut nested = Vec::new();
+        collect_remote_reference_urls(&document, Some(&url), &mut nested);
+        remote_documents.insert(key, document);
+        for nested_url in nested {
+            if queued.insert(nested_url.to_string()) {
+                queue.push_back(nested_url);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn fetch_remote_document(url: &Url) -> Result<Value, OpenApiImportError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|error| OpenApiImportError::RemoteReference {
+            url: url.to_string(),
+            message: error.to_string(),
+        })?;
+    let mut response = client.get(url.clone()).send().await.map_err(|error| {
+        OpenApiImportError::RemoteReference {
+            url: url.to_string(),
+            message: error.to_string(),
+        }
+    })?;
+    if !response.status().is_success() {
+        return Err(OpenApiImportError::RemoteReference {
+            url: url.to_string(),
+            message: format!("server returned HTTP {}", response.status()),
+        });
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_OPENAPI_REMOTE_BYTES as u64)
+    {
+        return Err(OpenApiImportError::RemoteReference {
+            url: url.to_string(),
+            message: format!("response exceeds {MAX_OPENAPI_REMOTE_BYTES} bytes"),
+        });
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) =
+        response
+            .chunk()
+            .await
+            .map_err(|error| OpenApiImportError::RemoteReference {
+                url: url.to_string(),
+                message: error.to_string(),
+            })?
+    {
+        if bytes.len().saturating_add(chunk.len()) > MAX_OPENAPI_REMOTE_BYTES {
+            return Err(OpenApiImportError::RemoteReference {
+                url: url.to_string(),
+                message: format!("response exceeds {MAX_OPENAPI_REMOTE_BYTES} bytes"),
+            });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let text = String::from_utf8(bytes).map_err(|error| OpenApiImportError::RemoteReference {
+        url: url.to_string(),
+        message: format!("response is not UTF-8: {error}"),
+    })?;
+    let source = PathBuf::from(url.path());
+    parse_document(&source, &text).map_err(|error| OpenApiImportError::RemoteReference {
+        url: url.to_string(),
+        message: error.to_string(),
+    })
 }
 
 fn resolve_server(
@@ -2068,6 +2347,142 @@ components:
             other => panic!("expected resolved JSON body, got {other:?}"),
         }
         fs::remove_file(outside).expect("cleanup outside schema");
+    }
+
+    #[tokio::test]
+    async fn imports_bounded_remote_openapi_references() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let output = tempfile::tempdir().expect("output");
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("remote reference request");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut buffer).await.expect("request bytes");
+                assert!(read > 0, "remote reference client closed early");
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let request = String::from_utf8_lossy(&request);
+            assert!(request.starts_with("GET /components.yaml HTTP/1.1"));
+            let body = br#"components:
+  schemas:
+    User:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Ada
+"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/yaml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("response headers");
+            stream.write_all(body).await.expect("response body");
+        });
+
+        let source_url = format!("http://{address}/openapi.yaml");
+        let root = r#"openapi: 3.0.3
+info:
+  title: Remote API
+servers:
+  - url: https://api.example.test
+paths:
+  /users:
+    post:
+      operationId: createUser
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: ./components.yaml#/components/schemas/User
+"#;
+        let report = import_openapi_text_with_remote_refs(
+            Path::new("remote.openapi.yaml"),
+            &source_url,
+            root,
+            output.path(),
+        )
+        .await
+        .expect("remote import");
+        assert_eq!(report.imported_operations, 1);
+        assert!(report.warnings.is_empty());
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let collections = workspace.collections().expect("collections");
+        let requests = workspace.requests(&collections[0]).expect("requests");
+        match &requests[0].1.body {
+            RequestBody::Json { value } => assert_eq!(value["name"], "Ada"),
+            other => panic!("expected JSON body, got {other:?}"),
+        }
+        server.await.expect("remote server");
+    }
+
+    #[tokio::test]
+    async fn local_openapi_can_resolve_absolute_remote_references() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let source = tempfile::tempdir().expect("source");
+        let output = tempfile::tempdir().expect("output");
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("remote reference request");
+            let mut request = [0_u8; 4096];
+            let read = stream.read(&mut request).await.expect("request bytes");
+            assert!(String::from_utf8_lossy(&request[..read])
+                .starts_with("GET /components.yaml HTTP/1.1"));
+            let body = br#"components:
+  schemas:
+    Health:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("response headers");
+            stream.write_all(body).await.expect("response body");
+        });
+
+        let root = source.path().join("openapi.yaml");
+        fs::write(
+            &root,
+            format!(
+                "openapi: 3.0.3\ninfo:\n  title: Local root\nservers:\n  - url: https://api.example.test\npaths:\n  /health:\n    get:\n      operationId: health\n      requestBody:\n        content:\n          application/json:\n            schema:\n              $ref: http://{address}/components.yaml#/components/schemas/Health\n"
+            ),
+        )
+        .expect("root document");
+
+        let report = import_openapi_with_remote_refs(&root, output.path())
+            .await
+            .expect("local remote import");
+        assert_eq!(report.imported_operations, 1);
+        assert!(report.warnings.is_empty());
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let collections = workspace.collections().expect("collections");
+        let requests = workspace.requests(&collections[0]).expect("requests");
+        match &requests[0].1.body {
+            RequestBody::Json { value } => assert_eq!(value["ok"], true),
+            other => panic!("expected JSON body, got {other:?}"),
+        }
+        server.await.expect("remote server");
     }
 
     #[test]

@@ -34,7 +34,7 @@ and manual-review cases remain visible in the report.
 | collection runner | HTTP slice with iteration data, reporters, folder selection and bounded script-free concurrency; scripts/delays remain sequential | CLI run and local runner concurrency test |
 | Local API documentation | deterministic Markdown generator with default redaction | core documentation tests and CLI command |
 | cURL interoperability | common import plus native GUI paste and shell-quoted export | parser/exporter tests, GUI draft test and CLI round-trip |
-| OpenAPI 3.0/3.1 import | JSON/YAML operations plus same-source-directory local `$ref` resolution and response examples | OpenAPI fixtures and importer tests |
+| OpenAPI 3.0/3.1 import | JSON/YAML operations plus same-source-directory local `$ref`, bounded remote HTTP(S) `$ref` resolution and response examples | OpenAPI fixtures, loopback remote-reference tests and importer tests |
 | OpenAPI 3.0 export | Native HTTP collections export paths, parameters, bodies, common auth and response examples to JSON/YAML; custom methods and gRPC remain explicit extensions | OpenAPI exporter JSON/YAML tests |
 | GraphQL | structured core/CLI/GUI request editing and HTTP slice; CLI and GUI schema introspection explorer | GraphQL model, schema parser, GUI validation and local HTTP integration tests |
 | Server-Sent Events | CLI and native GUI streaming slice with cancellation and bounded reconnects using `Last-Event-ID` | chunked parser tests, local streaming/reconnect CLI integration tests and GUI worker/cancellation/reconnect tests |
