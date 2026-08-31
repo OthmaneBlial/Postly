@@ -1,0 +1,82 @@
+{
+  "info": {
+    "name": "Postly body and URL variants fixture",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Sanitized coverage for supported raw, form and structured URL shapes."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://api.example.test" },
+    { "key": "userId", "value": "42" }
+  ],
+  "item": [
+    {
+      "name": "JavaScript webhook",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/hooks",
+        "description": "Sends a small JavaScript payload.",
+        "header": [
+          { "key": "Content-Type", "value": "text/javascript" },
+          { "key": "X-Trace", "value": "fixture" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "export const event = 'created';",
+          "options": { "raw": { "language": "javascript" } }
+        }
+      }
+    },
+    {
+      "name": "Multipart metadata",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/metadata",
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "name", "value": "Ada", "type": "text", "contentType": "text/plain" },
+            { "key": "role", "value": "admin", "type": "text" },
+            { "key": "ignored", "value": "disabled", "type": "text", "disabled": true }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Encoded search",
+      "request": {
+        "method": "GET",
+        "url": {
+          "protocol": "https",
+          "host": ["api", "example", "test"],
+          "path": ["search"],
+          "query": [
+            { "key": "q", "value": "Ada Lovelace" },
+            { "key": "page", "value": 1 },
+            { "key": "debug", "value": "true", "disabled": true }
+          ]
+        },
+        "header": [{ "key": "Accept", "value": "application/json" }]
+      }
+    },
+    {
+      "name": "Structured bearer request",
+      "request": {
+        "method": "PATCH",
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": "api.example.test",
+          "path": "users/{{userId}}"
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\"active\":true}",
+          "options": { "raw": { "language": "json" } }
+        }
+      }
+    }
+  ]
+}

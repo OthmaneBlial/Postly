@@ -20,6 +20,8 @@ Implemented:
 - Postman Collection v2.1 and environment import reports.
 - Postman Collection v2.1 and environment export with a tested native round-trip.
 - Postman importer regression fixture for structured URLs, disabled/non-text values, form bodies, file parts, API-key query auth and GraphQL review warnings.
+- Postman importer fixture for supported JavaScript raw bodies, text multipart
+  fields, encoded query values and structured bearer requests.
 - Postman import now preserves scalar header values, marks unsupported auth types
   as manual-review requests (including inherited auth), and exercises JSON/HTML
   raw bodies in the expanded variant fixture.
