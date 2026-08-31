@@ -27,6 +27,18 @@
       }
     },
     {
+      "name": "Header-inferred JSON",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/events",
+        "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"event\":\"created\",\"attempt\":1}"
+        }
+      }
+    },
+    {
       "name": "Multipart metadata",
       "request": {
         "method": "POST",

@@ -570,7 +570,12 @@ fn parse_request(
     request.cookies = parse_pairs(value.get("cookie"));
     let parsed_auth = parse_auth(value.get("auth"), name, report);
     request.auth = parsed_auth.auth;
-    request.body = parse_body(name, value.get("body"), report);
+    let request_content_type = request
+        .headers
+        .iter()
+        .find(|header| header.key.eq_ignore_ascii_case("content-type"))
+        .map(|header| header.value.as_str());
+    request.body = parse_body(name, value.get("body"), request_content_type, report);
     (request, parsed_auth.requires_review)
 }
 
@@ -675,7 +680,12 @@ fn parse_url(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn parse_body(name: &str, value: Option<&Value>, report: &mut ImportReport) -> RequestBody {
+fn parse_body(
+    name: &str,
+    value: Option<&Value>,
+    request_content_type: Option<&str>,
+    report: &mut ImportReport,
+) -> RequestBody {
     let Some(body) = value else {
         return RequestBody::None;
     };
@@ -695,8 +705,12 @@ fn parse_body(name: &str, value: Option<&Value>, report: &mut ImportReport) -> R
                     "xml" => "application/xml".to_owned(),
                     "html" => "text/html".to_owned(),
                     _ => format!("text/{language}"),
-                });
-            if content_type.as_deref() == Some("application/json") {
+                })
+                .or_else(|| request_content_type.map(normalize_content_type));
+            if content_type
+                .as_deref()
+                .is_some_and(|value| value == "application/json" || value.ends_with("+json"))
+            {
                 if let Ok(value) = serde_json::from_str(&text) {
                     return RequestBody::Json { value };
                 }
@@ -811,6 +825,15 @@ fn parse_body(name: &str, value: Option<&Value>, report: &mut ImportReport) -> R
             }
         }
     }
+}
+
+fn normalize_content_type(value: &str) -> String {
+    value
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
 }
 
 fn parse_pairs(value: Option<&Value>) -> Vec<KeyValue> {
@@ -1521,13 +1544,21 @@ TOKEN='last value'
             .join("../../compat/postman-import/body-and-url-variants-v2.1.json");
 
         let report = import_postman_collection(&fixture, output.path()).expect("import");
-        assert_eq!(report.imported_requests, 5);
-        assert_eq!(report.fully_supported_requests, 5);
+        assert_eq!(report.imported_requests, 6);
+        assert_eq!(report.fully_supported_requests, 6);
         assert_eq!(report.manual_review_requests, 0);
 
         let workspace = Workspace::open(output.path()).expect("workspace");
         let collection = workspace.collections().expect("collections").remove(0);
         let requests = workspace.requests(&collection).expect("requests");
+        let request = requests
+            .iter()
+            .find(|(_, request)| request.name == "Header-inferred JSON")
+            .expect("header-inferred JSON request");
+        match &request.1.body {
+            RequestBody::Json { value } => assert_eq!(value["event"], "created"),
+            other => panic!("expected JSON body, got {other:?}"),
+        }
         let request = requests
             .iter()
             .find(|(_, request)| request.name == "Port and fragment")
