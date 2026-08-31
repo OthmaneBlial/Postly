@@ -15,7 +15,7 @@ Implemented:
 - Native async HTTP execution with common body/auth/header/query behavior.
 - Custom PEM CA bundles and combined PEM client identities in the shared HTTP engine and CLI workflows, with actionable file/format diagnostics and local HTTPS/mTLS integration tests.
 - Basic, Bearer, API-key, OAuth 2.0 Client Credentials, Authorization Code + PKCE (explicit exchange and loopback browser callback), Refresh Token, Device Authorization Grant and buffered AWS Signature V4 signing in the native model, GUI, CLI, Postman import/export and shared HTTP engine, with bounded approval polling, in-memory expiry-aware token caching and local token-exchange/browser-callback/SigV4 integration tests.
-- Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, plus CLI/GUI WebSocket SOCKS5 and gRPC HTTP CONNECT routing, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass/relay tests.
+- Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, plus CLI/GUI WebSocket and gRPC SOCKS5/HTTP CONNECT routing, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass/relay tests.
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
 - Postman Collection v2.1 and environment export with a tested native round-trip.
@@ -153,7 +153,7 @@ Not yet implemented:
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
 - transactional workspace restore and broader multi-document crash recovery.
-- Encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in CLI and GUI, while SOCKS gRPC routing remains unsupported.
+- Encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association and explicit insecure TLS remain open; gRPC custom PEM CA/client identity and SOCKS5 routing are now available in CLI and GUI.
 - OpenAPI cyclic/remote references, richer schema generation and deeper protocol-specific GUI tooling.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
   cross-client/memory benchmarks and deeper packaging/release validation.
@@ -175,9 +175,9 @@ CLI and GUI gRPC proxy tests complete a real HTTP CONNECT tunnel and relay
 HTTP/2 traffic.
 
 `cargo xtask check` is the required validation command for this milestone. The CLI was exercised against deterministic local HTTP servers: a real JSON response was received and formatted, then a saved request created with new request was sent and run with structured JSON output. Iteration data was exercised twice through JSON and JUnit reporters, an environment created with env set resolved two variables into a saved request, a cURL command was imported and sent with HTTP 201, OpenAPI YAML generated two requests, an OpenAPI YAML document was fetched from a local HTTP URL, same-directory external references were resolved while source traversal and cycles were reported, an imported Postman test executed through the opt-in Node bridge, a two-request cookie exchange verified jar reuse plus response metadata, a manual cookie round-trip verified the ignored local jar and file-size guard, a GraphQL query with variables was sent through the structured CLI command, an SSE stream was decoded progressively from a local endpoint and reconnected with `Last-Event-ID`, WebSocket echo and bounded reconnect tests completed real handshake/send/receive/close cycles, gRPC unary/server/client/bidirectional calls completed against a local tonic HTTP/2 server and a separate local mutual-TLS gRPC call verified custom CA plus client identity, OAuth 2.0 Client Credentials fetched one cached token for two API requests, a local Device Authorization flow completed device-code prompting, pending polling and bearer delivery, and a local Authorization Code + PKCE flow completed browser URL construction, state-checked loopback callback, token exchange and bearer delivery, history filters/clear/retention were tested, workspace metadata search was exercised across collections without matching secrets, and a native collection was exported and imported back with its request semantics. The CLI mock router is covered by unit tests for method/path matching, query omission, saved status/body/delay and generic 404 behavior. The HTTP core also completes local encrypted HTTPS with a custom CA and mutual TLS with a client identity, while invalid certificate paths/material fail before network I/O. The native app has state tests for JSON/auth/GraphQL/OAuth/script editing, workspace search, async local HTTP/SSE/WebSocket workers, bounded event/message history, history reopen, cancellation during body/stream reads and SSE reconnection; browser callback integration is covered at the shared core and desktop opener/manual window interaction still needs manual desktop QA. The machine initially reached zero free space during a debug build; the generated Postly target directory was cleaned and subsequent validation used low-debug-info artifacts. The complete workspace check now passes locally; packaging, external review and manual desktop QA remain separate gates.
-The latest transport slice adds GUI WebSocket SOCKS5 routing with a local
-handshake/relay test; gRPC continues to use HTTP CONNECT relays, with SOCKS
-routing intentionally unsupported there.
+The latest transport slice adds shared SOCKS5 stream negotiation for CLI/GUI
+WebSocket and gRPC connectors, with local handshake/relay coverage; explicit
+SOCKS5 username/password credentials are supported.
 
 The OAuth Device Authorization slice adds RFC 8628-style device-code
 requests, safe verification prompts in the CLI/GUI, bounded polling with

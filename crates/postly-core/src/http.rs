@@ -127,6 +127,149 @@ pub enum HttpError {
     AwsSignature(String),
 }
 
+/// Open a TCP stream through a SOCKS5 proxy, keeping hostname resolution at
+/// the proxy when the target is a domain name. The resulting stream is ready
+/// for a protocol handshake such as WebSocket or gRPC.
+pub async fn connect_socks5_stream(
+    proxy: &url::Url,
+    target_host: &str,
+    target_port: u16,
+) -> Result<TcpStream, String> {
+    let proxy_host = proxy
+        .host_str()
+        .ok_or_else(|| "SOCKS proxy URL has no hostname".to_owned())?;
+    let proxy_port = proxy
+        .port_or_known_default()
+        .ok_or_else(|| "SOCKS proxy URL has no port".to_owned())?;
+    let mut socket = TcpStream::connect((proxy_host, proxy_port))
+        .await
+        .map_err(|error| format!("could not connect to SOCKS proxy: {error}"))?;
+
+    let username = proxy.username().as_bytes();
+    let password = proxy.password().unwrap_or_default().as_bytes();
+    let has_credentials = !username.is_empty();
+    if has_credentials && (username.len() > u8::MAX as usize || password.len() > u8::MAX as usize) {
+        return Err("SOCKS proxy credentials exceed 255 bytes".to_owned());
+    }
+    let mut greeting = vec![0x05, 0x01, 0x00];
+    if has_credentials {
+        greeting[1] = 0x02;
+        greeting.push(0x02);
+    }
+    socket
+        .write_all(&greeting)
+        .await
+        .map_err(|error| format!("could not write SOCKS greeting: {error}"))?;
+    let mut greeting = [0_u8; 2];
+    socket
+        .read_exact(&mut greeting)
+        .await
+        .map_err(|error| format!("could not read SOCKS greeting: {error}"))?;
+    if greeting[0] != 0x05 {
+        return Err("SOCKS proxy returned an invalid version".to_owned());
+    }
+    match greeting[1] {
+        0x00 => {}
+        0x02 if has_credentials => {
+            let mut credentials = Vec::with_capacity(3 + username.len() + password.len());
+            credentials.extend_from_slice(&[0x01, username.len() as u8]);
+            credentials.extend_from_slice(username);
+            credentials.push(password.len() as u8);
+            credentials.extend_from_slice(password);
+            socket
+                .write_all(&credentials)
+                .await
+                .map_err(|error| format!("could not write SOCKS credentials: {error}"))?;
+            let mut authentication = [0_u8; 2];
+            socket
+                .read_exact(&mut authentication)
+                .await
+                .map_err(|error| format!("could not read SOCKS credentials response: {error}"))?;
+            if authentication != [0x01, 0x00] {
+                return Err("SOCKS proxy rejected credentials".to_owned());
+            }
+        }
+        0xFF => return Err("SOCKS proxy rejected all authentication methods".to_owned()),
+        _ => return Err("SOCKS proxy selected unsupported authentication".to_owned()),
+    }
+
+    let mut connect_request = vec![0x05, 0x01, 0x00];
+    match target_host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(address)) => {
+            connect_request.push(0x01);
+            connect_request.extend_from_slice(&address.octets());
+        }
+        Ok(std::net::IpAddr::V6(address)) => {
+            connect_request.push(0x04);
+            connect_request.extend_from_slice(&address.octets());
+        }
+        Err(_) => {
+            let host = target_host.as_bytes();
+            if host.is_empty() || host.len() > u8::MAX as usize {
+                return Err("SOCKS target hostname exceeds 255 bytes".to_owned());
+            }
+            connect_request.push(0x03);
+            connect_request.push(host.len() as u8);
+            connect_request.extend_from_slice(host);
+        }
+    }
+    connect_request.extend_from_slice(&target_port.to_be_bytes());
+    socket
+        .write_all(&connect_request)
+        .await
+        .map_err(|error| format!("could not write SOCKS connect request: {error}"))?;
+
+    let mut response = [0_u8; 4];
+    socket
+        .read_exact(&mut response)
+        .await
+        .map_err(|error| format!("could not read SOCKS connect response: {error}"))?;
+    if response[0] != 0x05 {
+        return Err("SOCKS proxy returned an invalid connect version".to_owned());
+    }
+    if response[1] != 0x00 {
+        return Err(format!(
+            "SOCKS proxy connect failed with code 0x{:02x}",
+            response[1]
+        ));
+    }
+    match response[3] {
+        0x01 => {
+            let mut address = [0_u8; 4];
+            socket
+                .read_exact(&mut address)
+                .await
+                .map_err(|error| format!("could not read SOCKS IPv4 response: {error}"))?;
+        }
+        0x03 => {
+            let mut length = [0_u8; 1];
+            socket
+                .read_exact(&mut length)
+                .await
+                .map_err(|error| format!("could not read SOCKS hostname response: {error}"))?;
+            let mut address = vec![0_u8; length[0] as usize];
+            socket
+                .read_exact(&mut address)
+                .await
+                .map_err(|error| format!("could not read SOCKS hostname response: {error}"))?;
+        }
+        0x04 => {
+            let mut address = [0_u8; 16];
+            socket
+                .read_exact(&mut address)
+                .await
+                .map_err(|error| format!("could not read SOCKS IPv6 response: {error}"))?;
+        }
+        _ => return Err("SOCKS proxy returned an invalid address type".to_owned()),
+    }
+    let mut port = [0_u8; 2];
+    socket
+        .read_exact(&mut port)
+        .await
+        .map_err(|error| format!("could not read SOCKS port response: {error}"))?;
+    Ok(socket)
+}
+
 #[derive(Debug, Clone)]
 pub struct HttpEngine {
     client: Client,
@@ -3045,6 +3188,52 @@ mod tests {
             ..EngineOptions::default()
         })
         .expect("SOCKS proxy URL should be accepted");
+    }
+
+    #[tokio::test]
+    async fn connects_a_stream_through_socks5_with_remote_hostname_resolution() {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("proxy listener");
+        let address = listener.local_addr().expect("proxy address");
+        let proxy = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("proxy connection");
+            let mut greeting = [0_u8; 3];
+            socket.read_exact(&mut greeting).await.expect("greeting");
+            assert_eq!(greeting, [0x05, 0x01, 0x00]);
+            socket
+                .write_all(&[0x05, 0x00])
+                .await
+                .expect("greeting reply");
+
+            let mut header = [0_u8; 4];
+            socket
+                .read_exact(&mut header)
+                .await
+                .expect("connect header");
+            assert_eq!(header, [0x05, 0x01, 0x00, 0x03]);
+            let mut length = [0_u8; 1];
+            socket
+                .read_exact(&mut length)
+                .await
+                .expect("hostname length");
+            let mut hostname = vec![0_u8; length[0] as usize];
+            socket.read_exact(&mut hostname).await.expect("hostname");
+            let mut port = [0_u8; 2];
+            socket.read_exact(&mut port).await.expect("port");
+            assert_eq!(hostname, b"api.example.test");
+            assert_eq!(u16::from_be_bytes(port), 443);
+            socket
+                .write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0])
+                .await
+                .expect("connect reply");
+        });
+        let proxy_url = url::Url::parse(&format!("socks5h://{address}")).expect("proxy URL");
+        let socket = connect_socks5_stream(&proxy_url, "api.example.test", 443)
+            .await
+            .expect("SOCKS stream");
+        drop(socket);
+        proxy.await.expect("proxy task");
     }
 
     #[test]

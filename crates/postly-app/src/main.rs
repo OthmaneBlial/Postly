@@ -17,13 +17,14 @@ use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
 use futures_util::{SinkExt, StreamExt};
 use hyper_util::rt::TokioIo;
 use postly_core::{
-    export_curl_command, message_from_json, message_to_json, parse_curl_command,
-    parse_graphql_response, parse_graphql_schema, run_script, schema_introspection_query,
-    ApiKeyLocation, Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions,
-    Environment, EnvironmentVariable, GraphqlSchema, GrpcRequest, GrpcSchema, HeaderEntry,
-    HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, MultipartPart,
-    OAuthDeviceCodePrompt, Request, RequestBody, RequestSearchResult, ResponseExample,
-    ResponseView, ScriptResult, SecretStore, SseEvent, SseParser, VariableContext, Workspace,
+    connect_socks5_stream, export_curl_command, message_from_json, message_to_json,
+    parse_curl_command, parse_graphql_response, parse_graphql_schema, run_script,
+    schema_introspection_query, ApiKeyLocation, Assertion, Auth, CancellationToken,
+    CollectionFiles, EngineOptions, Environment, EnvironmentVariable, GraphqlSchema, GrpcRequest,
+    GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue,
+    MultipartPart, OAuthDeviceCodePrompt, Request, RequestBody, RequestSearchResult,
+    ResponseExample, ResponseView, ScriptResult, SecretStore, SseEvent, SseParser, VariableContext,
+    Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -5265,7 +5266,7 @@ impl PostlyApp {
             )
             .changed();
         ui.label(
-            RichText::new("SOCKS URLs are supported for HTTP/SSE/WebSocket. gRPC proxying uses HTTP CONNECT; environment proxy variables are used when no explicit proxy is set for HTTP/SSE.")
+            RichText::new("SOCKS URLs are supported for HTTP/SSE/WebSocket/gRPC. Environment proxy variables are used when no explicit proxy is set for HTTP/SSE.")
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );
@@ -6439,36 +6440,36 @@ async fn connect_socks5_socket(
 ) -> Result<tokio::net::TcpStream, String> {
     let proxy_host = proxy
         .host_str()
-        .ok_or_else(|| "WebSocket SOCKS proxy URL has no hostname".to_owned())?;
+        .ok_or_else(|| "SOCKS proxy URL has no hostname".to_owned())?;
     let proxy_port = proxy
         .port_or_known_default()
-        .ok_or_else(|| "WebSocket SOCKS proxy URL has no port".to_owned())?;
+        .ok_or_else(|| "SOCKS proxy URL has no port".to_owned())?;
     let mut socket = tokio::net::TcpStream::connect((proxy_host, proxy_port))
         .await
-        .map_err(|error| format!("could not connect to WebSocket SOCKS proxy: {error}"))?;
+        .map_err(|error| format!("could not connect to SOCKS proxy: {error}"))?;
 
     let username = proxy.username().as_bytes();
     let password = proxy.password().unwrap_or_default().as_bytes();
     let has_credentials = !username.is_empty();
     if has_credentials && (username.len() > u8::MAX as usize || password.len() > u8::MAX as usize) {
-        return Err("WebSocket SOCKS proxy credentials exceed 255 bytes".to_owned());
+        return Err("SOCKS proxy credentials exceed 255 bytes".to_owned());
     }
-    let methods = if has_credentials {
-        [0x00, 0x02]
-    } else {
-        [0x00, 0xFF]
-    };
+    let mut greeting = vec![0x05, 0x01, 0x00];
+    if has_credentials {
+        greeting[1] = 0x02;
+        greeting.push(0x02);
+    }
     socket
-        .write_all(&[0x05, 0x02, methods[0], methods[1]])
+        .write_all(&greeting)
         .await
-        .map_err(|error| format!("could not write WebSocket SOCKS greeting: {error}"))?;
+        .map_err(|error| format!("could not write SOCKS greeting: {error}"))?;
     let mut greeting = [0_u8; 2];
     socket
         .read_exact(&mut greeting)
         .await
-        .map_err(|error| format!("could not read WebSocket SOCKS greeting: {error}"))?;
+        .map_err(|error| format!("could not read SOCKS greeting: {error}"))?;
     if greeting[0] != 0x05 {
-        return Err("WebSocket SOCKS proxy returned an invalid version".to_owned());
+        return Err("SOCKS proxy returned an invalid version".to_owned());
     }
     match greeting[1] {
         0x00 => {}
@@ -6481,20 +6482,18 @@ async fn connect_socks5_socket(
             socket
                 .write_all(&credentials)
                 .await
-                .map_err(|error| format!("could not write WebSocket SOCKS credentials: {error}"))?;
+                .map_err(|error| format!("could not write SOCKS credentials: {error}"))?;
             let mut authentication = [0_u8; 2];
             socket
                 .read_exact(&mut authentication)
                 .await
-                .map_err(|error| {
-                    format!("could not read WebSocket SOCKS credentials response: {error}")
-                })?;
+                .map_err(|error| format!("could not read SOCKS credentials response: {error}"))?;
             if authentication != [0x01, 0x00] {
-                return Err("WebSocket SOCKS proxy rejected credentials".to_owned());
+                return Err("SOCKS proxy rejected credentials".to_owned());
             }
         }
-        0xFF => return Err("WebSocket SOCKS proxy rejected all authentication methods".to_owned()),
-        _ => return Err("WebSocket SOCKS proxy selected unsupported authentication".to_owned()),
+        0xFF => return Err("SOCKS proxy rejected all authentication methods".to_owned()),
+        _ => return Err("SOCKS proxy selected unsupported authentication".to_owned()),
     }
 
     let mut connect_request = vec![0x05, 0x01, 0x00];
@@ -6510,7 +6509,7 @@ async fn connect_socks5_socket(
         Err(_) => {
             let host = target_host.as_bytes();
             if host.is_empty() || host.len() > u8::MAX as usize {
-                return Err("WebSocket SOCKS target hostname exceeds 255 bytes".to_owned());
+                return Err("SOCKS target hostname exceeds 255 bytes".to_owned());
             }
             connect_request.push(0x03);
             connect_request.push(host.len() as u8);
@@ -6521,52 +6520,56 @@ async fn connect_socks5_socket(
     socket
         .write_all(&connect_request)
         .await
-        .map_err(|error| format!("could not write WebSocket SOCKS connect request: {error}"))?;
+        .map_err(|error| format!("could not write SOCKS connect request: {error}"))?;
 
     let mut response = [0_u8; 4];
     socket
         .read_exact(&mut response)
         .await
-        .map_err(|error| format!("could not read WebSocket SOCKS connect response: {error}"))?;
+        .map_err(|error| format!("could not read SOCKS connect response: {error}"))?;
     if response[0] != 0x05 {
-        return Err("WebSocket SOCKS proxy returned an invalid connect version".to_owned());
+        return Err("SOCKS proxy returned an invalid connect version".to_owned());
     }
     if response[1] != 0x00 {
         return Err(format!(
-            "WebSocket SOCKS proxy connect failed with code 0x{:02x}",
+            "SOCKS proxy connect failed with code 0x{:02x}",
             response[1]
         ));
     }
     match response[3] {
         0x01 => {
             let mut address = [0_u8; 4];
-            socket.read_exact(&mut address).await.map_err(|error| {
-                format!("could not read WebSocket SOCKS IPv4 response: {error}")
-            })?;
+            socket
+                .read_exact(&mut address)
+                .await
+                .map_err(|error| format!("could not read SOCKS IPv4 response: {error}"))?;
         }
         0x03 => {
             let mut length = [0_u8; 1];
-            socket.read_exact(&mut length).await.map_err(|error| {
-                format!("could not read WebSocket SOCKS hostname response: {error}")
-            })?;
+            socket
+                .read_exact(&mut length)
+                .await
+                .map_err(|error| format!("could not read SOCKS hostname response: {error}"))?;
             let mut address = vec![0_u8; length[0] as usize];
-            socket.read_exact(&mut address).await.map_err(|error| {
-                format!("could not read WebSocket SOCKS hostname response: {error}")
-            })?;
+            socket
+                .read_exact(&mut address)
+                .await
+                .map_err(|error| format!("could not read SOCKS hostname response: {error}"))?;
         }
         0x04 => {
             let mut address = [0_u8; 16];
-            socket.read_exact(&mut address).await.map_err(|error| {
-                format!("could not read WebSocket SOCKS IPv6 response: {error}")
-            })?;
+            socket
+                .read_exact(&mut address)
+                .await
+                .map_err(|error| format!("could not read SOCKS IPv6 response: {error}"))?;
         }
-        _ => return Err("WebSocket SOCKS proxy returned an invalid address type".to_owned()),
+        _ => return Err("SOCKS proxy returned an invalid address type".to_owned()),
     }
     let mut port = [0_u8; 2];
     socket
         .read_exact(&mut port)
         .await
-        .map_err(|error| format!("could not read WebSocket SOCKS port response: {error}"))?;
+        .map_err(|error| format!("could not read SOCKS port response: {error}"))?;
     Ok(socket)
 }
 
@@ -6704,13 +6707,14 @@ fn no_proxy_matches(host: &str, port: u16, rules: &str) -> bool {
 }
 
 #[derive(Clone)]
-struct GrpcHttpProxyConnector {
+struct GrpcProxyConnector {
     proxy_host: String,
     proxy_port: u16,
     proxy_authorization: Option<String>,
+    socks_proxy: Option<String>,
 }
 
-impl tonic::codegen::Service<http::Uri> for GrpcHttpProxyConnector {
+impl tonic::codegen::Service<http::Uri> for GrpcProxyConnector {
     type Response = TokioIo<tokio::net::TcpStream>;
     type Error = io::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -6723,6 +6727,7 @@ impl tonic::codegen::Service<http::Uri> for GrpcHttpProxyConnector {
         let proxy_host = self.proxy_host.clone();
         let proxy_port = self.proxy_port;
         let proxy_authorization = self.proxy_authorization.clone();
+        let socks_proxy = self.socks_proxy.clone();
         Box::pin(async move {
             let target_host = uri.host().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidInput, "gRPC URI has no hostname")
@@ -6734,6 +6739,18 @@ impl tonic::codegen::Service<http::Uri> for GrpcHttpProxyConnector {
                 .ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidInput, "gRPC URI has no port")
                 })?;
+            if let Some(socks_proxy) = socks_proxy {
+                let proxy = url::Url::parse(&socks_proxy).map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("invalid gRPC SOCKS proxy URL: {error}"),
+                    )
+                })?;
+                let socket = connect_socks5_stream(&proxy, target_host, target_port)
+                    .await
+                    .map_err(io::Error::other)?;
+                return Ok(TokioIo::new(socket));
+            }
             let target_authority = if target_host.contains(':') {
                 format!("[{target_host}]:{target_port}")
             } else {
@@ -7112,11 +7129,22 @@ async fn connect_grpc_endpoint(
     }
 
     let proxy = url::Url::parse(proxy_url).map_err(|error| error.to_string())?;
-    if proxy.scheme() != "http" {
+    if !matches!(proxy.scheme(), "http" | "socks5" | "socks5h") {
         return Err(format!(
-            "gRPC proxy routing currently supports http:// proxies; {} is not supported",
+            "gRPC proxy routing supports http://, socks5:// and socks5h:// proxies; {} is not supported",
             proxy.scheme()
         ));
+    }
+    if matches!(proxy.scheme(), "socks5" | "socks5h") {
+        return endpoint
+            .connect_with_connector(GrpcProxyConnector {
+                proxy_host: String::new(),
+                proxy_port: 0,
+                proxy_authorization: None,
+                socks_proxy: Some(proxy.to_string()),
+            })
+            .await
+            .map_err(|error| error.to_string());
     }
     let proxy_host = proxy
         .host_str()
@@ -7134,10 +7162,11 @@ async fn connect_grpc_endpoint(
         base64::engine::general_purpose::STANDARD.encode(credentials)
     });
     endpoint
-        .connect_with_connector(GrpcHttpProxyConnector {
+        .connect_with_connector(GrpcProxyConnector {
             proxy_host,
             proxy_port,
             proxy_authorization,
+            socks_proxy: None,
         })
         .await
         .map_err(|error| error.to_string())
@@ -9234,9 +9263,9 @@ mod tests {
         let proxy_address = proxy_listener.local_addr().expect("proxy address");
         let proxy_server = tokio::spawn(async move {
             let (mut client, _) = proxy_listener.accept().await.expect("proxy connection");
-            let mut greeting = [0_u8; 4];
+            let mut greeting = [0_u8; 3];
             client.read_exact(&mut greeting).await.expect("greeting");
-            assert_eq!(greeting, [0x05, 0x02, 0x00, 0xFF]);
+            assert_eq!(greeting, [0x05, 0x01, 0x00]);
             client
                 .write_all(&[0x05, 0x00])
                 .await

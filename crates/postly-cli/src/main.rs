@@ -14,14 +14,15 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use hyper_util::rt::TokioIo;
 use postly_core::{
-    export_openapi_collection, export_postman_collection, export_postman_environment_with_store,
-    generate_code_snippet, generate_markdown_docs, import_curl_command, import_dotenv,
-    import_environment, import_postman_collection, message_from_json, message_to_json,
-    parse_graphql_response, parse_graphql_schema, parse_variables_json, run_requests,
-    schema_introspection_query, Auth, Collection, EngineOptions, Environment, EnvironmentVariable,
-    GraphqlRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome,
-    HttpEngine, Request, RequestBody, ResponseExample, RunnerOptions, ScriptResult,
-    ScriptTestResult, SecretStore, SnippetLanguage, SseParser, VariableContext, Workspace,
+    connect_socks5_stream, export_openapi_collection, export_postman_collection,
+    export_postman_environment_with_store, generate_code_snippet, generate_markdown_docs,
+    import_curl_command, import_dotenv, import_environment, import_postman_collection,
+    message_from_json, message_to_json, parse_graphql_response, parse_graphql_schema,
+    parse_variables_json, run_requests, schema_introspection_query, Auth, Collection,
+    EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, GrpcSchema, HeaderEntry,
+    HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody, ResponseExample,
+    RunnerOptions, ScriptResult, ScriptTestResult, SecretStore, SnippetLanguage, SseParser,
+    VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -171,13 +172,14 @@ fn configure_grpc_endpoint(
 }
 
 #[derive(Clone)]
-struct GrpcHttpProxyConnector {
+struct GrpcProxyConnector {
     proxy_host: String,
     proxy_port: u16,
     proxy_authorization: Option<String>,
+    socks_proxy: Option<String>,
 }
 
-impl tonic::codegen::Service<http::Uri> for GrpcHttpProxyConnector {
+impl tonic::codegen::Service<http::Uri> for GrpcProxyConnector {
     type Response = TokioIo<tokio::net::TcpStream>;
     type Error = io::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -190,6 +192,7 @@ impl tonic::codegen::Service<http::Uri> for GrpcHttpProxyConnector {
         let proxy_host = self.proxy_host.clone();
         let proxy_port = self.proxy_port;
         let proxy_authorization = self.proxy_authorization.clone();
+        let socks_proxy = self.socks_proxy.clone();
         Box::pin(async move {
             let target_host = uri.host().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidInput, "gRPC URI has no hostname")
@@ -201,6 +204,18 @@ impl tonic::codegen::Service<http::Uri> for GrpcHttpProxyConnector {
                 .ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidInput, "gRPC URI has no port")
                 })?;
+            if let Some(socks_proxy) = socks_proxy {
+                let proxy = url::Url::parse(&socks_proxy).map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("invalid gRPC SOCKS proxy URL: {error}"),
+                    )
+                })?;
+                let socket = connect_socks5_stream(&proxy, target_host, target_port)
+                    .await
+                    .map_err(io::Error::other)?;
+                return Ok(TokioIo::new(socket));
+            }
             let target_authority = if target_host.contains(':') {
                 format!("[{target_host}]:{target_port}")
             } else {
@@ -274,11 +289,21 @@ async fn connect_grpc_endpoint(
 
     let proxy = url::Url::parse(proxy_url)
         .with_context(|| format!("invalid gRPC proxy URL: {proxy_url}"))?;
-    if proxy.scheme() != "http" {
+    if !matches!(proxy.scheme(), "http" | "socks5" | "socks5h") {
         bail!(
-            "gRPC proxy routing currently supports http:// proxies; {} is not supported",
+            "gRPC proxy routing supports http://, socks5:// and socks5h:// proxies; {} is not supported",
             proxy.scheme()
         );
+    }
+    if matches!(proxy.scheme(), "socks5" | "socks5h") {
+        return Ok(endpoint
+            .connect_with_connector(GrpcProxyConnector {
+                proxy_host: String::new(),
+                proxy_port: 0,
+                proxy_authorization: None,
+                socks_proxy: Some(proxy.to_string()),
+            })
+            .await?);
     }
     let proxy_host = proxy
         .host_str()
@@ -296,10 +321,11 @@ async fn connect_grpc_endpoint(
         base64::engine::general_purpose::STANDARD.encode(credentials)
     });
     endpoint
-        .connect_with_connector(GrpcHttpProxyConnector {
+        .connect_with_connector(GrpcProxyConnector {
             proxy_host,
             proxy_port,
             proxy_authorization,
+            socks_proxy: None,
         })
         .await
         .map_err(Into::into)
@@ -2735,9 +2761,15 @@ async fn connect_websocket(
 
     let proxy = url::Url::parse(proxy_url)
         .with_context(|| format!("invalid WebSocket proxy URL: {proxy_url}"))?;
+    if matches!(proxy.scheme(), "socks5" | "socks5h") {
+        let socket = connect_socks5_stream(&proxy, target_host, target_port)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        return Ok(client_async_tls_with_config(request, socket, None, None).await?);
+    }
     if proxy.scheme() != "http" {
         bail!(
-            "WebSocket proxy routing currently supports http:// proxies; {} is not supported",
+            "WebSocket proxy routing supports http://, socks5:// and socks5h:// proxies; {} is not supported",
             proxy.scheme()
         );
     }

@@ -41,6 +41,6 @@ tab, plus a comma-separated bypass list. Both are persisted under the ignored
 WebSocket connections and gRPC channels. The CLI and GUI WebSocket clients
 support explicit `http://` proxy CONNECT and `socks5://`/`socks5h://` routing
 with the same bypass matching. The CLI/GUI gRPC clients support explicit HTTP
-CONNECT routing; SOCKS gRPC remains unsupported.
+CONNECT and SOCKS5 routing.
 A proxy can observe traffic and credentials; use one you trust and keep TLS
 verification enabled unless an explicit, documented local exception is required.
