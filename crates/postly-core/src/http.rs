@@ -494,6 +494,14 @@ pub struct HttpResponse {
     pub response_size: usize,
     pub content_type: Option<String>,
     pub duration_ms: u128,
+    /// Milliseconds from starting the HTTP exchange until response headers
+    /// are available. This is a practical local TTFB measurement.
+    #[serde(default)]
+    pub ttfb_ms: u128,
+    /// Milliseconds spent consuming the bounded response body after headers
+    /// arrived. It excludes the header wait and request preparation.
+    #[serde(default)]
+    pub download_ms: u128,
     pub protocol: String,
     pub url: String,
     #[serde(default)]
@@ -1039,11 +1047,13 @@ impl HttpEngine {
         let started = std::time::Instant::now();
         let mut http_request = builder.build().map_err(HttpError::Request)?;
         sign_aws_request(&mut http_request, &request.auth, context)?;
+        let exchange_started = std::time::Instant::now();
         let response = self
             .client
             .execute(http_request)
             .await
             .map_err(HttpError::Request)?;
+        let ttfb_ms = exchange_started.elapsed().as_millis();
         let status = response.status();
         let protocol = format!("{:?}", response.version());
         let content_type = response
@@ -1065,7 +1075,9 @@ impl HttpEngine {
             .filter_map(parse_set_cookie)
             .collect();
         let final_url = response.url().to_string();
+        let body_started = std::time::Instant::now();
         let body = read_bounded_response_body(response, self.max_response_bytes).await?;
+        let download_ms = body_started.elapsed().as_millis();
         let response_size = body.len();
 
         Ok(HttpResponse {
@@ -1076,6 +1088,8 @@ impl HttpEngine {
             response_size,
             content_type,
             duration_ms: started.elapsed().as_millis(),
+            ttfb_ms,
+            download_ms,
             protocol,
             url: final_url,
             cookies,
@@ -3552,12 +3566,18 @@ mod tests {
             let request = String::from_utf8_lossy(&request[..length]);
             assert!(request.contains("GET /health?probe=1 HTTP/1.1"));
             assert!(request.contains("x-test: local"));
+            tokio::time::sleep(Duration::from_millis(10)).await;
             socket
                 .write_all(
-                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 28\r\n\r\n{\"ok\":true,\"source\":\"local\"}",
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 28\r\n\r\n",
                 )
                 .await
-                .expect("write");
+                .expect("write headers");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            socket
+                .write_all(b"{\"ok\":true,\"source\":\"local\"}")
+                .await
+                .expect("write body");
         });
 
         let mut request = Request::new("Health", "GET", format!("http://{address}/health"));
@@ -3578,6 +3598,34 @@ mod tests {
             "{\n  \"ok\": true,\n  \"source\": \"local\"\n}"
         );
         assert!(response.duration_ms < 5_000);
+        assert!(response.ttfb_ms >= 5, "TTFB was {} ms", response.ttfb_ms);
+        assert!(
+            response.download_ms >= 5,
+            "download was {} ms",
+            response.download_ms
+        );
+        assert!(response.ttfb_ms <= response.duration_ms);
+        assert!(response.download_ms <= response.duration_ms);
+    }
+
+    #[test]
+    fn deserializes_legacy_responses_without_timing_breakdown() {
+        let response: HttpResponse = serde_json::from_value(serde_json::json!({
+            "status": 200,
+            "status_text": "OK",
+            "headers": [],
+            "body": [],
+            "response_size": 0,
+            "content_type": null,
+            "duration_ms": 4,
+            "protocol": "HTTP/1.1",
+            "url": "http://example.test",
+            "cookies": []
+        }))
+        .expect("legacy response");
+        assert_eq!(response.duration_ms, 4);
+        assert_eq!(response.ttfb_ms, 0);
+        assert_eq!(response.download_ms, 0);
     }
 
     #[tokio::test]
@@ -3628,6 +3676,8 @@ mod tests {
             protocol: "HTTP/1.1".to_owned(),
             url: "http://example.test".to_owned(),
             duration_ms: 1,
+            ttfb_ms: 0,
+            download_ms: 0,
         };
         assert_eq!(
             response.formatted_body(ResponseView::Pretty),
@@ -3648,6 +3698,8 @@ mod tests {
             protocol: "HTTP/1.1".to_owned(),
             url: "http://example.test".to_owned(),
             duration_ms: 1,
+            ttfb_ms: 0,
+            download_ms: 0,
         };
         assert_eq!(
             response.formatted_body(ResponseView::Pretty),
@@ -3668,6 +3720,8 @@ mod tests {
             protocol: "HTTP/1.1".to_owned(),
             url: "http://example.test".to_owned(),
             duration_ms: 1,
+            ttfb_ms: 0,
+            download_ms: 0,
         };
         assert_eq!(
             html.formatted_body(ResponseView::Pretty),
@@ -3685,6 +3739,8 @@ mod tests {
             protocol: "HTTP/1.1".to_owned(),
             url: "http://example.test".to_owned(),
             duration_ms: 1,
+            ttfb_ms: 0,
+            download_ms: 0,
         };
         assert_eq!(
             javascript.formatted_body(ResponseView::Pretty),

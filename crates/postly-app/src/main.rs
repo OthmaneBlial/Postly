@@ -7172,6 +7172,8 @@ impl PostlyApp {
             }
             ResponseTab::Timing => {
                 ui.label(format!("Total duration: {} ms", response.duration_ms));
+                ui.label(format!("TTFB: {} ms", response.ttfb_ms));
+                ui.label(format!("Download: {} ms", response.download_ms));
                 ui.label(format!("Protocol: {}", response.protocol));
                 ui.label(format!("Response size: {} bytes", response.response_size));
                 ui.label(format!("Final URL: {}", response.url));
@@ -8011,6 +8013,8 @@ async fn execute_grpc_request(
         response_size,
         content_type: Some("application/json".to_owned()),
         duration_ms: started.elapsed().as_millis(),
+        ttfb_ms: 0,
+        download_ms: 0,
         protocol: "gRPC".to_owned(),
         url: endpoint_url,
         cookies: Vec::new(),
@@ -9820,6 +9824,8 @@ mod tests {
             response_size: 11,
             content_type: Some("application/json".to_owned()),
             duration_ms: 4,
+            ttfb_ms: 0,
+            download_ms: 0,
             protocol: "HTTP/1.1".to_owned(),
             url: "https://example.test/users".to_owned(),
             cookies: Vec::new(),
@@ -9853,6 +9859,8 @@ mod tests {
             response_size: 8,
             content_type: Some("application/json".to_owned()),
             duration_ms: 12,
+            ttfb_ms: 0,
+            download_ms: 0,
             protocol: "HTTP/1.1".to_owned(),
             url: "https://example.test/users".to_owned(),
             cookies: Vec::new(),
@@ -9925,6 +9933,8 @@ mod tests {
             response_size: body.len(),
             content_type: content_type.map(str::to_owned),
             duration_ms: 1,
+            ttfb_ms: 0,
+            download_ms: 0,
             protocol: "HTTP/1.1".to_owned(),
             url: "http://example.test".to_owned(),
             cookies: Vec::new(),
@@ -9972,6 +9982,8 @@ mod tests {
             body,
             content_type: Some("application/json".to_owned()),
             duration_ms: 1,
+            ttfb_ms: 0,
+            download_ms: 0,
             protocol: "HTTP/1.1".to_owned(),
             url: "http://example.test".to_owned(),
             cookies: Vec::new(),

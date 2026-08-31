@@ -16,7 +16,8 @@ Implemented:
 - Custom PEM CA bundles and combined PEM client identities in the shared HTTP engine and CLI workflows, with actionable file/format diagnostics and local HTTPS/mTLS integration tests.
 - Basic, Bearer, API-key, OAuth 2.0 Client Credentials, Authorization Code + PKCE (explicit exchange and loopback browser callback), Refresh Token, Device Authorization Grant and buffered AWS Signature V4 signing in the native model, GUI, CLI, Postman import/export and shared HTTP engine, with bounded approval polling, in-memory expiry-aware token caching and local token-exchange/browser-callback/SigV4 integration tests.
 - Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, plus CLI/GUI WebSocket and gRPC SOCKS5/HTTP CONNECT routing, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass/relay tests.
-- Response metadata and JSON pretty formatting.
+- Response metadata and JSON pretty formatting, including locally measured
+  total duration, TTFB and bounded-body download duration.
 - Postman Collection v2.1 and environment import reports.
 - Postman Collection v2.1 and environment export with a tested native round-trip.
 - Postman importer regression fixture for structured URLs, disabled/non-text values, form bodies, file parts, API-key query auth and structured GraphQL metadata.
@@ -52,7 +53,8 @@ Implemented:
 - response Pretty/Raw views now provide JSON and well-formed XML formatting,
   YAML formatting, lightweight HTML/JavaScript formatting, and detected JSON/YAML/XML/HTML/JavaScript/Text previews with lightweight syntax
   coloring, case-insensitive local search with occurrence counts and line
-  snippets; HTTP and gRPC responses expose received body size as metadata. The
+  snippets; HTTP responses expose total/TTFB/download timing and HTTP/gRPC
+  responses expose received body size as metadata. The
   buffered HTTP engine rejects bodies over its configurable 100 MiB default
   before unbounded accumulation, while SSE remains progressive. The GUI
   Transport tab exposes the limit in MiB and persists it locally.

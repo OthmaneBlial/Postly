@@ -2272,6 +2272,8 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
             "status_text": response.status_text,
             "headers": response.headers,
             "duration_ms": response.duration_ms,
+            "ttfb_ms": response.ttfb_ms,
+            "download_ms": response.download_ms,
             "protocol": response.protocol,
             "url": response.url,
             "graphql": graphql,
@@ -2279,10 +2281,12 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
         println!(
-            "{} {} · {} ms · {} bytes · {}",
+            "{} {} · {} ms · TTFB {} ms · download {} ms · {} bytes · {}",
             response.status,
             response.status_text,
             response.duration_ms,
+            response.ttfb_ms,
+            response.download_ms,
             response.response_size,
             response.protocol
         );
@@ -2336,6 +2340,8 @@ async fn introspect_graphql_schema(options: GraphqlOptions) -> Result<()> {
                 "status": response.status,
                 "status_text": response.status_text,
                 "duration_ms": response.duration_ms,
+                "ttfb_ms": response.ttfb_ms,
+                "download_ms": response.download_ms,
                 "protocol": response.protocol,
                 "url": response.url,
                 "schema": schema,
@@ -2345,8 +2351,12 @@ async fn introspect_graphql_schema(options: GraphqlOptions) -> Result<()> {
     }
 
     println!(
-        "GraphQL schema · {} {} · {} ms",
-        response.status, response.status_text, response.duration_ms
+        "GraphQL schema · {} {} · {} ms · TTFB {} ms · download {} ms",
+        response.status,
+        response.status_text,
+        response.duration_ms,
+        response.ttfb_ms,
+        response.download_ms
     );
     println!(
         "Roots: query={} · mutation={} · subscription={}",
@@ -4268,6 +4278,8 @@ fn print_response_with_tests(
             "content_type": response.content_type,
             "response_size": response.response_size,
             "duration_ms": response.duration_ms,
+            "ttfb_ms": response.ttfb_ms,
+            "download_ms": response.download_ms,
             "protocol": response.protocol,
             "url": response.url,
             "body": response.formatted_body(postly_core::ResponseView::Pretty),
@@ -4285,8 +4297,13 @@ fn print_response_with_tests(
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
         println!(
-            "{} {} · {} ms · {}",
-            response.status, response.status_text, response.duration_ms, response.protocol
+            "{} {} · {} ms · TTFB {} ms · download {} ms · {}",
+            response.status,
+            response.status_text,
+            response.duration_ms,
+            response.ttfb_ms,
+            response.download_ms,
+            response.protocol
         );
         println!(
             "{}",
