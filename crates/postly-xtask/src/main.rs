@@ -498,6 +498,9 @@ fn package_release() -> bool {
         eprintln!("could not write package checksums: {error}");
         return false;
     }
+    if !run_package_cli_smoke(&package_dir) {
+        return false;
+    }
 
     let archive = dist.join(format!("{package_name}.tar.gz"));
     let tar_status = Command::new("tar")
@@ -511,6 +514,30 @@ fn package_release() -> bool {
         eprintln!("could not create package archive {}", archive.display());
         return false;
     }
+    let archive_listing = Command::new("tar").arg("-tzf").arg(&archive).output();
+    let archive_listing = match archive_listing {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        }
+        Ok(output) => {
+            eprintln!("could not list package archive: {}", output.status);
+            return false;
+        }
+        Err(error) => {
+            eprintln!("could not inspect package archive: {error}");
+            return false;
+        }
+    };
+    for expected in [
+        format!("{package_name}/postly"),
+        format!("{package_name}/postly-gui"),
+        format!("{package_name}/SHA256SUMS"),
+    ] {
+        if !archive_listing.lines().any(|entry| entry == expected) {
+            eprintln!("package archive is missing {expected}");
+            return false;
+        }
+    }
     match sha256_hex(&archive) {
         Ok(hash) => {
             println!("package directory: {}", package_dir.display());
@@ -523,6 +550,27 @@ fn package_release() -> bool {
             false
         }
     }
+}
+
+fn run_package_cli_smoke(package_dir: &Path) -> bool {
+    let cli = package_dir.join("postly");
+    for argument in ["--version", "--help"] {
+        let output = match Command::new(&cli).arg(argument).output() {
+            Ok(output) => output,
+            Err(error) => {
+                eprintln!("packaged CLI smoke test could not start {argument}: {error}");
+                return false;
+            }
+        };
+        if !output.status.success() {
+            eprintln!(
+                "packaged CLI smoke test {argument} exited with {}",
+                output.status
+            );
+            return false;
+        }
+    }
+    true
 }
 
 fn sha256_hex(path: &Path) -> Result<String, String> {

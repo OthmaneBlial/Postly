@@ -8,7 +8,8 @@ not publish a release or upload artifacts:
 CARGO_PROFILE_RELEASE_DEBUG=0 cargo xtask package
 ~~~
 
-The command builds the CLI and native GUI with `--locked`, then writes an
+The command builds the CLI and native GUI with `--locked`, runs the packaged CLI
+with `--version` and `--help`, checks the archive listing, then writes an
 ignored `dist/` directory containing:
 
 - `postly` and `postly-gui`;
@@ -17,7 +18,8 @@ ignored `dist/` directory containing:
 - `SHA256SUMS` for every packaged file;
 - a `.tar.gz` archive and its printed SHA-256 digest.
 
-The result is a local artifact for smoke testing and review. It is not a
+The result is a local artifact for smoke testing and review. The GUI binary is
+packaged but still needs manual desktop launch/accessibility QA. This is not a
 signed installer, notarized macOS application bundle, cross-compiled release,
 registry publication or proof of end-user installation. Those remain separate
 release gates.
