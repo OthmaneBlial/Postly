@@ -607,4 +607,79 @@ mod tests {
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.results[0].assertions, 2);
     }
+
+    #[tokio::test]
+    async fn runs_pm_send_request_callback_tests_in_the_runner() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let helper_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("helper listener");
+        let helper_address = helper_listener.local_addr().expect("helper address");
+        let helper_server = tokio::spawn(async move {
+            let (mut socket, _) = helper_listener.accept().await.expect("helper connection");
+            use tokio::io::AsyncWriteExt;
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 14\r\nconnection: close\r\n\r\n{\"token\":\"ok\"}",
+                )
+                .await
+                .expect("helper response");
+        });
+
+        let api_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("api listener");
+        let api_address = api_listener.local_addr().expect("api address");
+        let api_server = tokio::spawn(async move {
+            let (mut socket, _) = api_listener.accept().await.expect("api connection");
+            use tokio::io::AsyncWriteExt;
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"ok\":true}",
+                )
+                .await
+                .expect("api response");
+        });
+
+        let mut request = Request::new(
+            "Scripted workflow",
+            "GET",
+            format!("http://{api_address}/health"),
+        );
+        request.test_script = Some(format!(
+            r#"
+                pm.sendRequest("http://{helper_address}/token", function (error, response) {{
+                    pm.test("helper request is available", function () {{
+                        pm.expect(error).to.eql(null);
+                        pm.expect(response.code).to.eql(200);
+                        pm.expect(response.json()).to.have.property("token", "ok");
+                    }});
+                }});
+            "#
+        ));
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let summary = run_requests(
+            &engine,
+            &[(PathBuf::from("scripted-workflow.postly.toml"), request)],
+            &VariableContext::default(),
+            &RunnerOptions {
+                scripts: true,
+                ..RunnerOptions::default()
+            },
+        )
+        .await;
+        api_server.await.expect("api server");
+        helper_server.await.expect("helper server");
+
+        assert!(summary.succeeded());
+        assert_eq!(summary.assertions, 1);
+        assert_eq!(summary.assertion_failures, 0);
+        assert_eq!(summary.status_distribution.get(&200), Some(&1));
+    }
 }

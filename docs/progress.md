@@ -83,7 +83,8 @@ Implemented:
   broad Chai/Postman parity remains intentionally partial.
 - `pm.sendRequest` now has a tested, opt-in callback slice for bounded HTTP(S)
   subrequests with headers, raw bodies, response text/JSON and response
-  assertions; it intentionally does not claim Postly transport parity.
+  assertions; direct bridge and collection-runner integration are covered, and
+  it intentionally does not claim Postly transport parity.
 - Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; saved workspaces persist a bounded ignored local jar.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
 - runner summaries now expose a deterministic HTTP status distribution in JSON
