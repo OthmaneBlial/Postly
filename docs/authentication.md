@@ -5,6 +5,7 @@ references only when a request runs. Current HTTP authentication includes:
 
 - No auth
 - Basic auth
+- HTTP Digest auth (MD5/SHA-256 challenge negotiation)
 - Bearer token
 - API key in a header or query parameter
 - OAuth 2.0 Client Credentials
@@ -12,6 +13,26 @@ references only when a request runs. Current HTTP authentication includes:
 - OAuth 2.0 Refresh Token
 - OAuth 2.0 Device Authorization Grant (RFC 8628)
 - AWS Signature Version 4
+
+## HTTP Digest authentication
+
+Digest auth is negotiated entirely by the local HTTP engine. Configure the
+username and password in a saved request or in the GUI Auth tab:
+
+```toml
+[auth]
+type = "digest"
+username = "{{apiUsername}}"
+password = "{{apiPassword}}"
+```
+
+Postly sends the initial request without a password, parses a bounded
+`WWW-Authenticate: Digest` challenge, and retries at most once with the
+computed `Authorization` header. MD5, MD5-sess, SHA-256 and SHA-256-sess are
+supported; `qop=auth` is preferred and `auth-int` is supported for buffered
+request bodies. Credentials and the generated digest header are not written
+to history or logs. Generated snippets warn that the challenge must be
+negotiated at runtime, while cURL exports use `--digest --user`.
 
 ## OAuth 2.0 Client Credentials
 
@@ -162,5 +183,6 @@ Token endpoint errors are reported without echoing the token response body or
 secret values. Responses are bounded before parsing, and missing or malformed
 `access_token` fields fail the request clearly.
 
-OAuth token orchestration currently applies to HTTP requests. WebSocket,
-SSE-specific token orchestration and AWS Signature V4 remain planned.
+OAuth token orchestration currently applies to HTTP requests. WebSocket and
+SSE-specific token orchestration remain planned; AWS Signature V4 and HTTP
+Digest are available for buffered HTTP requests.

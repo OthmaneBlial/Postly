@@ -390,6 +390,13 @@ fn postman_auth(auth: &Auth) -> Option<Value> {
                 { "key": "password", "value": password, "type": "string" },
             ],
         }),
+        Auth::Digest { username, password } => json!({
+            "type": "digest",
+            "digest": [
+                { "key": "username", "value": username, "type": "string" },
+                { "key": "password", "value": password, "type": "string" },
+            ],
+        }),
         Auth::Bearer { token } => json!({
             "type": "bearer",
             "bearer": [{ "key": "token", "value": token, "type": "string" }],
@@ -794,6 +801,19 @@ mod tests {
         assert_eq!(aws[2]["value"], "us-east-1");
         assert_eq!(aws[3]["value"], "execute-api");
         assert_eq!(aws[4]["value"], "{{awsSession}}");
+    }
+
+    #[test]
+    fn exports_digest_auth_for_postman() {
+        let auth = Auth::Digest {
+            username: "Mufasa".to_owned(),
+            password: "Circle Of Life".to_owned(),
+        };
+        let document = postman_auth(&auth).expect("Postman auth");
+        assert_eq!(document["type"], "digest");
+        assert_eq!(document["digest"][0]["key"], "username");
+        assert_eq!(document["digest"][0]["value"], "Mufasa");
+        assert_eq!(document["digest"][1]["value"], "Circle Of Life");
     }
 
     #[test]

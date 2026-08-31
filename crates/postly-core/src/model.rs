@@ -405,6 +405,12 @@ pub enum Auth {
         username: String,
         password: String,
     },
+    /// HTTP Digest authentication. The challenge parameters are negotiated
+    /// from the server's `WWW-Authenticate` response at request time.
+    Digest {
+        username: String,
+        password: String,
+    },
     Bearer {
         token: String,
     },

@@ -14,6 +14,7 @@ cookie_store.workspace = true
 futures-util.workspace = true
 http.workspace = true
 keyring.workspace = true
+md-5.workspace = true
 prost-reflect.workspace = true
 protox.workspace = true
 quick-xml.workspace = true

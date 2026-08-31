@@ -3222,6 +3222,9 @@ fn build_websocket_request(
                 .headers_mut()
                 .insert(HeaderName::from_static("authorization"), value);
         }
+        Auth::Digest { .. } => {
+            unreachable!("CLI auth flags do not create Digest credentials")
+        }
         Auth::ApiKey { .. } => unreachable!("CLI auth flags do not create API keys"),
         Auth::OAuth2ClientCredentials { .. } => {
             unreachable!("CLI auth flags do not create OAuth 2.0 credentials")

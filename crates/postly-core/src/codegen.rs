@@ -106,6 +106,10 @@ fn snippet_parts(request: &Request) -> SnippetParts {
             "Basic auth is not materialized in generated snippets; add credentials explicitly after reviewing the output."
                 .to_owned(),
         ),
+        Auth::Digest { .. } => warnings.push(
+            "Digest auth is negotiated with the server at runtime and is not materialized in generated snippets."
+                .to_owned(),
+        ),
         Auth::ApiKey {
             key,
             value,

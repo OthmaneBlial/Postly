@@ -11,10 +11,11 @@ use std::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{DateTime, Utc};
 use cookie_store::{CookieStore as StoredCookieStore, RawCookie};
+use md5::Md5;
 use quick_xml::{events::Event, Reader, Writer};
 use reqwest::{
     cookie::CookieStore,
-    header::{HeaderName, HeaderValue, SET_COOKIE},
+    header::{HeaderMap, HeaderName, HeaderValue, SET_COOKIE, WWW_AUTHENTICATE},
     Client, Method, Url,
 };
 use serde::{Deserialize, Serialize};
@@ -151,6 +152,8 @@ pub enum HttpError {
     OAuthToken(String),
     #[error("AWS Signature V4 signing failed: {0}")]
     AwsSignature(String),
+    #[error("Digest authentication failed: {0}")]
+    Digest(String),
 }
 
 /// Open a TCP stream through a SOCKS5 proxy, keeping hostname resolution at
@@ -1051,12 +1054,46 @@ impl HttpEngine {
         let started = std::time::Instant::now();
         let mut http_request = builder.build().map_err(HttpError::Request)?;
         sign_aws_request(&mut http_request, &request.auth, context)?;
+        let mut digest_retry_request = if matches!(&request.auth, Auth::Digest { .. }) {
+            Some(http_request.try_clone().ok_or_else(|| {
+                HttpError::Digest(
+                    "the request body cannot be replayed after the server challenge".to_owned(),
+                )
+            })?)
+        } else {
+            None
+        };
         let exchange_started = std::time::Instant::now();
-        let response = self
+        let mut response = self
             .client
             .execute(http_request)
             .await
             .map_err(HttpError::Request)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            if let Some(mut retry_request) = digest_retry_request.take() {
+                if let Some(challenge) = digest_challenge(response.headers())? {
+                    let authorization = build_digest_authorization(
+                        &retry_request,
+                        &request.auth,
+                        context,
+                        &challenge,
+                    )?;
+                    let value = HeaderValue::from_str(&authorization).map_err(|error| {
+                        HttpError::Digest(format!(
+                            "generated Authorization header is invalid: {error}"
+                        ))
+                    })?;
+                    retry_request
+                        .headers_mut()
+                        .insert(HeaderName::from_static("authorization"), value);
+                    response = self
+                        .client
+                        .execute(retry_request)
+                        .await
+                        .map_err(HttpError::Request)?;
+                }
+            }
+        }
         let ttfb_ms = exchange_started.elapsed().as_millis();
         let status = response.status();
         let protocol = format!("{:?}", response.version());
@@ -2348,6 +2385,354 @@ fn resolve_pairs(
     }
 }
 
+const MAX_DIGEST_CHALLENGE_BYTES: usize = 16 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DigestAlgorithm {
+    Md5,
+    Md5Sess,
+    Sha256,
+    Sha256Sess,
+}
+
+impl DigestAlgorithm {
+    fn parse(value: Option<&str>) -> Result<Self, HttpError> {
+        match value.unwrap_or("MD5").trim().to_ascii_lowercase().as_str() {
+            "md5" => Ok(Self::Md5),
+            "md5-sess" => Ok(Self::Md5Sess),
+            "sha-256" => Ok(Self::Sha256),
+            "sha-256-sess" => Ok(Self::Sha256Sess),
+            other => Err(HttpError::Digest(format!(
+                "unsupported challenge algorithm {other}"
+            ))),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Md5 => "MD5",
+            Self::Md5Sess => "MD5-sess",
+            Self::Sha256 => "SHA-256",
+            Self::Sha256Sess => "SHA-256-sess",
+        }
+    }
+
+    fn session(self) -> bool {
+        matches!(self, Self::Md5Sess | Self::Sha256Sess)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DigestQop {
+    Auth,
+    AuthInt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DigestChallenge {
+    realm: String,
+    nonce: String,
+    opaque: Option<String>,
+    algorithm: DigestAlgorithm,
+    qop: Option<DigestQop>,
+}
+
+fn digest_challenge(headers: &HeaderMap) -> Result<Option<DigestChallenge>, HttpError> {
+    for value in headers.get_all(WWW_AUTHENTICATE).iter() {
+        let value = value.to_str().map_err(|error| {
+            HttpError::Digest(format!(
+                "WWW-Authenticate header is not valid UTF-8: {error}"
+            ))
+        })?;
+        if value
+            .split_once(char::is_whitespace)
+            .map(|(scheme, _)| scheme.eq_ignore_ascii_case("Digest"))
+            .unwrap_or_else(|| value.eq_ignore_ascii_case("Digest"))
+        {
+            return parse_digest_challenge(value).map(Some);
+        }
+    }
+    Ok(None)
+}
+
+fn parse_digest_challenge(value: &str) -> Result<DigestChallenge, HttpError> {
+    if value.len() > MAX_DIGEST_CHALLENGE_BYTES {
+        return Err(HttpError::Digest(format!(
+            "WWW-Authenticate challenge exceeds {MAX_DIGEST_CHALLENGE_BYTES} bytes"
+        )));
+    }
+    let mut chars = value.chars().peekable();
+    let mut scheme = String::new();
+    while let Some(character) = chars.peek().copied() {
+        if character.is_ascii_whitespace() {
+            break;
+        }
+        scheme.push(character);
+        chars.next();
+    }
+    if !scheme.eq_ignore_ascii_case("Digest") {
+        return Err(HttpError::Digest(
+            "WWW-Authenticate header is not a Digest challenge".to_owned(),
+        ));
+    }
+    while chars
+        .peek()
+        .is_some_and(|character| character.is_ascii_whitespace())
+    {
+        chars.next();
+    }
+
+    let mut parameters = HashMap::new();
+    while chars.peek().is_some() {
+        while chars
+            .peek()
+            .is_some_and(|character| character.is_ascii_whitespace() || *character == ',')
+        {
+            chars.next();
+        }
+        if chars.peek().is_none() {
+            break;
+        }
+        let mut key = String::new();
+        while let Some(character) = chars.peek().copied() {
+            if character == '=' || character == ',' || character.is_ascii_whitespace() {
+                break;
+            }
+            key.push(character.to_ascii_lowercase());
+            chars.next();
+        }
+        while chars
+            .peek()
+            .is_some_and(|character| character.is_ascii_whitespace())
+        {
+            chars.next();
+        }
+        if chars.next() != Some('=') || key.is_empty() {
+            return Err(HttpError::Digest(
+                "malformed Digest challenge parameter".to_owned(),
+            ));
+        }
+        while chars
+            .peek()
+            .is_some_and(|character| character.is_ascii_whitespace())
+        {
+            chars.next();
+        }
+        let parameter = if chars.peek() == Some(&'"') {
+            chars.next();
+            let mut output = String::new();
+            let mut escaped = false;
+            let mut closed = false;
+            for character in chars.by_ref() {
+                if escaped {
+                    output.push(character);
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == '"' {
+                    closed = true;
+                    break;
+                } else {
+                    output.push(character);
+                }
+            }
+            if !closed || escaped {
+                return Err(HttpError::Digest(
+                    "unterminated quoted Digest challenge parameter".to_owned(),
+                ));
+            }
+            output
+        } else {
+            let mut output = String::new();
+            while let Some(character) = chars.peek().copied() {
+                if character == ',' {
+                    break;
+                }
+                output.push(character);
+                chars.next();
+            }
+            output.trim().to_owned()
+        };
+        parameters.insert(key, parameter);
+        while chars
+            .peek()
+            .is_some_and(|character| character.is_ascii_whitespace())
+        {
+            chars.next();
+        }
+        if chars.peek() == Some(&',') {
+            chars.next();
+        }
+    }
+
+    let realm = parameters
+        .remove("realm")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| HttpError::Digest("Digest challenge has no realm".to_owned()))?;
+    let nonce = parameters
+        .remove("nonce")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| HttpError::Digest("Digest challenge has no nonce".to_owned()))?;
+    let algorithm = DigestAlgorithm::parse(parameters.get("algorithm").map(String::as_str))?;
+    let qop = parameters.get("qop").and_then(|value| {
+        value
+            .split(',')
+            .map(str::trim)
+            .find(|value| value.eq_ignore_ascii_case("auth"))
+            .map(|_| DigestQop::Auth)
+            .or_else(|| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .find(|value| value.eq_ignore_ascii_case("auth-int"))
+                    .map(|_| DigestQop::AuthInt)
+            })
+    });
+    if parameters.get("qop").is_some_and(|_| qop.is_none()) {
+        return Err(HttpError::Digest(
+            "Digest challenge offers no supported qop (auth or auth-int)".to_owned(),
+        ));
+    }
+    Ok(DigestChallenge {
+        realm,
+        nonce,
+        opaque: parameters.remove("opaque"),
+        algorithm,
+        qop,
+    })
+}
+
+fn digest_hash(algorithm: DigestAlgorithm, value: &[u8]) -> String {
+    match algorithm {
+        DigestAlgorithm::Md5 | DigestAlgorithm::Md5Sess => {
+            format!("{:x}", Md5::digest(value))
+        }
+        DigestAlgorithm::Sha256 | DigestAlgorithm::Sha256Sess => {
+            format!("{:x}", Sha256::digest(value))
+        }
+    }
+}
+
+fn digest_quoted(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn build_digest_authorization(
+    request: &reqwest::Request,
+    auth: &Auth,
+    context: &VariableContext,
+    challenge: &DigestChallenge,
+) -> Result<String, HttpError> {
+    let Auth::Digest { username, password } = auth else {
+        return Err(HttpError::Digest(
+            "Digest challenge received for a non-Digest request".to_owned(),
+        ));
+    };
+    let username = context.resolve(username).value;
+    let password = context.resolve(password).value;
+    if username.is_empty() {
+        return Err(HttpError::Digest("username cannot be empty".to_owned()));
+    }
+    let uri = request.url().path().to_owned()
+        + request
+            .url()
+            .query()
+            .map(|query| format!("?{query}"))
+            .as_deref()
+            .unwrap_or_default();
+    let body = request
+        .body()
+        .and_then(|body| body.as_bytes())
+        .unwrap_or_default();
+    let cnonce = Uuid::new_v4().simple().to_string();
+    build_digest_authorization_with_cnonce(
+        request.method().as_str(),
+        &uri,
+        body,
+        &username,
+        &password,
+        challenge,
+        &cnonce,
+    )
+}
+
+fn build_digest_authorization_with_cnonce(
+    method: &str,
+    uri: &str,
+    body: &[u8],
+    username: &str,
+    password: &str,
+    challenge: &DigestChallenge,
+    cnonce: &str,
+) -> Result<String, HttpError> {
+    let algorithm = challenge.algorithm;
+    let ha1_base = digest_hash(
+        algorithm,
+        format!("{username}:{}:{password}", challenge.realm).as_bytes(),
+    );
+    let ha1 = if algorithm.session() {
+        digest_hash(
+            algorithm,
+            format!("{ha1_base}:{}:{cnonce}", challenge.nonce).as_bytes(),
+        )
+    } else {
+        ha1_base
+    };
+    let ha2 = match challenge.qop {
+        Some(DigestQop::AuthInt) => digest_hash(
+            algorithm,
+            format!("{method}:{uri}:{}", digest_hash(algorithm, body)).as_bytes(),
+        ),
+        Some(DigestQop::Auth) | None => {
+            digest_hash(algorithm, format!("{method}:{uri}").as_bytes())
+        }
+    };
+    let nonce_count = "00000001";
+    let response = match challenge.qop {
+        Some(qop) => {
+            let qop = match qop {
+                DigestQop::Auth => "auth",
+                DigestQop::AuthInt => "auth-int",
+            };
+            digest_hash(
+                algorithm,
+                format!(
+                    "{ha1}:{}:{nonce_count}:{cnonce}:{qop}:{ha2}",
+                    challenge.nonce
+                )
+                .as_bytes(),
+            )
+        }
+        None => digest_hash(
+            algorithm,
+            format!("{ha1}:{}:{ha2}", challenge.nonce).as_bytes(),
+        ),
+    };
+    let mut fields = vec![
+        format!("username={}", digest_quoted(username)),
+        format!("realm={}", digest_quoted(&challenge.realm)),
+        format!("nonce={}", digest_quoted(&challenge.nonce)),
+        format!("uri={}", digest_quoted(uri)),
+        format!("response={}", digest_quoted(&response)),
+        format!("algorithm={}", algorithm.label()),
+    ];
+    if let Some(qop) = challenge.qop {
+        fields.push(format!(
+            "qop={}",
+            match qop {
+                DigestQop::Auth => "auth",
+                DigestQop::AuthInt => "auth-int",
+            }
+        ));
+        fields.push(format!("nc={nonce_count}"));
+        fields.push(format!("cnonce={}", digest_quoted(cnonce)));
+    }
+    if let Some(opaque) = &challenge.opaque {
+        fields.push(format!("opaque={}", digest_quoted(opaque)));
+    }
+    Ok(format!("Digest {}", fields.join(", ")))
+}
+
 fn apply_auth(
     mut builder: reqwest::RequestBuilder,
     auth: &Auth,
@@ -2362,6 +2747,7 @@ fn apply_auth(
                 Some(context.resolve(password).value),
             );
         }
+        Auth::Digest { .. } => {}
         Auth::Bearer { token } => {
             builder = builder.bearer_auth(context.resolve(token).value);
         }
@@ -2517,6 +2903,10 @@ fn resolve_auth(diagnostics: &mut Vec<VariableDiagnostic>, auth: &Auth, context:
     match auth {
         Auth::None => {}
         Auth::Basic { username, password } => {
+            diagnostics.extend(context.resolve(username).diagnostics);
+            diagnostics.extend(context.resolve(password).diagnostics);
+        }
+        Auth::Digest { username, password } => {
             diagnostics.extend(context.resolve(username).diagnostics);
             diagnostics.extend(context.resolve(password).diagnostics);
         }
@@ -3021,6 +3411,94 @@ mod tests {
         server.await.expect("TLS server");
         assert_eq!(response.status, 200);
         assert_eq!(response.body_text(), "pkcs12-mtls");
+    }
+
+    #[tokio::test]
+    async fn retries_a_digest_challenge_once_with_rfc7616_auth() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut first_socket, _) = listener.accept().await.expect("first connection");
+            let first_request = read_request_headers(&mut first_socket).await;
+            assert!(first_request.contains("GET /dir/index.html?query=1 HTTP/1.1"));
+            assert!(!first_request
+                .to_ascii_lowercase()
+                .contains("authorization: digest"));
+            first_socket
+                .write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Digest realm=\"local\", nonce=\"nonce-123\", qop=\"auth\", opaque=\"opaque-456\"\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await
+                .expect("challenge response");
+
+            let (mut second_socket, _) = listener.accept().await.expect("retry connection");
+            let second_request = read_request_headers(&mut second_socket).await;
+            let lower = second_request.to_ascii_lowercase();
+            assert!(lower.contains("authorization: digest"));
+            assert!(lower.contains("username=\"postly\""));
+            assert!(lower.contains("realm=\"local\""));
+            assert!(lower.contains("nonce=\"nonce-123\""));
+            assert!(lower.contains("uri=\"/dir/index.html?query=1\""));
+            assert!(lower.contains("qop=auth"));
+            assert!(lower.contains("opaque=\"opaque-456\""));
+            second_socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nconnection: close\r\n\r\ndigest-ok",
+                )
+                .await
+                .expect("success response");
+        });
+
+        let mut request = Request::new(
+            "Digest request",
+            "GET",
+            format!("http://{address}/dir/index.html?query=1"),
+        );
+        request.auth = Auth::Digest {
+            username: "postly".to_owned(),
+            password: "local-secret".to_owned(),
+        };
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("Digest response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "digest-ok");
+        server.await.expect("Digest server");
+    }
+
+    #[test]
+    fn matches_the_rfc7616_md5_digest_vector() {
+        let challenge = DigestChallenge {
+            realm: "testrealm@host.com".to_owned(),
+            nonce: "dcd98b7102dd2f0e8b11d0f600bfb0c093".to_owned(),
+            opaque: Some("5ccc069c403ebaf9f0171e9517f40e41".to_owned()),
+            algorithm: DigestAlgorithm::Md5,
+            qop: Some(DigestQop::Auth),
+        };
+        let authorization = build_digest_authorization_with_cnonce(
+            "GET",
+            "/dir/index.html",
+            &[],
+            "Mufasa",
+            "Circle Of Life",
+            &challenge,
+            "0a4f113b",
+        )
+        .expect("Digest authorization");
+        assert!(authorization.contains("response=\"6629fae49393a05397450978507c4ef1\""));
+        assert!(authorization.contains("algorithm=MD5"));
+    }
+
+    #[test]
+    fn parses_digest_qop_and_sha256_challenges() {
+        let challenge = parse_digest_challenge(
+            "Digest realm=\"local\", nonce=\"n\", algorithm=SHA-256, qop=\"auth-int,auth\"",
+        )
+        .expect("Digest challenge");
+        assert_eq!(challenge.algorithm, DigestAlgorithm::Sha256);
+        assert_eq!(challenge.qop, Some(DigestQop::Auth));
     }
 
     #[tokio::test]

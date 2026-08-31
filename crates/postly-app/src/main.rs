@@ -338,6 +338,7 @@ enum AuthKind {
     None,
     Bearer,
     Basic,
+    Digest,
     ApiKey,
     OAuth2ClientCredentials,
     OAuth2AuthorizationCodePkce,
@@ -451,6 +452,7 @@ impl AuthKind {
             Self::None => "No auth",
             Self::Bearer => "Bearer token",
             Self::Basic => "Basic auth",
+            Self::Digest => "Digest auth",
             Self::ApiKey => "API key",
             Self::OAuth2ClientCredentials => "OAuth 2.0 client credentials",
             Self::OAuth2AuthorizationCodePkce => "OAuth 2.0 authorization code + PKCE",
@@ -1847,6 +1849,17 @@ impl PostlyApp {
                 self.auth_seventh.clear();
                 self.api_key_location = ApiKeyLocation::Header;
             }
+            Auth::Digest { username, password } => {
+                self.auth_kind = AuthKind::Digest;
+                self.auth_primary.clone_from(username);
+                self.auth_secondary.clone_from(password);
+                self.auth_tertiary.clear();
+                self.auth_quaternary.clear();
+                self.auth_fifth.clear();
+                self.auth_sixth.clear();
+                self.auth_seventh.clear();
+                self.api_key_location = ApiKeyLocation::Header;
+            }
             Auth::ApiKey {
                 key,
                 value,
@@ -2307,6 +2320,10 @@ impl PostlyApp {
                 values.push(username.clone());
                 values.push(password.clone());
             }
+            Auth::Digest { username, password } => {
+                values.push(username.clone());
+                values.push(password.clone());
+            }
             Auth::ApiKey { key, value, .. } => {
                 values.push(key.clone());
                 values.push(value.clone());
@@ -2599,6 +2616,10 @@ impl PostlyApp {
                 token: self.auth_primary.clone(),
             },
             AuthKind::Basic => Auth::Basic {
+                username: self.auth_primary.clone(),
+                password: self.auth_secondary.clone(),
+            },
+            AuthKind::Digest => Auth::Digest {
                 username: self.auth_primary.clone(),
                 password: self.auth_secondary.clone(),
             },
@@ -5616,6 +5637,7 @@ impl PostlyApp {
                     AuthKind::None,
                     AuthKind::Bearer,
                     AuthKind::Basic,
+                    AuthKind::Digest,
                     AuthKind::ApiKey,
                     AuthKind::OAuth2ClientCredentials,
                     AuthKind::OAuth2AuthorizationCodePkce,
@@ -5647,6 +5669,29 @@ impl PostlyApp {
                 }
             }
             AuthKind::Basic => {
+                ui.label("Username");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_primary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Password");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_secondary).password(true))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+            }
+            AuthKind::Digest => {
+                ui.label(
+                    RichText::new(
+                        "Digest authentication negotiates the server challenge locally and retries the request once.",
+                    )
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+                );
                 ui.label("Username");
                 if ui
                     .add(TextEdit::singleline(&mut self.auth_primary))
@@ -7859,6 +7904,11 @@ fn build_websocket_request(
                     .map_err(|error| error.to_string())?,
             );
         }
+        Auth::Digest { .. } => {
+            return Err(
+                "Digest auth is currently supported for HTTP requests, not WebSockets".to_owned(),
+            );
+        }
         Auth::ApiKey {
             key,
             value,
@@ -7957,6 +8007,12 @@ fn apply_grpc_metadata<T>(
                 .parse()
                 .map_err(|error| format!("invalid basic credentials: {error}"))?;
             request.metadata_mut().insert("authorization", value);
+        }
+        Auth::Digest { .. } => {
+            return Err(
+                "Digest auth is currently supported for HTTP requests, not native gRPC calls"
+                    .to_owned(),
+            );
         }
         Auth::ApiKey {
             key,

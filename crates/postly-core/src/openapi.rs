@@ -723,6 +723,7 @@ fn security_scheme_for_auth(
     let (name, scheme) = match auth {
         Auth::None => return None,
         Auth::Basic { .. } => ("basicAuth", json!({ "type": "http", "scheme": "basic" })),
+        Auth::Digest { .. } => ("digestAuth", json!({ "type": "http", "scheme": "digest" })),
         Auth::Bearer { .. } => ("bearerAuth", json!({ "type": "http", "scheme": "bearer" })),
         Auth::ApiKey { key, location, .. } => (
             match location {
@@ -2079,6 +2080,13 @@ fn apply_security(
                         password: format!("{{{{{scheme_name}_password}}}}"),
                     };
                     warnings.push(format!("Basic security scheme {scheme_name} was imported with variable placeholders."));
+                }
+                "digest" => {
+                    request.auth = Auth::Digest {
+                        username: format!("{{{{{scheme_name}_username}}}}"),
+                        password: format!("{{{{{scheme_name}_password}}}}"),
+                    };
+                    warnings.push(format!("Digest security scheme {scheme_name} was imported with variable placeholders."));
                 }
                 other => warnings.push(format!("HTTP auth scheme {other} was not mapped.")),
             }

@@ -57,7 +57,7 @@ This repository contains working vertical slices, not a static interface mockup.
 - **HTTP and REST:** GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS and custom
   methods; query parameters, duplicate headers, cookies, redirects, compression,
   timeouts, cancellation, raw/JSON/form/multipart/file bodies and response metadata.
-- **Authentication:** Basic, Bearer, API key, OAuth 2.0 Client Credentials,
+- **Authentication:** Basic, Digest, Bearer, API key, OAuth 2.0 Client Credentials,
   Authorization Code + PKCE, Refresh Token and Device Authorization Grant,
   plus buffered AWS Signature V4 signing; including variable resolution,
   opt-in loopback browser login, bounded approval polling and local

@@ -14,7 +14,7 @@ Implemented:
 - Variable scopes, precedence and undefined-variable diagnostics.
 - Native async HTTP execution with common body/auth/header/query behavior.
 - Custom PEM CA bundles and combined PEM client identities in the shared HTTP engine and CLI workflows, with actionable file/format diagnostics and local HTTPS/mTLS integration tests.
-- Basic, Bearer, API-key, OAuth 2.0 Client Credentials, Authorization Code + PKCE (explicit exchange and loopback browser callback), Refresh Token, Device Authorization Grant and buffered AWS Signature V4 signing in the native model, GUI, CLI, Postman import/export and shared HTTP engine, with bounded approval polling, in-memory expiry-aware token caching and local token-exchange/browser-callback/SigV4 integration tests.
+- Basic, Digest (MD5/SHA-256 challenge negotiation), Bearer, API-key, OAuth 2.0 Client Credentials, Authorization Code + PKCE (explicit exchange and loopback browser callback), Refresh Token, Device Authorization Grant and buffered AWS Signature V4 signing in the native model, GUI, CLI, Postman import/export and shared HTTP engine, with bounded approval polling, in-memory expiry-aware token caching and local token-exchange/browser-callback/SigV4/Digest integration tests.
 - Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, plus CLI/GUI WebSocket and gRPC SOCKS5/HTTP CONNECT routing, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass/relay tests.
 - Configurable HTTP redirect limits across direct CLI requests, GraphQL, SSE, saved sends, collection runs and the native GUI Transport tab; the default remains 10 and zero explicitly disables redirect following, with local core and CLI coverage.
 - Response metadata and JSON pretty formatting, including locally measured
@@ -260,7 +260,10 @@ after variable resolution, falls back independently for blank fields, and
 keeps per-association passphrases out of `.postly/gui-settings.json`. Matching
 and pre-network diagnostics are covered by native-app tests.
 
-The OAuth Device Authorization slice adds RFC 8628-style device-code
+The HTTP Digest slice adds bounded RFC 7616 challenge parsing, one controlled
+retry for MD5/MD5-sess/SHA-256/SHA-256-sess and `auth`/`auth-int` qop handling,
+Postman import/export, GUI editing, cURL export and local challenge/vector
+coverage. The OAuth Device Authorization slice adds RFC 8628-style device-code
 requests, safe verification prompts in the CLI/GUI, bounded polling with
 pending/slow-down handling, Postman migration/export and local approval
 integration coverage. The Authorization Code + PKCE slice now adds a bounded

@@ -26,7 +26,7 @@ Supported targets are:
 Postly deliberately keeps {{variables}} visible. It does not resolve an
 environment or fetch OAuth tokens just to print source, and it does not read
 secret values from the operating-system credential store for this command.
-Basic auth and OAuth client credentials produce warnings so a developer can
+Basic, Digest and OAuth client credentials produce warnings so a developer can
 decide how to materialize them safely. Multipart and binary bodies also carry
 review warnings where a target language needs local adaptation.
 

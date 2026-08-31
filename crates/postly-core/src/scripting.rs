@@ -594,6 +594,11 @@ function nativeAuthToPostman(nativeAuth) {
       add("username", source.username);
       add("password", source.password);
       break;
+    case "digest":
+      authType = "digest";
+      add("username", source.username);
+      add("password", source.password);
+      break;
     case "bearer":
       authType = "bearer";
       add("token", source.token);
@@ -705,6 +710,13 @@ function postmanAuthToNative(auth) {
   if (type === "basic") {
     return {
       type: "basic",
+      username: value("username") || "",
+      password: value("password") || ""
+    };
+  }
+  if (type === "digest") {
+    return {
+      type: "digest",
       username: value("username") || "",
       password: value("password") || ""
     };
@@ -2452,6 +2464,41 @@ mod tests {
             aws_result.tests[0].passed,
             "{:?}",
             aws_result.tests[0].error
+        );
+
+        let mut digest_request =
+            Request::new("Digest auth facade", "GET", "https://api.example.test");
+        digest_request.auth = crate::model::Auth::Digest {
+            username: "Mufasa".to_owned(),
+            password: "Circle Of Life".to_owned(),
+        };
+        let digest_result = run_script(
+            r#"
+                pm.test("digest auth is visible", function () {
+                    pm.expect(pm.request.auth.type).to.eql("digest");
+                    pm.expect(pm.request.auth.get("username")).to.eql("Mufasa");
+                });
+                pm.request.auth.upsert({ key: "password", value: "new-password" });
+            "#,
+            &digest_request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("Digest auth facade");
+        digest_result
+            .apply(&mut digest_request, &mut VariableContext::default())
+            .expect("apply Digest auth facade");
+        assert_eq!(
+            digest_request.auth,
+            crate::model::Auth::Digest {
+                username: "Mufasa".to_owned(),
+                password: "new-password".to_owned(),
+            }
+        );
+        assert!(
+            digest_result.tests[0].passed,
+            "{:?}",
+            digest_result.tests[0].error
         );
     }
 

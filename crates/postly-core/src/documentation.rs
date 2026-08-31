@@ -246,6 +246,7 @@ fn auth_label(auth: &Auth) -> &'static str {
     match auth {
         Auth::None => "none",
         Auth::Basic { .. } => "Basic",
+        Auth::Digest { .. } => "Digest",
         Auth::Bearer { .. } => "Bearer",
         Auth::ApiKey { .. } => "API key",
         Auth::OAuth2ClientCredentials { .. } => "OAuth 2.0 client credentials",

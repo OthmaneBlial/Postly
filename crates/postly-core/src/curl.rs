@@ -88,6 +88,11 @@ pub fn export_curl_command(request: &Request) -> CurlExportResult {
             arguments.push("--user".to_owned());
             arguments.push(shell_quote(&format!("{username}:{password}")));
         }
+        Auth::Digest { username, password } => {
+            arguments.push("--digest".to_owned());
+            arguments.push("--user".to_owned());
+            arguments.push(shell_quote(&format!("{username}:{password}")));
+        }
         Auth::Bearer { token } => {
             arguments.push("--header".to_owned());
             arguments.push(shell_quote(&format!("Authorization: Bearer {token}")));
@@ -564,6 +569,19 @@ mod tests {
         assert!(exported.command.contains("'X-Trace: it'\\''s-local'"));
         assert!(exported.command.contains("'user:p'\\''ass'"));
         assert!(exported.command.contains("--data-raw '{\"name\":\"Ada\"}'"));
+        assert!(exported.warnings.is_empty());
+    }
+
+    #[test]
+    fn exports_digest_auth_with_curl_digest_negotiation() {
+        let mut request = Request::new("Digest request", "GET", "https://api.example.test/users");
+        request.auth = Auth::Digest {
+            username: "Mufasa".to_owned(),
+            password: "Circle Of Life".to_owned(),
+        };
+        let exported = export_curl_command(&request);
+        assert!(exported.command.contains("--digest"));
+        assert!(exported.command.contains("Mufasa:Circle Of Life"));
         assert!(exported.warnings.is_empty());
     }
 }

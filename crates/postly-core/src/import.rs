@@ -825,6 +825,10 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
             username: auth_value(value.get("basic"), "username"),
             password: auth_value(value.get("basic"), "password"),
         },
+        "digest" => Auth::Digest {
+            username: auth_value_any(value.get("digest"), &["username", "user"]),
+            password: auth_value_any(value.get("digest"), &["password", "passwd"]),
+        },
         "bearer" => Auth::Bearer {
             token: auth_value(value.get("bearer"), "value"),
         },
@@ -1228,6 +1232,27 @@ mod tests {
             .collection
             .variables
             .contains_key("disabledByEnabled"));
+    }
+
+    #[test]
+    fn imports_postman_digest_auth() {
+        let mut report = ImportReport::default();
+        let value = serde_json::json!({
+            "type": "digest",
+            "digest": [
+                { "key": "username", "value": "Mufasa" },
+                { "key": "password", "value": "Circle Of Life" }
+            ]
+        });
+        let parsed = parse_auth(Some(&value), "Digest request", &mut report);
+        assert!(!parsed.requires_review);
+        assert_eq!(
+            parsed.auth,
+            Auth::Digest {
+                username: "Mufasa".to_owned(),
+                password: "Circle Of Life".to_owned(),
+            }
+        );
     }
 
     #[test]
