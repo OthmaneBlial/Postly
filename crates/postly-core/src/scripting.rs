@@ -1168,6 +1168,7 @@ request.cookies = decorateKeyValueList(request.cookies || [], (cookie) => ({
   value: text(cookie && cookie.value),
   enabled: cookie && cookie.disabled !== true && cookie.enabled !== false
 }));
+const pmCookies = makeRequestCookieSnapshot(request.cookies);
 const pmInfo = Object.freeze({
   requestName: text(request.name),
   requestId: text(request.id),
@@ -1420,7 +1421,19 @@ function decorateCookies(responseCookies) {
   responseCookies.all = () => responseCookies.slice();
   responseCookies.count = () => responseCookies.length;
   responseCookies.each = (callback) => responseCookies.forEach(callback);
+  responseCookies.forEach = (callback) => Array.prototype.forEach.call(responseCookies, callback);
   return responseCookies;
+}
+
+function makeRequestCookieSnapshot(requestCookies) {
+  const cookies = (Array.isArray(requestCookies) ? requestCookies : [])
+    .filter((cookie) => cookie && cookie.enabled !== false && cookie.disabled !== true)
+    .map((cookie) => ({
+      name: text(cookie.key || cookie.name),
+      value: text(cookie.value)
+    }))
+    .filter((cookie) => cookie.name);
+  return Object.freeze(decorateCookies(cookies));
 }
 
 function readJsonPath(value, path) {
@@ -1944,6 +1957,7 @@ function recordTest(name, callback) {
 
 const pm = {
   info: pmInfo,
+  cookies: pmCookies,
   environment,
   collectionVariables,
   globals,
@@ -3001,7 +3015,15 @@ mod tests {
         if Command::new("node").arg("--version").output().is_err() {
             return;
         }
-        let request = Request::new("Scripted", "GET", "https://example.test");
+        let mut request = Request::new("Scripted", "GET", "https://example.test");
+        request
+            .cookies
+            .push(crate::model::KeyValue::enabled("session", "abc"));
+        request.cookies.push(crate::model::KeyValue {
+            key: "disabled".to_owned(),
+            value: "ignored".to_owned(),
+            enabled: false,
+        });
         let response = HttpResponse {
             status: 201,
             status_text: "Created".to_owned(),
@@ -3060,6 +3082,17 @@ mod tests {
                     pm.expect(pm.response.headers.toObject()).to.have.property("Content-Type", "application/json");
                     pm.expect(pm.response.cookies.get("SESSION")).to.eql("abc");
                     pm.expect(pm.response.cookies.toObject()).to.have.property("session", "abc");
+                    pm.expect(pm.cookies.get("SESSION")).to.eql("abc");
+                    pm.expect(pm.cookies.has("missing")).to.be.false;
+                    pm.expect(pm.cookies.count()).to.eql(1);
+                    pm.expect(pm.cookies.toObject()).to.have.property("session", "abc");
+                    pm.expect(Object.isFrozen(pm.cookies)).to.be.true;
+                    const requestCookieNames = [];
+                    pm.cookies.forEach((cookie) => requestCookieNames.push(cookie.name));
+                    pm.expect(requestCookieNames).to.eql(["session"]);
+                    const responseCookieNames = [];
+                    pm.response.cookies.forEach((cookie) => responseCookieNames.push(cookie.name));
+                    pm.expect(responseCookieNames).to.eql(["session"]);
                     pm.expect(pm.response.responseTime).to.be.below(10);
                     pm.expect(pm.response.status).to.match(/Created/);
                     pm.expect(pm.response.code).to.not.equal(200);

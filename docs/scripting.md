@@ -42,6 +42,8 @@ The supported compatibility slice includes:
   mutation for no-auth, Basic, Digest, Bearer, API key and common OAuth shapes
 - `pm.info` request name/ID, event name and iteration metadata (runner passes
   the zero-based iteration and total count)
+- `pm.cookies` read-only snapshot of enabled request cookies with `get/has/all`,
+  `count`, `each/forEach` and `toObject`; cookie-jar persistence is not exposed
 - `pm.response.code/status/responseTime/text/json/headers/cookies`
 - `pm.sendRequest` callback requests for bounded HTTP(S) subrequests with
   URL query parameters, headers, Basic/Bearer/Digest/API-key auth, one bounded
@@ -51,7 +53,7 @@ The supported compatibility slice includes:
 - `pm.response.to.be.ok/success/redirection/clientError/serverError/error/withBody`,
   `pm.response.to.have.body/cookie/status/header/jsonBody` and negated header
   presence/value checks, header/cookie
-  `toObject` helpers and `pm.response.cookies.get/has`
+  `toObject` helpers and `pm.response.cookies.get/has/each/forEach`
 - `console.log`, `console.warn` and `console.error` capture
 
 The tested expectation subset also includes deep equality with stable object-key

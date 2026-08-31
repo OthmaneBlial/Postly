@@ -108,6 +108,10 @@ Implemented:
   name/ID, event name and iteration metadata; the collection runner passes the
   real zero-based iteration and total count, covered by local header/test
   regressions.
+- Script compatibility now includes a read-only `pm.cookies` request snapshot
+  plus `each/forEach` response-cookie iteration, with local coverage for lookup,
+  object conversion and disabled-cookie filtering; automatic cookie-jar
+  persistence remains deliberately outside the bridge.
 - Script reports now preserve individual post-response test names, pass/fail
   state, callback duration and bounded error details in runner JSON; the native
   GUI and CLI show the same per-test timing.

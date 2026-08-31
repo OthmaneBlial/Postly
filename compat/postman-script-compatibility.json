@@ -13,6 +13,7 @@
     { "api": "pm.variables.get", "status": "supported", "note": "Reads the documented iteration/runtime/request/environment/collection precedence." },
     { "api": "pm.variables.set/unset/clear/has/replaceIn", "status": "partial", "note": "Runtime session mutations and request header changes are supported; broader scope semantics remain limited." },
     { "api": "pm.info", "status": "partial", "note": "Request name/ID, event name, zero-based iteration and iteration count are exposed; direct GUI runs use a default one-iteration context." },
+    { "api": "pm.cookies", "status": "partial", "note": "A read-only snapshot of enabled request cookies exposes get/has/all/count/each/forEach/toObject; automatic cookie-jar persistence and mutation remain outside the bridge." },
     { "api": "pm.request", "status": "partial", "note": "Postman-shaped URL protocol/host/port/path/hash metadata, mutable path variables, method, headers, cookies, auth and raw/JSON/form body facades are supported; broader URL object parity remains limited." },
     { "api": "pm.request PropertyLists", "status": "partial", "note": "Request headers, cookies and URL query lists expose bounded get/has/all/count/each/toObject plus add/upsert/remove/clear where mutation is meaningful." },
     { "api": "pm.request.auth", "status": "partial", "note": "Type, parameter get/has/upsert/remove/clear and reconstruction for no-auth, Basic, Digest, Bearer, API key and common OAuth parameters are supported." },
