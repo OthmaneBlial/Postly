@@ -114,8 +114,8 @@ Implemented:
 - The script bridge now exposes Postman-shaped request URL, query, cookie and
   body facades, with URL/query mutations and raw/JSON/form body edits converted
   back into the native request model through dedicated regression tests; URL
-  protocol/host/port/path/hash metadata and read-only path variables are also
-  exposed.
+  protocol/host/port/path/hash metadata and mutable path-variable helpers are
+  also exposed and materialized back into the request URL.
 - Common response-side Postman assertions now include optional header values,
   JSON body path checks, non-empty body and cookie checks, negated header presence/value checks, and header/cookie object views;
   matcher coverage includes exact/all/any keys, contain, deep properties and
@@ -279,7 +279,9 @@ published as a GitHub Release with the validated archive and installation
 notes. It is intentionally not presented as notarized, cross-platform or
 production-ready; those release gates remain explicit.
 
-The OpenAPI import slice now also resolves bounded remote references from local
+The latest scripting slice now covers mutable Postman-shaped URL variables,
+including `replace`/`upsert` and direct value edits, with the materialized URL
+round-tripped through the native request model. The OpenAPI import slice now also resolves bounded remote references from local
 files and URL documents, with local loopback server tests covering relative and
 absolute HTTP references. The OpenAPI export slice is covered by a native JSON/YAML serialization test
 and a real CLI smoke run from a temporary workspace; operation paths, server

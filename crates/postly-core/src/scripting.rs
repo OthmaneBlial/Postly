@@ -2278,9 +2278,10 @@ mod tests {
                     pm.expect(pm.request.url.variable.toObject()).to.eql({ userId: "42" });
                 });
                 pm.request.url.variables.replace("userId", "99");
+                pm.request.url.variables.get("userId").value = "100";
                 pm.test("path variable mutations materialize", function () {
-                    pm.expect(pm.request.url.variables.get("userId").value).to.eql("99");
-                    pm.expect(pm.request.url.toString()).to.eql("https://api.example.test/users/99?include=profile#details");
+                    pm.expect(pm.request.url.variables.get("userId").value).to.eql("100");
+                    pm.expect(pm.request.url.toString()).to.eql("https://api.example.test/users/100?include=profile#details");
                 });
             "##,
             &request,
@@ -2298,7 +2299,7 @@ mod tests {
             .expect("apply URL variable mutation");
         assert_eq!(
             applied.url,
-            "https://api.example.test/users/99?include=profile#details"
+            "https://api.example.test/users/100?include=profile#details"
         );
     }
 
