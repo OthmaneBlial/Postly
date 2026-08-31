@@ -90,7 +90,7 @@ Implemented:
 - native GUI Transport tab with persisted local timeout, bounded redirect limit, HTTP(S)/SOCKS proxy, bypass hosts, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE/WebSocket/gRPC workflows; WebSocket and gRPC use HTTP CONNECT routing.
 - Native GUI Body tab editors for raw text, JSON, XML, HTML, JavaScript and GraphQL plus URL-encoded fields, multipart text/file parts and binary file uploads, with disabled entries and optional content types preserved.
 - Native GUI command palette with searchable request actions and keyboard shortcuts for new, save, send, cancel, response clearing and wrapping.
-- Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs, combined PEM client identities and explicit HTTP CONNECT proxy routing; explicit insecure TLS remains pending.
+- Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs, combined PEM or PKCS#12 client identities and explicit HTTP CONNECT proxy routing; explicit insecure TLS remains pending.
 - CLI gRPC server reflection discovery supports protocol v1 with a v1alpha fallback, keeps reflected descriptors in memory and reports services, methods and streaming shapes as text or JSON.
 - Native GUI gRPC requests now persist local proto/include paths or server-reflection mode/host, method paths and metadata, edit protobuf JSON bodies, and execute unary plus finite streaming shapes through the same dynamic descriptor model; GUI local-proto and reflection worker coverage is backed by local tonic HTTP/2 servers.
 - Persistable response assertions for exact/ranged status, present/absent/equal/containing headers and cookies, valid JSON bodies, body text, response-time thresholds, JSON Pointer presence/absence/equality/deep inclusion/type checks and a bounded JSON Schema subset, evaluated by the runner without Node.js.
@@ -261,10 +261,11 @@ Not yet implemented:
   individual TOML writes use unique flushed temporary files and
   request/environment relocations roll back their newly written destination.
 - Encrypted PKCS#12 identities and transient passphrase handling now work for
-  the shared HTTP/SSE/WebSocket engine, CLI and native GUI; native GUI
+  the shared HTTP/SSE/WebSocket engine, CLI and native GUI, plus CLI gRPC
+  calls; gRPC decodes the container in memory before handing the identity to
+  tonic/rustls. Native GUI
   per-domain certificate associations now select exact-host or wildcard
   overrides for HTTP/SSE/WebSocket/gRPC while keeping passphrases session-only.
-  gRPC PKCS#12 remains open.
   gRPC custom PEM CA/client identity and SOCKS5 routing are available in CLI
   and GUI.
 - OpenAPI schema generation beyond the current nested-example/nullable/
@@ -305,6 +306,12 @@ certificate paths, chooses the most specific exact or wildcard host match
 after variable resolution, falls back independently for blank fields, and
 keeps per-association passphrases out of `.postly/gui-settings.json`. Matching
 and pre-network diagnostics are covered by native-app tests.
+
+The gRPC certificate slice now accepts password-protected `.p12`/`.pfx`
+identities through the same transient `POSTLY_CLIENT_IDENTITY_PASSPHRASE`
+boundary. The CLI decodes the container in memory with no temporary PEM file,
+then uses the existing verified tonic/rustls connector; local tests cover
+missing and incorrect passphrases plus a real mutual-TLS gRPC call.
 
 The HTTP Digest slice adds bounded RFC 7616 challenge parsing, one controlled
 retry for MD5/MD5-sess/SHA-256/SHA-256-sess and `auth`/`auth-int` qop handling,
@@ -363,7 +370,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`42585b1d80aa52880a16b14544b4e58f6b08cda4db11408aa0927de7c480df6a`.
+`6351fd72afc20628f0aaad1b96d94549486338542fd808e278ef29f1b622137b`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest

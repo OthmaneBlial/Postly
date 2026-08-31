@@ -68,6 +68,6 @@ contents and passphrases are not.
 
 CLI and native GUI WebSocket connections route the Transport CA, combined PEM
 or PKCS#12 client identity and explicit insecure-TLS settings for `wss://`;
-gRPC CLI calls have their own HTTPS PEM CA/client-identity options; see
+gRPC CLI calls have their own HTTPS PEM or PKCS#12 CA/client-identity options; see
 [gRPC](grpc.md). `--insecure` remains an explicit escape hatch and should only
 be used for a controlled local exception.

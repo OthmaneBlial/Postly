@@ -139,11 +139,72 @@ struct GrpcCallOptions {
     output_json: bool,
 }
 
+fn is_pkcs12_identity_path(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        let extension = extension.to_string_lossy();
+        extension.eq_ignore_ascii_case("p12") || extension.eq_ignore_ascii_case("pfx")
+    })
+}
+
+struct GrpcIdentityPem {
+    certificate: Vec<u8>,
+    private_key: Vec<u8>,
+}
+
+fn load_grpc_pkcs12_identity(path: &Path, passphrase: &str) -> Result<GrpcIdentityPem> {
+    let der = fs::read(path)
+        .with_context(|| format!("could not read gRPC client identity {}", path.display()))?;
+    if der.is_empty() {
+        bail!("gRPC client identity {} is empty", path.display());
+    }
+    let archive = openssl::pkcs12::Pkcs12::from_der(&der)
+        .with_context(|| format!("invalid PKCS#12 gRPC client identity {}", path.display()))?;
+    let parsed = archive.parse2(passphrase).with_context(|| {
+        format!(
+            "could not unlock PKCS#12 gRPC client identity {}",
+            path.display()
+        )
+    })?;
+    let certificate = parsed
+        .cert
+        .context("PKCS#12 gRPC client identity has no certificate")?;
+    let private_key = parsed
+        .pkey
+        .context("PKCS#12 gRPC client identity has no private key")?;
+    let mut certificate_pem = certificate.to_pem()?;
+    if let Some(chain) = parsed.ca {
+        for certificate in chain {
+            certificate_pem.extend(certificate.to_pem()?);
+        }
+    }
+    Ok(GrpcIdentityPem {
+        certificate: certificate_pem,
+        private_key: private_key.private_key_to_pem_pkcs8()?,
+    })
+}
+
 fn configure_grpc_endpoint(
     endpoint_value: &str,
     timeout: u64,
     ca_cert: Option<&Path>,
     client_identity: Option<&Path>,
+) -> Result<tonic::transport::Endpoint> {
+    let passphrase = client_identity_passphrase(client_identity);
+    configure_grpc_endpoint_with_passphrase(
+        endpoint_value,
+        timeout,
+        ca_cert,
+        client_identity,
+        passphrase.as_deref(),
+    )
+}
+
+fn configure_grpc_endpoint_with_passphrase(
+    endpoint_value: &str,
+    timeout: u64,
+    ca_cert: Option<&Path>,
+    client_identity: Option<&Path>,
+    passphrase: Option<&str>,
 ) -> Result<tonic::transport::Endpoint> {
     let endpoint_url = url::Url::parse(endpoint_value)
         .with_context(|| format!("invalid gRPC endpoint: {endpoint_value}"))?;
@@ -159,6 +220,31 @@ fn configure_grpc_endpoint(
             let domain = endpoint_url
                 .host_str()
                 .context("HTTPS gRPC endpoint has no hostname")?;
+            if let Some(path) = client_identity.filter(|path| is_pkcs12_identity_path(path)) {
+                let passphrase = passphrase.context(format!(
+                    "set POSTLY_CLIENT_IDENTITY_PASSPHRASE for PKCS#12 gRPC identity {}",
+                    path.display()
+                ))?;
+                let identity = load_grpc_pkcs12_identity(path, passphrase)?;
+                let mut tls = tonic::transport::ClientTlsConfig::new()
+                    .domain_name(domain)
+                    .with_webpki_roots();
+                if let Some(ca_path) = ca_cert {
+                    let pem = fs::read(ca_path).with_context(|| {
+                        format!("could not read gRPC CA certificate {}", ca_path.display())
+                    })?;
+                    if pem.is_empty() {
+                        bail!("gRPC CA certificate {} is empty", ca_path.display());
+                    }
+                    tls = tls.ca_certificate(tonic::transport::Certificate::from_pem(pem));
+                }
+                tls = tls.identity(tonic::transport::Identity::from_pem(
+                    identity.certificate,
+                    identity.private_key,
+                ));
+                endpoint = endpoint.tls_config(tls)?;
+                return Ok(endpoint);
+            }
             let mut tls = tonic::transport::ClientTlsConfig::new()
                 .domain_name(domain)
                 .with_webpki_roots();
@@ -368,7 +454,7 @@ struct GrpcTlsArgs {
     #[arg(
         long,
         value_name = "PATH",
-        help = "Use a combined PEM client certificate and private key for HTTPS"
+        help = "Use a combined PEM or password-protected PKCS#12 client identity for HTTPS"
     )]
     client_identity: Option<PathBuf>,
 }
@@ -2570,14 +2656,14 @@ async fn reflect_grpc(options: GrpcReflectCommand) -> Result<()> {
     let endpoint_url = url::Url::parse(&options.endpoint)
         .with_context(|| format!("invalid gRPC endpoint: {}", options.endpoint))?;
     let host = options.host.unwrap_or_default();
-    let endpoint = configure_grpc_endpoint(
+    let endpoint_config = configure_grpc_endpoint(
         &options.endpoint,
         options.timeout,
         options.tls.ca_cert.as_deref(),
         options.tls.client_identity.as_deref(),
     )?;
     let channel = connect_grpc_endpoint(
-        endpoint,
+        endpoint_config,
         &options.endpoint,
         options.proxy.as_deref(),
         options.no_proxy.as_deref(),
@@ -2626,6 +2712,14 @@ async fn reflect_grpc(options: GrpcReflectCommand) -> Result<()> {
 }
 
 async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
+    let passphrase = client_identity_passphrase(options.client_identity.as_deref());
+    call_grpc_with_passphrase(options, passphrase.as_deref()).await
+}
+
+async fn call_grpc_with_passphrase(
+    options: GrpcCallOptions,
+    passphrase: Option<&str>,
+) -> Result<()> {
     let schema = GrpcSchema::from_proto(&options.proto, &options.includes)
         .with_context(|| format!("could not load protobuf schema {}", options.proto.display()))?;
     let method = schema
@@ -2653,14 +2747,15 @@ async fn call_grpc(options: GrpcCallOptions) -> Result<()> {
         Vec::new()
     };
 
-    let endpoint = configure_grpc_endpoint(
+    let endpoint_config = configure_grpc_endpoint_with_passphrase(
         &options.endpoint,
         options.timeout,
         options.ca_cert.as_deref(),
         options.client_identity.as_deref(),
+        passphrase,
     )?;
     let channel = connect_grpc_endpoint(
-        endpoint,
+        endpoint_config,
         &options.endpoint,
         options.proxy.as_deref(),
         options.no_proxy.as_deref(),
@@ -4786,6 +4881,27 @@ mod tests {
     const TEST_SERVER_KEY_PEM: &str = include_str!("../../postly-core/testdata/tls/server-key.pem");
     const TEST_CLIENT_CERT_PEM: &str = include_str!("../../postly-core/testdata/tls/client.pem");
     const TEST_CLIENT_KEY_PEM: &str = include_str!("../../postly-core/testdata/tls/client-key.pem");
+    const TEST_PKCS12_PASSWORD: &str = "postly-test-password";
+
+    fn create_test_pkcs12_identity(directory: &Path) -> Option<PathBuf> {
+        let certificate = directory.join("client.pem");
+        let private_key = directory.join("client-key.pem");
+        let identity = directory.join("client-identity.p12");
+        std::fs::write(&certificate, TEST_CLIENT_CERT_PEM).expect("client certificate fixture");
+        std::fs::write(&private_key, TEST_CLIENT_KEY_PEM).expect("client key fixture");
+        let output = std::process::Command::new("openssl")
+            .args(["pkcs12", "-export", "-inkey"])
+            .arg(&private_key)
+            .args(["-in"])
+            .arg(&certificate)
+            .arg("-passout")
+            .arg(format!("pass:{TEST_PKCS12_PASSWORD}"))
+            .arg("-out")
+            .arg(&identity)
+            .output()
+            .expect("openssl is required for the PKCS#12 gRPC fixture");
+        output.status.success().then_some(identity)
+    }
 
     fn pem_certificates(pem: &str) -> Vec<CertificateDer<'static>> {
         rustls_pemfile::certs(&mut Cursor::new(pem.as_bytes()))
@@ -4797,6 +4913,45 @@ mod tests {
         rustls_pemfile::private_key(&mut Cursor::new(pem.as_bytes()))
             .expect("valid test private key")
             .expect("test private key")
+    }
+
+    #[test]
+    fn grpc_pkcs12_identity_requires_and_validates_its_passphrase() {
+        let directory = tempfile::tempdir().expect("directory");
+        let Some(identity) = create_test_pkcs12_identity(directory.path()) else {
+            return;
+        };
+
+        let missing = configure_grpc_endpoint_with_passphrase(
+            "https://localhost:50051",
+            10,
+            None,
+            Some(&identity),
+            None,
+        )
+        .expect_err("missing PKCS#12 passphrase must fail");
+        assert!(missing
+            .to_string()
+            .contains("POSTLY_CLIENT_IDENTITY_PASSPHRASE"));
+
+        let wrong = configure_grpc_endpoint_with_passphrase(
+            "https://localhost:50051",
+            10,
+            None,
+            Some(&identity),
+            Some("wrong-passphrase"),
+        )
+        .expect_err("wrong PKCS#12 passphrase must fail");
+        assert!(wrong.to_string().contains("could not unlock PKCS#12"));
+
+        configure_grpc_endpoint_with_passphrase(
+            "https://localhost:50051",
+            10,
+            None,
+            Some(&identity),
+            Some(TEST_PKCS12_PASSWORD),
+        )
+        .expect("valid PKCS#12 passphrase");
     }
 
     fn test_tls_server_config(require_client: bool) -> ServerConfig {
@@ -5797,7 +5952,7 @@ mod tests {
 
         call_grpc(GrpcCallOptions {
             endpoint: format!("https://localhost:{}", address.port()),
-            proto,
+            proto: proto.clone(),
             includes: Vec::new(),
             method: "/demo.Echo/Echo".to_owned(),
             message: Some(r#"{"message":"secure"}"#.to_owned()),
@@ -5809,12 +5964,39 @@ mod tests {
             timeout: 10,
             proxy: None,
             no_proxy: None,
-            ca_cert: Some(ca_path),
+            ca_cert: Some(ca_path.clone()),
             client_identity: Some(client_identity_path),
             output_json: true,
         })
         .await
         .expect("gRPC mTLS command");
+
+        let Some(pkcs12_identity_path) = create_test_pkcs12_identity(directory.path()) else {
+            return;
+        };
+        call_grpc_with_passphrase(
+            GrpcCallOptions {
+                endpoint: format!("https://localhost:{}", address.port()),
+                proto,
+                includes: Vec::new(),
+                method: "/demo.Echo/Echo".to_owned(),
+                message: Some(r#"{"message":"secure-pkcs12"}"#.to_owned()),
+                message_file: None,
+                metadata: vec!["x-test=local".to_owned()],
+                bearer: None,
+                basic_user: None,
+                basic_password: None,
+                timeout: 10,
+                proxy: None,
+                no_proxy: None,
+                ca_cert: Some(ca_path),
+                client_identity: Some(pkcs12_identity_path),
+                output_json: true,
+            },
+            Some(TEST_PKCS12_PASSWORD),
+        )
+        .await
+        .expect("gRPC PKCS#12 mTLS command");
 
         shutdown_tx.send(()).expect("shutdown");
         server.await.expect("server task");

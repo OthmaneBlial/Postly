@@ -75,7 +75,7 @@ cargo run -- grpc call https://localhost:50051 \
   --client-identity ./certs/client-identity.pem
 ```
 
-The certificate flags are validated before the network call and only apply to `https://` endpoints. TLS verification remains enabled; an explicit insecure-TLS mode and encrypted/PKCS#12 identities with passphrases are not supported for gRPC yet. HTTP/SSE requests support password-protected `.p12`/`.pfx` identities; see [HTTPS certificates](certificates.md).
+The certificate flags are validated before the network call and only apply to `https://` endpoints. TLS verification remains enabled. The client identity may be an unencrypted combined PEM file or a password-protected `.p12`/`.pfx`; set `POSTLY_CLIENT_IDENTITY_PASSPHRASE` for the latter. Postly decodes the PKCS#12 container in memory and feeds the resulting identity to the existing rustls gRPC connector; it never writes a temporary PEM file. Explicit insecure TLS remains intentionally unsupported for gRPC.
 
 For a server-streaming method, use its canonical path and the same request options:
 
@@ -111,7 +111,8 @@ cargo run -- grpc call http://127.0.0.1:50051 \
 
 Client-streaming methods return one response and bidirectional methods emit
 one JSON object per response with `stream_index` and `input_count`. Custom CA
-certificates and combined PEM client identities work for HTTPS calls. CLI and
+certificates and combined PEM or PKCS#12 client identities work for HTTPS calls.
+CLI and
 native GUI gRPC calls support explicit `http://` proxy CONNECT routing with
 `--no-proxy` or the matching GUI bypass list. Native GUI gRPC calls require
 verified TLS for HTTPS endpoints and reject insecure-TLS configuration explicitly

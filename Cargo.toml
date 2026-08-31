@@ -28,6 +28,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "linux-native", "windows-native"] }
 md-5 = "0.10"
 native-tls = "0.2"
+openssl = "0.10"
 prost = "0.13"
 prost-reflect = { version = "0.14", features = ["serde"] }
 protox = "0.7"

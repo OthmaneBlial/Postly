@@ -3072,6 +3072,7 @@ dependencies = [
  "http",
  "hyper-util",
  "native-tls",
+ "openssl",
  "postly-core",
  "prost",
  "prost-reflect",
