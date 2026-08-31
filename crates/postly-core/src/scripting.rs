@@ -1119,6 +1119,12 @@ request.cookies = decorateKeyValueList(request.cookies || [], (cookie) => ({
   value: text(cookie && cookie.value),
   enabled: cookie && cookie.disabled !== true && cookie.enabled !== false
 }));
+const pmInfo = Object.freeze({
+  requestName: text(request.name),
+  requestId: text(request.id),
+  iteration: 0,
+  iterationCount: 1
+});
 
 function serializeRequest() {
   const serialized = { ...request };
@@ -1885,6 +1891,7 @@ function recordTest(name, callback) {
 }
 
 const pm = {
+  info: pmInfo,
   environment,
   collectionVariables,
   globals,
@@ -2636,6 +2643,31 @@ mod tests {
             vec![crate::model::KeyValue::enabled("session", "local")]
         );
         assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+    }
+
+    #[test]
+    fn exposes_postman_info_metadata() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let request = Request::new("Info facade", "GET", "https://api.example.test");
+        let result = run_script(
+            r#"
+                pm.test("request metadata", function () {
+                    pm.expect(pm.info.requestName).to.eql("Info facade");
+                    pm.expect(pm.info.requestId).to.be.a("string");
+                    pm.expect(pm.info.iteration).to.eql(0);
+                    pm.expect(pm.info.iterationCount).to.eql(1);
+                });
+            "#,
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("pm.info facade");
+
+        assert_eq!(result.tests.len(), 1);
+        assert!(result.tests[0].passed, "{result:?}");
     }
 
     #[test]

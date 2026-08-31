@@ -104,6 +104,9 @@ Implemented:
   stable deep equality, keys, length, oneOf, empty, numeric range matchers,
   array members/include.members, equality aliases and chainable property/type checks; broad Chai/Postman parity
   remains intentionally partial.
+- The opt-in script bridge now exposes a frozen `pm.info` facade with request
+  name/ID and deterministic base iteration metadata, covered by a native
+  compatibility regression.
 - Script reports now preserve individual post-response test names, pass/fail
   state, callback duration and bounded error details in runner JSON; the native
   GUI and CLI show the same per-test timing.
