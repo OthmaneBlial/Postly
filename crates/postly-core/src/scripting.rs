@@ -1169,6 +1169,12 @@ function makeScriptResponse(responseData) {
   };
   const responseTo = {
     have: {
+      body: {
+        get: () => {
+          assert(responseData.body_text.length > 0, "expected response to have a body");
+          return true;
+        }
+      },
       status: (expected) => assert(responseData.status === expected, "expected status " + responseData.status + " to equal " + expected),
       header: function (name, expected) {
         const actual = responseHeaders.get(name);
@@ -1187,6 +1193,10 @@ function makeScriptResponse(responseData) {
         assert(result.found, "expected JSON body property " + text(path));
         if (arguments.length > 1) assert(deepEqual(result.value, expected), "expected JSON body property " + text(path) + " to equal " + JSON.stringify(expected));
         return result.value;
+      },
+      cookie: (name) => {
+        const found = responseCookies.some((cookie) => text(cookie && cookie.name).toLowerCase() === text(name).toLowerCase());
+        assert(found, "expected response cookie " + text(name));
       }
     }
   };
@@ -1194,7 +1204,15 @@ function makeScriptResponse(responseData) {
   Object.defineProperty(responseTo, "not", {
     value: {
       have: {
-        status: (expected) => assert(responseData.status !== expected, "expected status " + responseData.status + " not to equal " + expected)
+        get body() {
+          assert(responseData.body_text.length === 0, "expected response not to have a body");
+          return true;
+        },
+        status: (expected) => assert(responseData.status !== expected, "expected status " + responseData.status + " not to equal " + expected),
+        cookie: (name) => {
+          const found = responseCookies.some((cookie) => text(cookie && cookie.name).toLowerCase() === text(name).toLowerCase());
+          assert(!found, "expected response not to have cookie " + text(name));
+        }
       },
       be: makeResponseCategories(true)
     }
@@ -2144,6 +2162,9 @@ mod tests {
                     pm.response.to.not.be.serverError;
                     pm.response.to.not.be.error;
                     pm.response.to.be.withBody;
+                    pm.response.to.have.body;
+                    pm.response.to.have.cookie("session");
+                    pm.response.to.not.have.cookie("missing");
                     pm.response.to.have.header("content-type");
                     pm.response.to.have.header("content-type", /json/);
                     pm.response.to.have.jsonBody("ok", true);

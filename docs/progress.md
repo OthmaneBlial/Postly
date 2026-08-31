@@ -98,7 +98,7 @@ Implemented:
   body facades, with URL/query mutations and raw/JSON/form body edits converted
   back into the native request model through a dedicated regression test.
 - Common response-side Postman assertions now include optional header values,
-  JSON body path checks, non-empty body checks and header/cookie object views;
+  JSON body path checks, non-empty body and cookie checks, and header/cookie object views;
   matcher coverage includes exact/all/any keys, contain, deep properties and
   common numeric aliases with regression coverage.
 - Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; the GUI and `postly cookies` inspect active session cookies by domain/path with masked values and can clear the jar explicitly; saved workspaces persist a bounded ignored local jar.
