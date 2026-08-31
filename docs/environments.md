@@ -72,7 +72,9 @@ silently creating a new plaintext value.
 
 ## Import and sharing checklist
 
-1. Import the environment into the workspace and inspect the JSON report.
+1. Import the environment into the workspace with `--secure` when its Postman
+   `secret` entries should go directly to the OS credential store, then inspect
+   the JSON report.
 2. Confirm the active environment name before sending a request.
 3. Migrate credentials with `--secret` or `env migrate`.
 4. Keep `.postly/` runtime artifacts and real environment files private.

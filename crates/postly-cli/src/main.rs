@@ -16,7 +16,7 @@ use hyper_util::rt::TokioIo;
 use postly_core::{
     connect_socks5_stream, evaluate_response_assertions, export_openapi_collection,
     export_postman_collection, export_postman_environment_with_store, generate_code_snippet,
-    generate_markdown_docs, import_curl_command, import_dotenv, import_environment,
+    generate_markdown_docs, import_curl_command, import_dotenv, import_environment_with_store,
     import_postman_collection, message_from_json, message_to_json, parse_graphql_response,
     parse_graphql_schema, parse_variables_json, run_requests, schema_introspection_query, Auth,
     CancellationToken, Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest,
@@ -1431,6 +1431,11 @@ enum ImportKind {
         input: PathBuf,
         #[arg(short, long, default_value = ".")]
         output: PathBuf,
+        #[arg(
+            long,
+            help = "Store Postman variables marked secret in the OS credential store"
+        )]
+        secure: bool,
     },
     /// Import a local dotenv file without expanding variables or executing commands.
     Dotenv {
@@ -3576,8 +3581,13 @@ async fn import_command(kind: ImportKind) -> Result<()> {
             let report = import_postman_collection(input, output)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
-        ImportKind::Environment { input, output } => {
-            let report = import_environment(input, output)?;
+        ImportKind::Environment {
+            input,
+            output,
+            secure,
+        } => {
+            let secret_store = secure.then(|| SecretStore::for_workspace(&output));
+            let report = import_environment_with_store(input, output, secret_store.as_ref())?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         ImportKind::Dotenv {

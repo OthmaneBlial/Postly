@@ -5,7 +5,7 @@ The current migration path is deliberately explicit:
 ~~~text
 export a Postman Collection v2.1
   -> postly import collection collection.json --output ./project
-  -> postly import environment environment.json --output ./project
+  -> postly import environment environment.json --output ./project --secure
   -> postly list ./project
   -> inspect the JSON migration report and review warnings
   -> postly send <request>.postly.toml
@@ -20,9 +20,10 @@ postly import dotenv .env --output ./project --name Local
 postly import dotenv .env --output ./project --name Local --secret API_TOKEN
 ~~~
 
-Only keys passed with `--secret` are written to the OS credential store. All
-other imported values remain in the ignored local environment file, so Postly
-does not guess which variables are sensitive.
+Only keys passed with `--secret` are written to the OS credential store. For a
+Postman environment, pass `--secure` to move entries marked `secret` into the
+same store during import. All other imported values remain in the ignored local
+environment file, so Postly does not guess which variables are sensitive.
 
 The importer preserves collection metadata, folders, request URLs, query parameters, headers (including disabled and scalar values), descriptions, raw/JSON/urlencoded/form-data/file bodies, common auth types including Basic, Digest, OAuth 2.0 Client Credentials, Authorization Code + PKCE, Refresh Token, Device Code and AWS Signature V4, response-example status text and cookies with common attributes, examples, variables and request-level scripts. Collection variables accept scalar values and the `current` fallback; environment imports also preserve numeric/boolean scalar values and common `currentValue`/`initialValue` fallbacks. Disabled collection variables are not activated and are reported explicitly. Collection and folder auth is materialized into requests that do not override it, so the imported files retain the effective behavior without depending on a hidden runtime tree. Unsupported auth types and other review-worthy fields are reported and counted for manual review rather than silently discarded. Request-level Postman transport profiles, proxy/certificate settings and embedded response `originalRequest` data are currently reported as manual-review gaps because they are not yet represented by the native request model.
 

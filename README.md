@@ -186,7 +186,7 @@ Export your collection and environment from Postman, then import them locally:
 
 ```bash
 cargo run -- import collection ./collection.json --output ./my-api
-cargo run -- import environment ./environment.json --output ./my-api
+cargo run -- import environment ./environment.json --output ./my-api --secure
 
 cargo run -- list ./my-api
 cargo run -- run ./my-api --environment Local --reporter pretty

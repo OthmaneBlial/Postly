@@ -37,6 +37,10 @@ Implemented:
   instead of silently dropping them. Malformed header, query, cookie and
   urlencoded entries are also reported with deterministic request-level review
   status.
+- `postly import environment --secure` now moves Postman environment entries
+  marked `secret` into the OS credential store and persists only opaque
+  workspace-scoped references; the default import warns when those values stay
+  plaintext for compatibility.
 - Incomplete Postman OAuth2 exports now preserve an existing `accessToken` as
   bearer authentication so the request remains runnable, while the migration
   report keeps token renewal marked for manual review.
@@ -386,7 +390,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`57699195adfd2e4474cdddfbb7e2a8eb469251795de8a017e1d05235f3012637`.
+`081363769f4fa6a93f471bbd285b6d1b3fd3ffd67bf7058decab4bfb4c44eaa9`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest

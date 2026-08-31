@@ -51,8 +51,10 @@ surface without claiming complete Postman parity.
 Postman, OpenAPI, dotenv and cURL imports parse files/data into the native model.
 The cURL parser does not execute a shell command. Unsupported or ambiguous
 fields are reported for review rather than silently presented as equivalent.
-Imported plaintext environments remain plaintext until the user explicitly
-migrates selected values to the credential store.
+Imported plaintext environments remain plaintext unless the user passes
+`postly import environment ... --secure`, which moves Postman entries marked
+`secret` into the OS credential store, or explicitly migrates selected values
+with `postly env migrate`. Unmarked values are never guessed to be secrets.
 
 ## Local review checklist
 

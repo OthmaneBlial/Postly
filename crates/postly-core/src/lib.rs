@@ -48,7 +48,10 @@ pub use http::{
     OAuthAuthorizationRequest, OAuthDeviceCodePrompt, ResponseCookie, ResponseView,
     StoredCookieInfo,
 };
-pub use import::{import_dotenv, import_environment, import_postman_collection, ImportReport};
+pub use import::{
+    import_dotenv, import_environment, import_environment_with_store, import_postman_collection,
+    ImportReport,
+};
 pub use model::*;
 pub use openapi::{
     export_openapi_collection, import_openapi, import_openapi_text,

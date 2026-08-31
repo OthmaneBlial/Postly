@@ -211,6 +211,7 @@ use the OS credential store:
 ~~~bash
 postly import dotenv .env --output ./my-api --name Local
 postly import dotenv .env --output ./my-api --name Local --secret API_TOKEN
+postly import environment environment.json --output ./my-api --secure
 ~~~
 
 Malformed assignments fail the import. Duplicate keys use the last value and

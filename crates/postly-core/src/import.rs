@@ -181,6 +181,19 @@ pub fn import_environment(
     environment_path: impl AsRef<Path>,
     output_directory: impl AsRef<Path>,
 ) -> Result<ImportReport, ImportError> {
+    import_environment_with_store(environment_path, output_directory, None)
+}
+
+/// Import a Postman environment, optionally moving entries marked `secret`
+/// into the platform credential store before the native file is written.
+///
+/// Without a store, the legacy import remains available for compatibility but
+/// reports that marked secrets are plaintext and should be migrated explicitly.
+pub fn import_environment_with_store(
+    environment_path: impl AsRef<Path>,
+    output_directory: impl AsRef<Path>,
+    secret_store: Option<&SecretStore>,
+) -> Result<ImportReport, ImportError> {
     let environment_path = environment_path.as_ref().to_path_buf();
     let text = fs::read_to_string(&environment_path).map_err(|source| ImportError::Read {
         path: environment_path.clone(),
@@ -218,13 +231,31 @@ pub fn import_environment(
                 .and_then(Value::as_bool)
                 .unwrap_or(true);
             let secret = variable.get("type").and_then(Value::as_str) == Some("secret");
+            let (value, secret_ref) = if secret {
+                if let Some(secret_store) = secret_store {
+                    let reference = secret_store
+                        .set_environment_secret(name, key, &value)
+                        .map_err(ImportError::Secret)?;
+                    report.warn(format!(
+                        "Environment variable {key} was stored in the OS credential store during secure import."
+                    ));
+                    (String::new(), Some(reference.into_string()))
+                } else {
+                    report.warn(format!(
+                        "Environment variable {key} is marked secret but was imported as plaintext; use --secure or env migrate before sharing the workspace."
+                    ));
+                    (value, None)
+                }
+            } else {
+                (value, None)
+            };
             environment.variables.insert(
                 key.to_owned(),
                 EnvironmentVariable {
                     value,
                     enabled,
                     secret,
-                    secret_ref: None,
+                    secret_ref,
                 },
             );
             if !enabled {
@@ -1798,6 +1829,43 @@ mod tests {
         assert!(!environment.variables["disabledValue"].enabled);
         assert_eq!(environment.variables["numericValue"].value, "42");
         assert_eq!(environment.variables["booleanValue"].value, "true");
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("accessToken") && warning.contains("plaintext")));
+    }
+
+    #[test]
+    fn secure_environment_import_moves_marked_secrets_to_the_store() {
+        let output = tempfile::tempdir().expect("output");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../compat/postman-import/basic-environment.json");
+        let secret_store = SecretStore::for_test(output.path());
+
+        let report = import_environment_with_store(&fixture, output.path(), Some(&secret_store))
+            .expect("secure environment import");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("accessToken")
+                    && warning.contains("credential store"))
+        );
+
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let (_, environment) = workspace.environments().expect("environments").remove(0);
+        let access_token = &environment.variables["accessToken"];
+        assert!(access_token.secret);
+        assert_eq!(access_token.value, "");
+        let reference = access_token
+            .secret_ref
+            .as_deref()
+            .expect("secret reference");
+        let resolved = secret_store
+            .resolve_environment(&environment)
+            .expect("resolve secure environment");
+        assert_eq!(resolved.get("accessToken"), Some(&"replace-me".to_owned()));
+        assert!(!reference.contains("replace-me"));
     }
 
     #[test]
