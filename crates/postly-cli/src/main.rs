@@ -988,6 +988,15 @@ enum Command {
         #[arg(long)]
         output_json: bool,
     },
+    /// Inspect or clear the local workspace cookie jar without printing values.
+    Cookies {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long, help = "Clear all cookies from this workspace's local jar")]
+        clear: bool,
+        #[arg(long)]
+        output_json: bool,
+    },
     /// Generate a reviewable code snippet from a saved request.
     Snippet {
         file: PathBuf,
@@ -1645,6 +1654,11 @@ async fn main() -> Result<()> {
                 output_json,
             },
         ),
+        Command::Cookies {
+            path,
+            clear,
+            output_json,
+        } => list_cookies(&path, clear, output_json),
         Command::Snippet {
             file,
             language,
@@ -1717,6 +1731,88 @@ fn print_snippet(path: &Path, language: SnippetLanguage, output_json: bool) -> R
             eprintln!("warning: {warning}");
         }
         println!("{}", snippet.code);
+    }
+    Ok(())
+}
+
+fn list_cookies(path: &Path, clear: bool, output_json: bool) -> Result<()> {
+    let workspace = find_workspace(path)?;
+    let engine = HttpEngine::new(&EngineOptions {
+        cookie_jar: Some(workspace.root().join(".postly/cookies.json")),
+        ..EngineOptions::default()
+    })?;
+    if clear {
+        engine.clear_cookies()?;
+        if output_json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({"cleared": true}))?
+            );
+        } else {
+            println!("Cleared the local Postly cookie jar.");
+        }
+        return Ok(());
+    }
+
+    let cookies = engine.cookie_snapshot();
+    if output_json {
+        let cookies = cookies
+            .iter()
+            .map(|cookie| {
+                json!({
+                    "name": cookie.name,
+                    "value": "<masked>",
+                    "domain": cookie.domain,
+                    "path": cookie.path,
+                    "secure": cookie.secure,
+                    "http_only": cookie.http_only,
+                    "same_site": cookie.same_site,
+                    "persistent": cookie.persistent,
+                })
+            })
+            .collect::<Vec<_>>();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "workspace": workspace.root(),
+                "count": cookies.len(),
+                "cookies": cookies,
+            }))?
+        );
+    } else if cookies.is_empty() {
+        println!("No active cookies in {}.", workspace.root().display());
+    } else {
+        println!(
+            "{} active cookie(s) in {}:",
+            cookies.len(),
+            workspace.root().display()
+        );
+        for cookie in cookies {
+            let mut flags = Vec::new();
+            if cookie.secure {
+                flags.push("Secure".to_owned());
+            }
+            if cookie.http_only {
+                flags.push("HttpOnly".to_owned());
+            }
+            if let Some(same_site) = cookie.same_site {
+                flags.push(format!("SameSite={same_site}"));
+            }
+            if cookie.persistent {
+                flags.push("Persistent".to_owned());
+            }
+            println!(
+                "- {}=<masked> domain={} path={}{}",
+                cookie.name,
+                cookie.domain,
+                cookie.path,
+                if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", flags.join(", "))
+                }
+            );
+        }
     }
     Ok(())
 }
@@ -4122,6 +4218,30 @@ mod tests {
         )
         .expect_err("incomplete OAuth flags");
         assert!(error.to_string().contains("--oauth-client-secret"));
+    }
+
+    #[test]
+    fn parses_cookie_inspection_command_without_value_output() {
+        let cli = Cli::try_parse_from([
+            "postly",
+            "cookies",
+            "./workspace",
+            "--clear",
+            "--output-json",
+        ])
+        .expect("cookie command");
+        match cli.command {
+            Command::Cookies {
+                path,
+                clear,
+                output_json,
+            } => {
+                assert_eq!(path, PathBuf::from("./workspace"));
+                assert!(clear);
+                assert!(output_json);
+            }
+            command => panic!("unexpected command: {command:?}"),
+        }
     }
 
     #[test]

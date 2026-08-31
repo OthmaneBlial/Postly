@@ -155,8 +155,8 @@ variables marked as secrets. Certificate options
 read PEM files from disk; private-key contents are never command-line output
 or history data. Request, GraphQL, SSE, send and run accept the same
 HTTP(S)/SOCKS proxy, `--no-proxy` bypass and certificate flags where the
-transport applies. WebSocket and gRPC use explicit `http://` CONNECT proxies;
-SOCKS is not supported for those protocols. When `--proxy` is omitted, platform
+transport applies. WebSocket and gRPC support HTTP CONNECT and SOCKS5/SOCKS5H
+routing with the same bypass rules. When `--proxy` is omitted, platform
 and standard proxy environment variables are handled by the HTTP client.
 
 Import a conventional `.env` file explicitly. Values stay literal—there is no
@@ -256,3 +256,17 @@ postly history ./my-api --clear
 
 History is bounded metadata-only local data. Request bodies, authorization
 values and cookie values are not written to the history file.
+
+## Inspect local cookies
+
+Inspect the active, unexpired cookies held by a workspace session. Values are
+always masked in both text and JSON output:
+
+~~~bash
+postly cookies ./my-api
+postly cookies ./my-api --output-json
+postly cookies ./my-api --clear
+~~~
+
+The command only reads or explicitly clears `.postly/cookies.json`; it does not
+make a network request. Use the native Cookies tab for the same local view.
