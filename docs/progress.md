@@ -69,10 +69,11 @@ Implemented:
 - HTML responses now also expose a bounded safe `Preview` tab that renders only
   decoded text and block structure; scripts, styles, comments and active links
   are omitted, and oversized documents remain on Pretty/Raw.
-- OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, same-source-directory external refs and bounded remote HTTP(S) refs, parameters, JSON/URL-encoded/multipart/binary/text bodies, response examples and auth placeholders.
+- OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, same-source-directory external refs and bounded remote HTTP(S) refs, parameters, JSON/URL-encoded/multipart/binary/text bodies, response examples including parsed `Set-Cookie` metadata and auth placeholders.
 - OpenAPI import accepts local files or explicit HTTP(S) URLs with bounded root/reference downloads and a source-preserving report; remote references are cached per import and cycles remain visible as warnings.
 - Native collections export to OpenAPI 3.0 JSON/YAML with operation paths,
-  parameters, request bodies, common security schemes, response examples,
+  parameters, request bodies, common security schemes, response examples and
+  saved response cookies represented as `Set-Cookie` header examples,
   nested example-derived schemas and deterministic `oneOf` item schemas for
   heterogeneous arrays, plus explicit x-postly-* warnings/extensions for
   lossy or non-standard cases.
@@ -378,7 +379,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`5a0dfefdbe64322f0ea4068d56868acdbae8aa0fa2e5780c567048c6ff9c184f`.
+`9ced8130f82c79ccc111495c405b32df8496c38d44ae52f9453fbc2844485b89`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
@@ -417,9 +418,9 @@ depth guard; the runner regression covers valid, invalid, recursive, missing
 and external-reference cases.
 
 The latest `cargo xtask check` passed format, clippy and all workspace targets:
-37 CLI tests, 59 native GUI tests, 149 core tests and 1 xtask test (246 tests
-total). The OpenAPI compatibility fixture and non-JSON body regression are
-included in that local result.
+38 CLI tests, 59 native GUI tests, 149 core tests and 1 xtask test (247 tests
+total). The OpenAPI response-cookie and non-JSON body regressions are included
+in that local result.
 
 ## Next highest-value work
 

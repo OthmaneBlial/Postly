@@ -12,7 +12,7 @@ use url::Url;
 use crate::{
     model::{
         ApiKeyLocation, Auth, Collection, HeaderEntry, KeyValue, MultipartPart, Request,
-        RequestBody,
+        RequestBody, ResponseExampleCookie,
     },
     storage::{CollectionFiles, Workspace, WorkspaceError},
 };
@@ -682,21 +682,40 @@ fn export_responses(
             example.name.clone()
         };
         response.insert("description".to_owned(), json!(description));
-        if !example.headers.is_empty() {
-            let headers = example
-                .headers
-                .iter()
-                .map(|header| {
-                    (
-                        header.key.clone(),
-                        json!({
-                            "schema": { "type": "string" },
-                            "example": header.value,
-                        }),
-                    )
-                })
-                .collect::<Map<String, Value>>();
-            response.insert("headers".to_owned(), Value::Object(headers));
+        let cookie_examples = example
+            .cookies
+            .iter()
+            .filter_map(ResponseExampleCookie::to_set_cookie_header)
+            .map(Value::String)
+            .collect::<Vec<_>>();
+        let use_structured_set_cookie = !cookie_examples.is_empty();
+        let mut response_headers = example
+            .headers
+            .iter()
+            .filter(|header| {
+                !(use_structured_set_cookie && header.key.eq_ignore_ascii_case("set-cookie"))
+            })
+            .map(|header| {
+                (
+                    header.key.clone(),
+                    json!({
+                        "schema": { "type": "string" },
+                        "example": header.value,
+                    }),
+                )
+            })
+            .collect::<Map<String, Value>>();
+        if use_structured_set_cookie {
+            response_headers.insert(
+                "Set-Cookie".to_owned(),
+                json!({
+                    "schema": { "type": "array", "items": { "type": "string" } },
+                    "example": cookie_examples,
+                }),
+            );
+        }
+        if !response_headers.is_empty() {
+            response.insert("headers".to_owned(), Value::Object(response_headers));
         }
         if let Some(body) = &example.body {
             let (media_type, example_value) = match serde_json::from_str::<Value>(body) {
@@ -2066,6 +2085,7 @@ fn apply_response_examples(
             parsed
         };
         let mut headers = Vec::new();
+        let mut cookies = Vec::new();
         if let Some(response_headers) = response.get("headers").and_then(Value::as_object) {
             let mut header_names = response_headers.keys().cloned().collect::<Vec<_>>();
             header_names.sort();
@@ -2073,8 +2093,28 @@ fn apply_response_examples(
                 let Some(header) = response_headers.get(&name).and_then(Value::as_object) else {
                     continue;
                 };
-                if let Some(value) = example_value(header).and_then(|value| value_to_text(&value)) {
-                    headers.push(HeaderEntry::enabled(name, value));
+                let is_set_cookie = name.eq_ignore_ascii_case("set-cookie");
+                let example = example_value(header);
+                if is_set_cookie {
+                    if let Some(example) = example.as_ref() {
+                        cookies.extend(response_cookies_from_openapi_value(example));
+                    }
+                }
+                match example {
+                    Some(Value::Array(values)) if is_set_cookie => {
+                        for value in values
+                            .into_iter()
+                            .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+                        {
+                            headers.push(HeaderEntry::enabled(name.clone(), value));
+                        }
+                    }
+                    Some(value) => {
+                        if let Some(value) = value_to_text(&value) {
+                            headers.push(HeaderEntry::enabled(name, value));
+                        }
+                    }
+                    None => {}
                 }
             }
         }
@@ -2130,7 +2170,7 @@ fn apply_response_examples(
             name,
             status,
             headers,
-            cookies: Vec::new(),
+            cookies,
             body,
             delay_ms,
         });
@@ -2141,6 +2181,62 @@ fn apply_response_examples(
             request.method, request.url
         ));
     }
+}
+
+fn response_cookies_from_openapi_value(value: &Value) -> Vec<ResponseExampleCookie> {
+    match value {
+        Value::Array(values) => values
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(parse_set_cookie_header)
+            .collect(),
+        Value::String(value) => parse_set_cookie_header(value).into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn parse_set_cookie_header(value: &str) -> Option<ResponseExampleCookie> {
+    let mut segments = value.split(';');
+    let (name, cookie_value) = segments.next()?.trim().split_once('=')?;
+    if name.is_empty() {
+        return None;
+    }
+    let mut cookie = ResponseExampleCookie {
+        name: name.to_owned(),
+        value: cookie_value.trim().to_owned(),
+        domain: None,
+        path: None,
+        secure: false,
+        http_only: false,
+        same_site: None,
+        expires: None,
+        max_age_seconds: None,
+    };
+    for segment in segments
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+    {
+        let (attribute, attribute_value) = segment
+            .split_once('=')
+            .map_or((segment, None), |(attribute, value)| {
+                (attribute, Some(value))
+            });
+        match attribute.trim().to_ascii_lowercase().as_str() {
+            "domain" => cookie.domain = attribute_value.map(str::trim).map(ToOwned::to_owned),
+            "path" => cookie.path = attribute_value.map(str::trim).map(ToOwned::to_owned),
+            "expires" => cookie.expires = attribute_value.map(str::trim).map(ToOwned::to_owned),
+            "max-age" => {
+                cookie.max_age_seconds = attribute_value
+                    .map(str::trim)
+                    .and_then(|value| value.parse::<i64>().ok());
+            }
+            "samesite" => cookie.same_site = attribute_value.map(str::trim).map(ToOwned::to_owned),
+            "secure" => cookie.secure = true,
+            "httponly" => cookie.http_only = true,
+            _ => {}
+        }
+    }
+    Some(cookie)
 }
 
 fn example_value(object: &Map<String, Value>) -> Option<Value> {
@@ -2485,6 +2581,10 @@ paths:
               schema:
                 type: string
               example: local-123
+            Set-Cookie:
+              schema:
+                type: string
+              example: "sid=fixture; Path=/; HttpOnly; SameSite=Lax; Max-Age=120"
           content:
             application/json:
               example:
@@ -2515,10 +2615,21 @@ paths:
         assert_eq!(
             examples[0].headers,
             vec![
+                HeaderEntry::enabled(
+                    "Set-Cookie",
+                    "sid=fixture; Path=/; HttpOnly; SameSite=Lax; Max-Age=120",
+                ),
                 HeaderEntry::enabled("X-Request-Id", "local-123"),
                 HeaderEntry::enabled("content-type", "application/json"),
             ]
         );
+        assert_eq!(examples[0].cookies.len(), 1);
+        assert_eq!(examples[0].cookies[0].name, "sid");
+        assert_eq!(examples[0].cookies[0].value, "fixture");
+        assert_eq!(examples[0].cookies[0].path.as_deref(), Some("/"));
+        assert!(examples[0].cookies[0].http_only);
+        assert_eq!(examples[0].cookies[0].same_site.as_deref(), Some("Lax"));
+        assert_eq!(examples[0].cookies[0].max_age_seconds, Some(120));
         assert_eq!(examples[1].status, Some(404));
         assert_eq!(examples[1].body.as_deref(), Some("not found"));
         assert_eq!(examples[2].status, None);
@@ -2982,7 +3093,17 @@ paths:
             name: "Created".to_owned(),
             status: Some(201),
             headers: vec![HeaderEntry::enabled("content-type", "application/json")],
-            cookies: Vec::new(),
+            cookies: vec![crate::model::ResponseExampleCookie {
+                name: "sid".to_owned(),
+                value: "fixture".to_owned(),
+                domain: Some("example.test".to_owned()),
+                path: Some("/".to_owned()),
+                secure: true,
+                http_only: true,
+                same_site: Some("Lax".to_owned()),
+                expires: None,
+                max_age_seconds: Some(120),
+            }],
             body: Some(r#"{"id":1}"#.to_owned()),
             delay_ms: 0,
         });
@@ -3021,6 +3142,11 @@ paths:
             document["paths"]["/users/{userId}"]["post"]["responses"]["201"]["content"]
                 ["application/json"]["example"]["id"],
             1
+        );
+        assert_eq!(
+            document["paths"]["/users/{userId}"]["post"]["responses"]["201"]["headers"]
+                ["Set-Cookie"]["example"][0],
+            "sid=fixture; Domain=example.test; Path=/; SameSite=Lax; Max-Age=120; Secure; HttpOnly"
         );
 
         let yaml_path = directory.path().join("users.openapi.yaml");

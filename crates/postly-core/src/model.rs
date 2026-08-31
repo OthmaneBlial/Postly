@@ -537,3 +537,56 @@ pub struct ResponseExampleCookie {
     #[serde(default)]
     pub max_age_seconds: Option<i64>,
 }
+
+impl ResponseExampleCookie {
+    /// Serialize this saved cookie as a safe HTTP `Set-Cookie` value.
+    ///
+    /// Invalid control characters are rejected so callers can use the result
+    /// in a response header without turning canonical fixture data into a
+    /// header-injection vector.
+    pub fn to_set_cookie_header(&self) -> Option<String> {
+        let safe_name = !self.name.is_empty()
+            && !self
+                .name
+                .chars()
+                .any(|character| matches!(character, '\r' | '\n' | ';' | '=' | ','));
+        if !safe_name
+            || self
+                .value
+                .chars()
+                .any(|character| matches!(character, '\r' | '\n'))
+        {
+            return None;
+        }
+        let mut output = format!("{}={}", self.name, self.value);
+        for (name, value) in [
+            ("Domain", self.domain.as_deref()),
+            ("Path", self.path.as_deref()),
+            ("SameSite", self.same_site.as_deref()),
+            ("Expires", self.expires.as_deref()),
+        ] {
+            if let Some(value) = value.filter(|value| {
+                !value.is_empty()
+                    && !value
+                        .chars()
+                        .any(|character| matches!(character, '\r' | '\n' | ';'))
+            }) {
+                output.push_str("; ");
+                output.push_str(name);
+                output.push('=');
+                output.push_str(value);
+            }
+        }
+        if let Some(max_age_seconds) = self.max_age_seconds {
+            output.push_str("; Max-Age=");
+            output.push_str(&max_age_seconds.to_string());
+        }
+        if self.secure {
+            output.push_str("; Secure");
+        }
+        if self.http_only {
+            output.push_str("; HttpOnly");
+        }
+        Some(output)
+    }
+}

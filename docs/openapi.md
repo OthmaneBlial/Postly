@@ -24,7 +24,7 @@ dependency.
 The importer creates one request per local HTTP operation, using the first
 server, operation IDs, tags as folders, path/query/header/cookie parameters,
 JSON, URL-encoded form, multipart, binary-file and text request-body examples,
-response examples, local `$ref` components, and common HTTP/API-key security
+response examples (including `Set-Cookie` metadata), local `$ref` components, and common HTTP/API-key security
 schemes. JSON Schema examples/defaults, composed schemas
 (`allOf`/`oneOf`/`anyOf`), format-aware scalar values and array item samples
 are used to create useful sample bodies. Server defaults become
@@ -52,8 +52,8 @@ postly export openapi ./my-api --collection "My API" --output ./openapi.yaml
 ~~~
 
 The exporter maps HTTP operations, path/query/header/cookie parameters,
-request bodies, common authentication schemes, response examples and
-collection server variables. JSON request and response examples now produce
+request bodies, common authentication schemes, response examples (including
+saved response cookies as `Set-Cookie` header examples) and collection server variables. JSON request and response examples now produce
 schemas with nested examples, nullable values, deterministic `oneOf` item
 variants for heterogeneous arrays and conservative string formats such as
 `uuid`, `date`, `date-time`, `email` and `uri`. Auth-field secrets and

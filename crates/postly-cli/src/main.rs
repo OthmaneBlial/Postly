@@ -2243,49 +2243,7 @@ fn mock_response_for(routes: &[MockRoute], method: &str, target: &str) -> MockRe
 }
 
 fn mock_set_cookie_header(cookie: &ResponseExampleCookie) -> Option<String> {
-    let safe_name = !cookie.name.is_empty()
-        && !cookie
-            .name
-            .chars()
-            .any(|character| matches!(character, '\r' | '\n' | ';' | '=' | ','));
-    if !safe_name
-        || cookie
-            .value
-            .chars()
-            .any(|character| matches!(character, '\r' | '\n'))
-    {
-        return None;
-    }
-    let mut output = format!("{}={}", cookie.name, cookie.value);
-    for (name, value) in [
-        ("Domain", cookie.domain.as_deref()),
-        ("Path", cookie.path.as_deref()),
-        ("SameSite", cookie.same_site.as_deref()),
-        ("Expires", cookie.expires.as_deref()),
-    ] {
-        if let Some(value) = value.filter(|value| {
-            !value.is_empty()
-                && !value
-                    .chars()
-                    .any(|character| matches!(character, '\r' | '\n' | ';'))
-        }) {
-            output.push_str("; ");
-            output.push_str(name);
-            output.push('=');
-            output.push_str(value);
-        }
-    }
-    if let Some(max_age_seconds) = cookie.max_age_seconds {
-        output.push_str("; Max-Age=");
-        output.push_str(&max_age_seconds.to_string());
-    }
-    if cookie.secure {
-        output.push_str("; Secure");
-    }
-    if cookie.http_only {
-        output.push_str("; HttpOnly");
-    }
-    Some(output)
+    cookie.to_set_cookie_header()
 }
 
 fn status_text(status: u16) -> &'static str {
