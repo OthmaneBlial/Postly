@@ -10,6 +10,8 @@ The workspace contains targets for high-value parser boundaries:
 - `variables` exercises bounded nested variable interpolation.
 - `postman_import` exercises malformed and partial Collection v2.1 documents
   through the filesystem importer.
+- `native_workspace` exercises malformed manifest, collection, request and
+  environment TOML through the read-only workspace validator.
 
 Install `cargo-fuzz` and a nightly Rust toolchain once, then type-check and run
 a bounded smoke pass:
@@ -28,6 +30,7 @@ Run a target for a longer local session:
 ~~~bash
 cargo fuzz run curl_command --fuzz-dir fuzz
 cargo fuzz run postman_import --fuzz-dir fuzz -- -max_total_time=60
+cargo fuzz run native_workspace --fuzz-dir fuzz -- -max_total_time=60
 ~~~
 
 Crash inputs are written under `fuzz/artifacts/`; preserve a minimized input

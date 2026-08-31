@@ -198,24 +198,29 @@ fn run_fuzz_smoke() -> bool {
     ) {
         return false;
     }
-    ["curl_command", "variables", "postman_import"]
-        .into_iter()
-        .all(|target| {
-            run_in(
-                &root,
-                "cargo",
-                &[
-                    "+nightly",
-                    "fuzz",
-                    "run",
-                    "--fuzz-dir",
-                    "fuzz",
-                    target,
-                    "--",
-                    "-runs=256",
-                ],
-            )
-        })
+    [
+        "curl_command",
+        "variables",
+        "postman_import",
+        "native_workspace",
+    ]
+    .into_iter()
+    .all(|target| {
+        run_in(
+            &root,
+            "cargo",
+            &[
+                "+nightly",
+                "fuzz",
+                "run",
+                "--fuzz-dir",
+                "fuzz",
+                target,
+                "--",
+                "-runs=256",
+            ],
+        )
+    })
 }
 
 #[derive(Debug, serde::Serialize)]

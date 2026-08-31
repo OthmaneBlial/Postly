@@ -180,9 +180,10 @@ Implemented:
 - `cargo xtask compat` executes checked-in Postman collection/environment and
   OpenAPI fixtures, reporting fixture execution separately from manual-review
   request mapping instead of claiming full behavioral parity.
-- Local `cargo xtask fuzz` targets cURL parsing, variable interpolation and
-  malformed Postman imports with a bounded smoke run; fuzz artifacts remain
-  ignored and no GitHub Actions workflow is required.
+- Local `cargo xtask fuzz` targets cURL parsing, variable interpolation,
+  malformed Postman imports and native workspace TOML validation with a bounded
+  smoke run; fuzz artifacts remain ignored and no GitHub Actions workflow is
+  required.
 - Native GUI crash recovery persists a bounded, private multi-document draft
   snapshot with atomic replacement, Unix `0600` permissions, automatic restore
   of dirty tabs as new unsaved requests, an explicit discard action and a
@@ -348,9 +349,9 @@ These are local measurements rather than competitor claims or universal
 performance guarantees.
 
 The latest local validation, after the Postman URL-variable, header-inferred JSON
-body and JSON Schema format slices, also passed `cargo xtask fuzz`: the three
-checked-in targets (`curl_command`, `variables` and `postman_import`) each
-completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
+body and JSON Schema format slices, also passed `cargo xtask fuzz`: the four
+checked-in targets (`curl_command`, `variables`, `postman_import` and
+`native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
 `7fe65fbb4e020bae2545979e421a9e92167d4f5348b7589962d29ad48d0da412`.

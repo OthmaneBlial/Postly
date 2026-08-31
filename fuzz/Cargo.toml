@@ -33,4 +33,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "native_workspace"
+path = "fuzz_targets/native_workspace.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
