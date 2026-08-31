@@ -68,10 +68,12 @@ This repository contains working vertical slices, not a static interface mockup.
   explicit legacy-secret migration avoid putting values in shell arguments. The
   native GUI can create, edit, disable and rename environments; existing secret
   references stay masked and new secret values go through the OS credential store.
-- **Transport controls:** explicit insecure-TLS opt-in for supported HTTP flows,
+- **Transport controls:** explicit insecure-TLS opt-in for supported HTTP and
+  WebSocket flows,
   verified HTTPS, custom PEM CAs, combined PEM or password-protected PKCS#12
   client identities, HTTP(S)/SOCKS
-  proxy routing, CLI/GUI WebSocket and gRPC HTTP CONNECT routing, environment proxy support
+  proxy routing, CLI/GUI WebSocket and gRPC HTTP CONNECT routing, WebSocket
+  custom CA/client-identity support, environment proxy support
   and bypass rules, with actionable
   diagnostics.
 - **Response inspection:** Pretty/Raw views with JSON, YAML and well-formed XML

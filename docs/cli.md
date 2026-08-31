@@ -196,6 +196,9 @@ and standard proxy environment variables are handled by the HTTP client.
 These HTTP-based commands also accept `--max-redirects N`; the default is 10,
 and `--max-redirects 0` keeps the initial 3xx response without following it.
 The limit is applied per request, including saved sends and collection runs.
+The `postly websocket` command accepts the same `--ca-cert` and
+`--client-identity` file formats for `wss://`, plus the explicit `--insecure`
+exception; those flags are rejected for `ws://`.
 
 Import a conventional `.env` file explicitly. Values stay literal—there is no
 variable expansion or command execution—and only keys named with `--secret`

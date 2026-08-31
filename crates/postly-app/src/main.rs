@@ -31,12 +31,13 @@ use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::{
-    client_async_tls_with_config, connect_async,
+    client_async_tls_with_config, connect_async_tls_with_config,
     tungstenite::{
         client::IntoClientRequest,
         http::{header::HeaderName, HeaderValue},
         Message,
     },
+    Connector,
 };
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
 
@@ -3193,6 +3194,13 @@ impl PostlyApp {
         self.remember_sensitive_values(&request, &context);
         let proxy_url = self.transport.proxy_url.trim().to_owned();
         let no_proxy = self.transport.no_proxy_hosts.trim().to_owned();
+        let ca_cert_path = (!self.transport.ca_cert_path.trim().is_empty())
+            .then(|| PathBuf::from(self.transport.ca_cert_path.trim()));
+        let client_identity_path = (!self.transport.client_identity_path.trim().is_empty())
+            .then(|| PathBuf::from(self.transport.client_identity_path.trim()));
+        let client_identity_passphrase = (!self.transport.client_identity_passphrase.is_empty())
+            .then(|| self.transport.client_identity_passphrase.clone());
+        let insecure_tls = self.transport.insecure_tls;
         let reconnect_limit = self.websocket_reconnect_limit;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
@@ -3209,6 +3217,13 @@ impl PostlyApp {
                 runtime.block_on(async move {
                     let websocket_request = build_websocket_request(&request, &context)?;
                     let websocket_url = websocket_request.uri().to_string();
+                    let tls_connector = build_websocket_tls_connector(
+                        &websocket_url,
+                        ca_cert_path.as_deref(),
+                        client_identity_path.as_deref(),
+                        insecure_tls,
+                        client_identity_passphrase.as_deref(),
+                    )?;
                     let mut reconnects_used = 0_u32;
                     loop {
                         let connect_result = tokio::select! {
@@ -3218,6 +3233,7 @@ impl PostlyApp {
                                     websocket_request.clone(),
                                     (!proxy_url.is_empty()).then_some(proxy_url.as_str()),
                                     (!no_proxy.is_empty()).then_some(no_proxy.as_str()),
+                                    tls_connector.clone(),
                                 ),
                             ) => result,
                             _ = worker_cancellation.cancelled() => {
@@ -7228,10 +7244,125 @@ fn resolve_websocket_value(input: &str, context: &VariableContext) -> Result<Str
     }
 }
 
+fn build_websocket_tls_connector(
+    endpoint: &str,
+    ca_cert: Option<&Path>,
+    client_identity: Option<&Path>,
+    insecure: bool,
+    client_identity_passphrase: Option<&str>,
+) -> Result<Option<Connector>, String> {
+    let scheme = url::Url::parse(endpoint)
+        .map_err(|error| format!("invalid WebSocket endpoint: {error}"))?
+        .scheme()
+        .to_owned();
+    let has_tls_options = ca_cert.is_some() || client_identity.is_some() || insecure;
+    if scheme != "wss" {
+        if has_tls_options {
+            return Err(
+                "WebSocket CA, client identity and insecure options require a wss:// endpoint"
+                    .to_owned(),
+            );
+        }
+        return Ok(None);
+    }
+    if !has_tls_options {
+        return Ok(None);
+    }
+
+    let mut builder = native_tls::TlsConnector::builder();
+    builder.danger_accept_invalid_certs(insecure);
+    if let Some(path) = ca_cert {
+        let pem = fs::read(path).map_err(|error| {
+            format!(
+                "could not read WebSocket CA certificate {}: {error}",
+                path.display()
+            )
+        })?;
+        if pem.is_empty() {
+            return Err(format!(
+                "WebSocket CA certificate {} is empty",
+                path.display()
+            ));
+        }
+        let certificate = native_tls::Certificate::from_pem(&pem).map_err(|error| {
+            format!(
+                "invalid WebSocket CA certificate {}: {error}",
+                path.display()
+            )
+        })?;
+        builder.add_root_certificate(certificate);
+    }
+    if let Some(path) = client_identity {
+        let identity = fs::read(path).map_err(|error| {
+            format!(
+                "could not read WebSocket client identity {}: {error}",
+                path.display()
+            )
+        })?;
+        if identity.is_empty() {
+            return Err(format!(
+                "WebSocket client identity {} is empty",
+                path.display()
+            ));
+        }
+        let identity = if is_pkcs12_identity_path(&path.to_string_lossy()) {
+            let passphrase = client_identity_passphrase.ok_or_else(|| {
+                "enter the PKCS#12 WebSocket identity passphrase in Transport settings".to_owned()
+            })?;
+            native_tls::Identity::from_pkcs12(&identity, passphrase).map_err(|error| {
+                format!(
+                    "invalid PKCS#12 WebSocket client identity {}: {error}",
+                    path.display()
+                )
+            })?
+        } else {
+            let (certificate, private_key) = split_pkcs8_pem_identity(&identity, path)?;
+            native_tls::Identity::from_pkcs8(&certificate, &private_key).map_err(|error| {
+                format!(
+                    "invalid PEM WebSocket client identity {}: {error}",
+                    path.display()
+                )
+            })?
+        };
+        builder.identity(identity);
+    }
+    let connector = builder
+        .build()
+        .map_err(|error| format!("could not build the WebSocket TLS connector: {error}"))?;
+    Ok(Some(Connector::NativeTls(connector)))
+}
+
+fn split_pkcs8_pem_identity(pem: &[u8], path: &Path) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let text = std::str::from_utf8(pem).map_err(|_| {
+        format!(
+            "WebSocket client identity {} is not UTF-8 PEM",
+            path.display()
+        )
+    })?;
+    let key_start = text.find("-----BEGIN PRIVATE KEY-----").ok_or_else(|| {
+        "WebSocket PEM client identity must contain a PKCS#8 PRIVATE KEY block".to_owned()
+    })?;
+    let key_end = text[key_start..]
+        .find("-----END PRIVATE KEY-----")
+        .map(|offset| key_start + offset + "-----END PRIVATE KEY-----".len())
+        .ok_or_else(|| {
+            "WebSocket PEM client identity has an incomplete PRIVATE KEY block".to_owned()
+        })?;
+    let certificate = text[..key_start].trim();
+    if !certificate.contains("-----BEGIN CERTIFICATE-----") {
+        return Err("WebSocket PEM client identity must contain a certificate chain".to_owned());
+    }
+    Ok((
+        certificate.as_bytes().to_vec(),
+        text.as_bytes()[key_start..key_end].to_vec(),
+    ))
+}
+
 async fn connect_websocket(
     request: tokio_tungstenite::tungstenite::http::Request<()>,
     proxy_url: Option<&str>,
     no_proxy: Option<&str>,
+    connector: Option<Connector>,
 ) -> Result<
     (
         tokio_tungstenite::WebSocketStream<
@@ -7242,7 +7373,7 @@ async fn connect_websocket(
     String,
 > {
     let Some(proxy_url) = proxy_url.filter(|value| !value.trim().is_empty()) else {
-        return connect_async(request)
+        return connect_async_tls_with_config(request, None, false, connector)
             .await
             .map_err(|error| format!("WebSocket connection failed: {error}"));
     };
@@ -7257,7 +7388,7 @@ async fn connect_websocket(
         .or_else(|| (request.uri().scheme_str() == Some("ws")).then_some(80))
         .ok_or_else(|| "WebSocket endpoint has no port".to_owned())?;
     if no_proxy.is_some_and(|rules| no_proxy_matches(target_host, target_port, rules)) {
-        return connect_async(request)
+        return connect_async_tls_with_config(request, None, false, connector)
             .await
             .map_err(|error| format!("WebSocket connection failed: {error}"));
     }
@@ -7266,7 +7397,7 @@ async fn connect_websocket(
         .map_err(|error| format!("invalid WebSocket proxy URL: {error}"))?;
     if matches!(proxy.scheme(), "socks5" | "socks5h") {
         let socket = connect_socks5_stream(&proxy, target_host, target_port).await?;
-        return client_async_tls_with_config(request, socket, None, None)
+        return client_async_tls_with_config(request, socket, None, connector)
             .await
             .map_err(|error| format!("WebSocket handshake failed: {error}"));
     }
@@ -7329,7 +7460,7 @@ async fn connect_websocket(
     if status != 200 {
         return Err(format!("WebSocket proxy CONNECT failed with HTTP {status}"));
     }
-    client_async_tls_with_config(request, socket, None, None)
+    client_async_tls_with_config(request, socket, None, connector)
         .await
         .map_err(|error| format!("WebSocket handshake failed: {error}"))
 }
@@ -10568,7 +10699,7 @@ mod tests {
         let websocket_request = build_websocket_request(&request, &VariableContext::default())
             .expect("WebSocket request");
         let proxy_url = format!("socks5://{proxy_address}");
-        let (mut websocket, _) = connect_websocket(websocket_request, Some(&proxy_url), None)
+        let (mut websocket, _) = connect_websocket(websocket_request, Some(&proxy_url), None, None)
             .await
             .expect("SOCKS WebSocket connection");
         websocket

@@ -29,12 +29,13 @@ use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_tungstenite::{
-    client_async_tls_with_config, connect_async,
+    client_async_tls_with_config, connect_async_tls_with_config,
     tungstenite::{
         client::IntoClientRequest,
         http::{header::HeaderName, HeaderValue},
         Message,
     },
+    Connector,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -529,6 +530,9 @@ struct WebsocketOptions {
     reconnect: u32,
     proxy: Option<String>,
     no_proxy: Option<String>,
+    ca_cert: Option<PathBuf>,
+    client_identity: Option<PathBuf>,
+    insecure: bool,
     output_json: bool,
 }
 
@@ -925,6 +929,20 @@ enum Command {
             help = "Bypass the WebSocket proxy for comma-separated hosts or domains"
         )]
         no_proxy: Option<String>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Trust an additional PEM-encoded CA certificate for wss://"
+        )]
+        ca_cert: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Use a PEM or PKCS#12 client identity for wss://"
+        )]
+        client_identity: Option<PathBuf>,
+        #[arg(long, help = "Disable wss:// certificate verification (unsafe)")]
+        insecure: bool,
         #[arg(long)]
         output_json: bool,
     },
@@ -1633,6 +1651,9 @@ async fn main() -> Result<()> {
             reconnect,
             proxy,
             no_proxy,
+            ca_cert,
+            client_identity,
+            insecure,
             output_json,
         } => {
             run_websocket(WebsocketOptions {
@@ -1646,6 +1667,9 @@ async fn main() -> Result<()> {
                 reconnect,
                 proxy,
                 no_proxy,
+                ca_cert,
+                client_identity,
+                insecure,
                 output_json,
             })
             .await
@@ -2848,6 +2872,17 @@ fn print_sse_state(state: &str, output_json: bool) -> Result<()> {
 }
 
 async fn run_websocket(options: WebsocketOptions) -> Result<()> {
+    let client_identity_passphrase = options
+        .client_identity
+        .as_deref()
+        .and_then(|path| client_identity_passphrase(Some(path)));
+    let tls_connector = build_websocket_tls_connector(
+        &options.endpoint,
+        options.ca_cert.as_deref(),
+        options.client_identity.as_deref(),
+        options.insecure,
+        client_identity_passphrase.as_deref(),
+    )?;
     let mut reconnects_used = 0;
     loop {
         let websocket_request = build_websocket_request(&options)?;
@@ -2857,6 +2892,7 @@ async fn run_websocket(options: WebsocketOptions) -> Result<()> {
                 websocket_request,
                 options.proxy.as_deref(),
                 options.no_proxy.as_deref(),
+                tls_connector.clone(),
             ),
         )
         .await
@@ -2931,16 +2967,114 @@ async fn run_websocket(options: WebsocketOptions) -> Result<()> {
     }
 }
 
+fn build_websocket_tls_connector(
+    endpoint: &str,
+    ca_cert: Option<&Path>,
+    client_identity: Option<&Path>,
+    insecure: bool,
+    client_identity_passphrase: Option<&str>,
+) -> Result<Option<Connector>> {
+    let scheme = url::Url::parse(endpoint)
+        .with_context(|| format!("invalid WebSocket endpoint: {endpoint}"))?
+        .scheme()
+        .to_owned();
+    let has_tls_options = ca_cert.is_some() || client_identity.is_some() || insecure;
+    if scheme != "wss" {
+        if has_tls_options {
+            bail!("WebSocket CA, client identity and insecure options require a wss:// endpoint");
+        }
+        return Ok(None);
+    }
+    if !has_tls_options {
+        return Ok(None);
+    }
+
+    let mut builder = native_tls::TlsConnector::builder();
+    builder.danger_accept_invalid_certs(insecure);
+    if let Some(path) = ca_cert {
+        let pem = fs::read(path).with_context(|| {
+            format!("could not read WebSocket CA certificate {}", path.display())
+        })?;
+        if pem.is_empty() {
+            bail!("WebSocket CA certificate {} is empty", path.display());
+        }
+        let certificate = native_tls::Certificate::from_pem(&pem)
+            .with_context(|| format!("invalid WebSocket CA certificate {}", path.display()))?;
+        builder.add_root_certificate(certificate);
+    }
+    if let Some(path) = client_identity {
+        let identity = fs::read(path).with_context(|| {
+            format!(
+                "could not read WebSocket client identity {}",
+                path.display()
+            )
+        })?;
+        if identity.is_empty() {
+            bail!("WebSocket client identity {} is empty", path.display());
+        }
+        let identity = if path.extension().is_some_and(|extension| {
+            let extension = extension.to_string_lossy();
+            extension.eq_ignore_ascii_case("p12") || extension.eq_ignore_ascii_case("pfx")
+        }) {
+            let passphrase = client_identity_passphrase.context(
+                "set POSTLY_CLIENT_IDENTITY_PASSPHRASE for a PKCS#12 WebSocket identity",
+            )?;
+            native_tls::Identity::from_pkcs12(&identity, passphrase).with_context(|| {
+                format!(
+                    "invalid PKCS#12 WebSocket client identity {}",
+                    path.display()
+                )
+            })?
+        } else {
+            let (certificate, private_key) = split_pkcs8_pem_identity(&identity, path)?;
+            native_tls::Identity::from_pkcs8(&certificate, &private_key).with_context(|| {
+                format!("invalid PEM WebSocket client identity {}", path.display())
+            })?
+        };
+        builder.identity(identity);
+    }
+    Ok(Some(Connector::NativeTls(
+        builder
+            .build()
+            .context("could not build the WebSocket TLS connector")?,
+    )))
+}
+
+fn split_pkcs8_pem_identity(pem: &[u8], path: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
+    let text = std::str::from_utf8(pem).with_context(|| {
+        format!(
+            "WebSocket client identity {} is not UTF-8 PEM",
+            path.display()
+        )
+    })?;
+    let key_start = text
+        .find("-----BEGIN PRIVATE KEY-----")
+        .context("WebSocket PEM client identity must contain a PKCS#8 PRIVATE KEY block")?;
+    let key_end = text[key_start..]
+        .find("-----END PRIVATE KEY-----")
+        .map(|offset| key_start + offset + "-----END PRIVATE KEY-----".len())
+        .context("WebSocket PEM client identity has an incomplete PRIVATE KEY block")?;
+    let certificate = text[..key_start].trim();
+    if !certificate.contains("-----BEGIN CERTIFICATE-----") {
+        bail!("WebSocket PEM client identity must contain a certificate chain");
+    }
+    Ok((
+        certificate.as_bytes().to_vec(),
+        text.as_bytes()[key_start..key_end].to_vec(),
+    ))
+}
+
 async fn connect_websocket(
     request: tokio_tungstenite::tungstenite::http::Request<()>,
     proxy_url: Option<&str>,
     no_proxy: Option<&str>,
+    connector: Option<Connector>,
 ) -> Result<(
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     tokio_tungstenite::tungstenite::handshake::client::Response,
 )> {
     let Some(proxy_url) = proxy_url.filter(|value| !value.trim().is_empty()) else {
-        return Ok(connect_async(request).await?);
+        return Ok(connect_async_tls_with_config(request, None, false, connector).await?);
     };
     let target_host = request
         .uri()
@@ -2953,7 +3087,7 @@ async fn connect_websocket(
         .or_else(|| (request.uri().scheme_str() == Some("ws")).then_some(80))
         .context("WebSocket endpoint has no port")?;
     if no_proxy.is_some_and(|rules| no_proxy_matches(target_host, target_port, rules)) {
-        return Ok(connect_async(request).await?);
+        return Ok(connect_async_tls_with_config(request, None, false, connector).await?);
     }
 
     let proxy = url::Url::parse(proxy_url)
@@ -2962,7 +3096,7 @@ async fn connect_websocket(
         let socket = connect_socks5_stream(&proxy, target_host, target_port)
             .await
             .map_err(anyhow::Error::msg)?;
-        return Ok(client_async_tls_with_config(request, socket, None, None).await?);
+        return Ok(client_async_tls_with_config(request, socket, None, connector).await?);
     }
     if proxy.scheme() != "http" {
         bail!(
@@ -3023,7 +3157,7 @@ async fn connect_websocket(
     if status != 200 {
         bail!("WebSocket proxy CONNECT failed with HTTP {status}");
     }
-    Ok(client_async_tls_with_config(request, socket, None, None).await?)
+    Ok(client_async_tls_with_config(request, socket, None, connector).await?)
 }
 
 fn no_proxy_matches(host: &str, port: u16, rules: &str) -> bool {
@@ -4409,16 +4543,61 @@ mod tests {
     use super::*;
     use std::{
         convert::Infallible,
+        io::Cursor,
         pin::Pin,
+        sync::Arc,
         task::{Context, Poll},
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_rustls::{
+        rustls::{
+            pki_types::{CertificateDer, PrivateKeyDer},
+            server::WebPkiClientVerifier,
+            RootCertStore, ServerConfig,
+        },
+        TlsAcceptor,
+    };
 
     const TEST_CA_PEM: &str = include_str!("../../postly-core/testdata/tls/ca.pem");
     const TEST_SERVER_CERT_PEM: &str = include_str!("../../postly-core/testdata/tls/server.pem");
     const TEST_SERVER_KEY_PEM: &str = include_str!("../../postly-core/testdata/tls/server-key.pem");
     const TEST_CLIENT_CERT_PEM: &str = include_str!("../../postly-core/testdata/tls/client.pem");
     const TEST_CLIENT_KEY_PEM: &str = include_str!("../../postly-core/testdata/tls/client-key.pem");
+
+    fn pem_certificates(pem: &str) -> Vec<CertificateDer<'static>> {
+        rustls_pemfile::certs(&mut Cursor::new(pem.as_bytes()))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("valid test certificate")
+    }
+
+    fn pem_private_key(pem: &str) -> PrivateKeyDer<'static> {
+        rustls_pemfile::private_key(&mut Cursor::new(pem.as_bytes()))
+            .expect("valid test private key")
+            .expect("test private key")
+    }
+
+    fn test_tls_server_config(require_client: bool) -> ServerConfig {
+        let certificate_chain = pem_certificates(TEST_SERVER_CERT_PEM);
+        let private_key = pem_private_key(TEST_SERVER_KEY_PEM);
+        if require_client {
+            let mut roots = RootCertStore::empty();
+            for certificate in pem_certificates(TEST_CA_PEM) {
+                roots.add(certificate).expect("test CA");
+            }
+            let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+                .build()
+                .expect("client verifier");
+            ServerConfig::builder()
+                .with_client_cert_verifier(verifier)
+                .with_single_cert(certificate_chain, private_key)
+                .expect("TLS server config")
+        } else {
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(certificate_chain, private_key)
+                .expect("TLS server config")
+        }
+    }
 
     #[test]
     fn parses_oauth_client_credentials_cli_flags() {
@@ -4514,6 +4693,97 @@ mod tests {
             Command::Run { max_redirects, .. } => assert_eq!(max_redirects, 0),
             command => panic!("unexpected command: {command:?}"),
         }
+    }
+
+    #[test]
+    fn builds_websocket_tls_connector_from_local_certificate_files() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let ca_path = directory.path().join("ca.pem");
+        let identity_path = directory.path().join("client.pem");
+        std::fs::write(&ca_path, TEST_CA_PEM).expect("CA");
+        std::fs::write(
+            &identity_path,
+            format!("{TEST_CLIENT_CERT_PEM}{TEST_CLIENT_KEY_PEM}"),
+        )
+        .expect("client identity");
+
+        let connector = build_websocket_tls_connector(
+            "wss://127.0.0.1:9443/socket",
+            Some(&ca_path),
+            Some(&identity_path),
+            false,
+            None,
+        )
+        .expect("WebSocket TLS connector");
+        assert!(connector.is_some());
+
+        let result = build_websocket_tls_connector(
+            "ws://127.0.0.1:8080/socket",
+            Some(&ca_path),
+            None,
+            false,
+            None,
+        );
+        let error = match result {
+            Ok(_) => panic!("TLS options on a plain WebSocket endpoint must fail"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("require a wss:// endpoint"));
+    }
+
+    #[tokio::test]
+    async fn websocket_command_uses_a_custom_ca_and_pem_client_identity() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("TLS listener");
+        let address = listener.local_addr().expect("TLS address");
+        let acceptor = TlsAcceptor::from(Arc::new(test_tls_server_config(true)));
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("TLS connection");
+            let stream = acceptor.accept(stream).await.expect("TLS handshake");
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("WebSocket handshake");
+            match socket.next().await.expect("message").expect("frame") {
+                Message::Text(text) => assert_eq!(text.to_string(), "hello"),
+                message => panic!("expected text message, got {message:?}"),
+            }
+            socket
+                .send(Message::text("echo: hello"))
+                .await
+                .expect("echo");
+            socket.send(Message::Close(None)).await.expect("close");
+        });
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let ca_path = directory.path().join("ca.pem");
+        let identity_path = directory.path().join("client.pem");
+        std::fs::write(&ca_path, TEST_CA_PEM).expect("CA");
+        std::fs::write(
+            &identity_path,
+            format!("{TEST_CLIENT_CERT_PEM}{TEST_CLIENT_KEY_PEM}"),
+        )
+        .expect("client identity");
+
+        run_websocket(WebsocketOptions {
+            endpoint: format!("wss://127.0.0.1:{}/socket", address.port()),
+            send: vec!["hello".to_owned()],
+            headers: Vec::new(),
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            reconnect: 0,
+            proxy: None,
+            no_proxy: None,
+            ca_cert: Some(ca_path),
+            client_identity: Some(identity_path),
+            insecure: true,
+            output_json: true,
+        })
+        .await
+        .expect("WebSocket TLS command");
+        server.await.expect("TLS server");
     }
 
     #[test]
@@ -5514,6 +5784,9 @@ paths:
             reconnect: 0,
             proxy: None,
             no_proxy: None,
+            ca_cert: None,
+            client_identity: None,
+            insecure: false,
             output_json: true,
         })
         .await
@@ -5582,6 +5855,9 @@ paths:
             reconnect: 0,
             proxy: Some(format!("http://{proxy_address}")),
             no_proxy: None,
+            ca_cert: None,
+            client_identity: None,
+            insecure: false,
             output_json: true,
         })
         .await
@@ -5664,6 +5940,9 @@ paths:
             reconnect: 0,
             proxy: Some(format!("socks5://{proxy_address}")),
             no_proxy: None,
+            ca_cert: None,
+            client_identity: None,
+            insecure: false,
             output_json: true,
         })
         .await
@@ -5706,6 +5985,9 @@ paths:
             reconnect: 1,
             proxy: None,
             no_proxy: None,
+            ca_cert: None,
+            client_identity: None,
+            insecure: false,
             output_json: true,
         })
         .await

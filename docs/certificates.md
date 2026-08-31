@@ -57,7 +57,9 @@ contents. The repository contains disposable local-only certificate fixtures
 under `crates/postly-core/testdata/tls/`; they are used to exercise both
 ordinary HTTPS with a custom CA and mutual TLS.
 
-Per-domain certificate association and WebSocket certificate routing remain
-open. gRPC CLI calls have their own HTTPS PEM CA/client-identity options; see
+Per-domain certificate association remains open. CLI and native GUI WebSocket
+connections now route the Transport CA, combined PEM or PKCS#12 client identity
+and explicit insecure-TLS settings for `wss://`; gRPC CLI calls have their own
+HTTPS PEM CA/client-identity options; see
 [gRPC](grpc.md). `--insecure` remains an explicit escape hatch and should only
 be used for a controlled local exception.

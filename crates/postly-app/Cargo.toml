@@ -18,6 +18,7 @@ eframe.workspace = true
 futures-util.workspace = true
 http.workspace = true
 hyper-util.workspace = true
+native-tls.workspace = true
 postly-core = { path = "../postly-core" }
 prost.workspace = true
 prost-reflect.workspace = true

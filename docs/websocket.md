@@ -10,6 +10,11 @@ they arrive.
 postly websocket ws://127.0.0.1:9000/socket --send '{"type":"ping"}' --reconnect 3
 postly ws wss://api.example.test/stream --output-json
 postly websocket ws://127.0.0.1:9000/socket --bearer local-token
+
+# Local CA and client identity for a private wss:// endpoint.
+postly websocket wss://api.example.test/stream \
+  --ca-cert ./certs/company-ca.pem \
+  --client-identity ./certs/client-identity.pem
 ~~~
 
 JSON output uses one object per line with `type` and `data`; binary and pong
@@ -18,6 +23,13 @@ CLI exits cleanly on a server close. `--reconnect N` gives bounded retries for
 failed handshakes or server-initiated closes, resending the configured messages
 on each new connection. The timeout is an inactivity timeout for the receive
 loop.
+
+For `wss://`, `--ca-cert` adds a PEM trust anchor and `--client-identity`
+accepts the combined PEM identity format used by the HTTP client or a
+password-protected `.p12`/`.pfx` file. Set
+`POSTLY_CLIENT_IDENTITY_PASSPHRASE` for a PKCS#12 identity. `--insecure` is
+available only as an explicit local exception. These TLS options are rejected
+for plain `ws://` endpoints instead of being silently ignored.
 
 The native GUI exposes `Connect WS` for the current request. It supports
 `ws://` and `wss://`, request headers/auth/cookies/query parameters, text sends,

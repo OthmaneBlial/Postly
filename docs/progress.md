@@ -68,7 +68,7 @@ Implemented:
 - Structured GraphQL core/CLI/GUI request model with variables, operation names, partial-data/error parsing, validated GUI editing and local HTTP integration coverage.
 - GraphQL schema introspection through the CLI and native GUI, with parsed roots, fields, arguments, nested type references, enums, input fields, filtering and deprecated markers.
 - SSE parser plus progressive CLI/native GUI subscriptions with chunk-safe event decoding, event metadata, bounded GUI history, JSON-lines output and local streaming coverage.
-- WebSocket CLI and native GUI client for `ws://` and `wss://` with headers/auth, interactive text sends, named Git-friendly message presets, text/binary/pong output, ping replies, bounded reconnects/history and local integration coverage.
+- WebSocket CLI and native GUI client for `ws://` and `wss://` with headers/auth, interactive text sends, named Git-friendly message presets, text/binary/pong output, ping replies, bounded reconnects/history, and native TLS routing for custom PEM CAs, combined PEM or PKCS#12 client identities and explicit insecure mode, with local integration/configuration coverage.
 - native GUI HTTP, SSE and WebSocket workers support explicit cancellation, with cancellation-aware body/stream reads and local worker tests.
 - Native GUI `Scripts` tab edits and persists imported pre-request/test source;
   explicit GUI previews now run in a worker and display test/log results without
@@ -214,8 +214,8 @@ Not yet implemented:
   individual TOML writes use unique flushed temporary files and
   request/environment relocations roll back their newly written destination.
 - Encrypted PKCS#12 identities and transient passphrase handling now work for
-  the shared HTTP/SSE engine, CLI and native GUI; per-domain certificate
-  association, WebSocket certificate routing and gRPC PKCS#12 remain open.
+  the shared HTTP/SSE/WebSocket engine, CLI and native GUI; per-domain
+  certificate association and gRPC PKCS#12 remain open.
   gRPC custom PEM CA/client identity and SOCKS5 routing are available in CLI
   and GUI.
 - OpenAPI cyclic/remote references, richer schema generation beyond the current composed/format-aware samples and deeper protocol-specific GUI tooling.
@@ -243,6 +243,11 @@ HTTP/2 traffic.
 The latest transport slice adds shared SOCKS5 stream negotiation for CLI/GUI
 WebSocket and gRPC connectors, with local handshake/relay coverage; explicit
 SOCKS5 username/password credentials are supported.
+
+The WebSocket TLS routing slice validates local CA and combined PEM client
+identity loading before network work, supports PKCS#12 identities through the
+same transient passphrase environment boundary, and applies the configuration
+to both CLI and native GUI `wss://` connections.
 
 The OAuth Device Authorization slice adds RFC 8628-style device-code
 requests, safe verification prompts in the CLI/GUI, bounded polling with

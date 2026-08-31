@@ -19,6 +19,7 @@ clap.workspace = true
 futures-util.workspace = true
 http.workspace = true
 hyper-util.workspace = true
+native-tls.workspace = true
 postly-core = { path = "../postly-core" }
 prost.workspace = true
 prost-reflect.workspace = true
@@ -33,4 +34,7 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+rustls.workspace = true
+rustls-pemfile.workspace = true
 tempfile.workspace = true
+tokio-rustls.workspace = true
