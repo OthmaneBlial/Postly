@@ -86,6 +86,8 @@ Implemented:
   assertions; it intentionally does not claim Postly transport parity.
 - Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; saved workspaces persist a bounded ignored local jar.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
+- runner summaries now expose a deterministic HTTP status distribution in JSON
+  and the pretty reporter.
 - runner iteration data from JSON objects/arrays plus pretty, JSON and JUnit reporters.
 - CLI collection runs can target an exact folder and its nested request folders.
 - A dedicated CLI reference documents headless requests, folder runs, reports,

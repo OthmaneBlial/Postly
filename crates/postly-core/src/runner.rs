@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -101,6 +102,8 @@ pub struct RunnerSummary {
     pub failed: usize,
     pub assertions: usize,
     pub assertion_failures: usize,
+    #[serde(default)]
+    pub status_distribution: BTreeMap<u16, usize>,
     pub cancelled: bool,
     pub results: Vec<RunnerItemResult>,
 }
@@ -256,6 +259,10 @@ pub async fn run_requests(
             let mut assertion_failures = Vec::new();
             let item = match result {
                 Ok(response) => {
+                    *summary
+                        .status_distribution
+                        .entry(response.status)
+                        .or_default() += 1;
                     let mut error = None;
                     assertions = request_to_run.assertions.len();
                     assertion_failures = evaluate_assertions(&request_to_run.assertions, &response);
@@ -463,6 +470,7 @@ mod tests {
         assert!(summary.succeeded());
         assert_eq!(summary.assertions, 4);
         assert_eq!(summary.assertion_failures, 0);
+        assert_eq!(summary.status_distribution.get(&200), Some(&1));
         assert_eq!(summary.results[0].assertions, 4);
     }
 

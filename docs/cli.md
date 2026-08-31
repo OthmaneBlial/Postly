@@ -101,7 +101,9 @@ postly run ./my-api --folder auth --scripts --reporter junit > postly-results.xm
 `--folder` selects the named folder and all nested folders. Folder matching is
 case-sensitive and accepts either slash separator. A run with no matching
 request fails instead of silently reporting success. The runner is sequential
-and deterministic; `--fail-fast` stops after the first failed request.
+and deterministic; `--fail-fast` stops after the first failed request. Pretty
+output includes a status distribution, while JSON exposes it as
+`status_distribution` for automation.
 
 Iteration data is a JSON object or an array of objects:
 

@@ -3421,6 +3421,23 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
                     );
                 }
             }
+            let statuses = summary
+                .status_distribution
+                .iter()
+                .map(|(status, count)| format!("{status} x{count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!(
+                "Summary: {} request(s), {} passed, {} failed{}",
+                summary.requests,
+                summary.passed,
+                summary.failed,
+                if statuses.is_empty() {
+                    String::new()
+                } else {
+                    format!("; statuses: {statuses}")
+                }
+            );
         }
         let should_stop = options.fail_fast && summary.failed > 0;
         summaries.push(summary);
