@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    net::IpAddr,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -8,9 +9,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chrono::{DateTime, NaiveDate};
 use futures_util::future::join_all;
 use serde::Serialize;
 use tokio::sync::Notify;
+use url::Url;
+use uuid::Uuid;
 
 use crate::{
     http::{HttpEngine, HttpResponse},
@@ -599,7 +603,64 @@ fn validate_json_schema_string(
         "maximum length",
         path,
     )?;
+    if let Some(format) = schema.get("format").and_then(serde_json::Value::as_str) {
+        validate_json_schema_string_format(string, format, path)?;
+    }
     Ok(())
+}
+
+fn validate_json_schema_string_format(value: &str, format: &str, path: &str) -> Result<(), String> {
+    let valid = match format {
+        "date" => NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok(),
+        "date-time" => DateTime::parse_from_rfc3339(value).is_ok(),
+        "uuid" => Uuid::parse_str(value).is_ok(),
+        "uri" => Url::parse(value).is_ok(),
+        "email" => is_schema_email(value),
+        "hostname" => is_schema_hostname(value),
+        "ipv4" => value
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_ipv4()),
+        "ipv6" => value
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_ipv6()),
+        _ => return Ok(()),
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "string at {path:?} does not match JSON Schema format {format:?}"
+        ))
+    }
+}
+
+fn is_schema_email(value: &str) -> bool {
+    if value.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let Some((local, domain)) = value.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+}
+
+fn is_schema_hostname(value: &str) -> bool {
+    if value.is_empty() || value.len() > 253 {
+        return false;
+    }
+    value.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    })
 }
 
 fn validate_json_schema_number(
@@ -1377,6 +1438,41 @@ mod tests {
         });
         assert!(validate_json_schema(&serde_json::json!(4), &legacy_exclusive, "").is_ok());
         assert!(validate_json_schema(&serde_json::json!(2), &legacy_exclusive, "").is_err());
+
+        let formats = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "date": { "type": "string", "format": "date" },
+                "timestamp": { "type": "string", "format": "date-time" },
+                "id": { "type": "string", "format": "uuid" },
+                "url": { "type": "string", "format": "uri" },
+                "email": { "type": "string", "format": "email" },
+                "host": { "type": "string", "format": "hostname" },
+                "v4": { "type": "string", "format": "ipv4" },
+                "v6": { "type": "string", "format": "ipv6" }
+            }
+        });
+        let formatted = serde_json::json!({
+            "date": "2024-01-02",
+            "timestamp": "2024-01-02T03:04:05Z",
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "url": "https://api.example.test/users/1",
+            "email": "ada@example.test",
+            "host": "api.example.test",
+            "v4": "192.0.2.1",
+            "v6": "2001:db8::1"
+        });
+        assert!(validate_json_schema(&formatted, &formats, "").is_ok());
+        assert!(
+            validate_json_schema(&serde_json::json!({ "date": "not-a-date" }), &formats, "")
+                .is_err()
+        );
+        assert!(validate_json_schema(
+            &serde_json::json!({ "host": "-invalid.example" }),
+            &formats,
+            ""
+        )
+        .is_err());
     }
 
     #[tokio::test]
