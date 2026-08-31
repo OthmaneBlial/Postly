@@ -370,6 +370,213 @@ function replaceIn(value) {
   });
 }
 
+function rawLanguage(contentType) {
+  const value = text(contentType).toLowerCase();
+  if (value.includes("json")) return "json";
+  if (value.includes("xml")) return "xml";
+  if (value.includes("html")) return "html";
+  if (value.includes("javascript")) return "javascript";
+  return value ? value.split("/").pop().split(";")[0] : undefined;
+}
+
+function contentTypeForLanguage(language) {
+  switch (text(language).toLowerCase()) {
+    case "json": return "application/json";
+    case "xml": return "application/xml";
+    case "html": return "text/html";
+    case "javascript": return "text/javascript";
+    default: return text(language) ? "text/" + text(language) : undefined;
+  }
+}
+
+function decorateKeyValueList(list, makeEntry) {
+  list.add = (entry) => {
+    const normalized = makeEntry(entry);
+    if (normalized && normalized.key) list.push(normalized);
+  };
+  list.remove = (key) => {
+    const normalized = text(key).toLowerCase();
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+      if (text(list[index] && list[index].key).toLowerCase() === normalized) list.splice(index, 1);
+    }
+  };
+  list.clear = () => { list.splice(0, list.length); };
+  return list;
+}
+
+function nativeBodyToPostman(nativeBody) {
+  if (!nativeBody || nativeBody.type === "none") return null;
+  switch (nativeBody.type) {
+    case "raw": {
+      const body = { mode: "raw", raw: text(nativeBody.text) };
+      const language = rawLanguage(nativeBody.content_type);
+      if (language) body.options = { raw: { language } };
+      return body;
+    }
+    case "json":
+      return {
+        mode: "raw",
+        raw: JSON.stringify(nativeBody.value),
+        options: { raw: { language: "json" } }
+      };
+    case "graphql":
+      return {
+        mode: "graphql",
+        graphql: {
+          query: text(nativeBody.query),
+          variables: JSON.stringify(nativeBody.variables || {}),
+          ...(nativeBody.operation_name ? { operationName: nativeBody.operation_name } : {})
+        }
+      };
+    case "form_url_encoded":
+      return {
+        mode: "urlencoded",
+        urlencoded: decorateKeyValueList((nativeBody.fields || []).map((field) => ({
+          key: text(field.key), value: text(field.value), disabled: field.enabled === false
+        })), (entry) => ({
+          key: text(entry && entry.key), value: text(entry && entry.value), disabled: entry && entry.disabled === true
+        }))
+      };
+    case "multipart":
+      return {
+        mode: "formdata",
+        formdata: decorateKeyValueList((nativeBody.parts || []).map((part) => ({
+          key: text(part.name),
+          value: text(part.value),
+          src: part.file_path || undefined,
+          contentType: part.content_type || undefined,
+          disabled: part.enabled === false
+        })), (entry) => ({
+          key: text(entry && (entry.key || entry.name)),
+          value: text(entry && entry.value),
+          src: entry && entry.src ? text(entry.src) : undefined,
+          contentType: entry && (entry.contentType || entry.content_type) ? text(entry.contentType || entry.content_type) : undefined,
+          disabled: entry && entry.disabled === true
+        }))
+      };
+    case "binary_file":
+      return {
+        mode: "file",
+        file: { src: text(nativeBody.path) },
+        ...(nativeBody.content_type ? { contentType: nativeBody.content_type } : {})
+      };
+    default:
+      return null;
+  }
+}
+
+function postmanBodyToNative(body) {
+  if (!body || typeof body !== "object") return { type: "none" };
+  const mode = text(body.mode).toLowerCase();
+  if (mode === "none") return { type: "none" };
+  if (mode === "raw") {
+    const raw = text(body.raw);
+    const language = body.options && body.options.raw && body.options.raw.language;
+    if (text(language).toLowerCase() === "json") {
+      try { return { type: "json", value: JSON.parse(raw) }; } catch (_) {}
+    }
+    return { type: "raw", text: raw, content_type: contentTypeForLanguage(language) };
+  }
+  if (mode === "graphql") {
+    const graphql = body.graphql || {};
+    let variables = graphql.variables;
+    if (typeof variables === "string") {
+      try { variables = JSON.parse(variables); } catch (_) { variables = {}; }
+    }
+    return {
+      type: "graphql",
+      query: text(graphql.query),
+      variables: variables && typeof variables === "object" ? variables : {},
+      ...(graphql.operationName || graphql.operation_name ? { operation_name: text(graphql.operationName || graphql.operation_name) } : {})
+    };
+  }
+  if (mode === "urlencoded") {
+    return {
+      type: "form_url_encoded",
+      fields: (Array.isArray(body.urlencoded) ? body.urlencoded : []).map((field) => ({
+        key: text(field && field.key), value: text(field && field.value), enabled: field && field.disabled !== true
+      }))
+    };
+  }
+  if (mode === "formdata") {
+    return {
+      type: "multipart",
+      parts: (Array.isArray(body.formdata) ? body.formdata : []).map((part) => ({
+        name: text(part && (part.key || part.name)),
+        value: text(part && part.value),
+        file_path: part && part.src ? text(part.src) : null,
+        content_type: part && (part.contentType || part.content_type) ? text(part.contentType || part.content_type) : null,
+        enabled: part && part.disabled !== true
+      }))
+    };
+  }
+  if (mode === "file") {
+    const file = body.file || {};
+    return {
+      type: "binary_file",
+      path: text(file.src),
+      ...(body.contentType ? { content_type: text(body.contentType) } : { content_type: null })
+    };
+  }
+  return { type: "raw", text: JSON.stringify(body), content_type: "application/json" };
+}
+
+function makeUrlFacade(rawValue, structuredQuery) {
+  const url = { raw: text(rawValue), query: [], variables: [] };
+  const usesStructuredQuery = Array.isArray(structuredQuery);
+  const resolvedUrl = () => replaceIn(url.raw);
+  const parsedUrl = () => {
+    try { return new URL(resolvedUrl()); } catch (_) { return null; }
+  };
+  const refreshQuery = () => {
+    if (usesStructuredQuery && structuredQuery.length > 0) {
+      structuredQuery.forEach((entry) => url.query.push({
+        key: text(entry && entry.key),
+        value: text(entry && entry.value),
+        disabled: entry && entry.enabled === false
+      }));
+      return;
+    }
+    const parsed = parsedUrl();
+    if (!parsed || url.query.length > 0) return;
+    parsed.searchParams.forEach((value, key) => url.query.push({ key, value, disabled: false }));
+  };
+  const serializeQuery = () => {
+    const parsed = parsedUrl();
+    const query = url.query
+      .filter((entry) => entry && entry.disabled !== true && text(entry.key))
+      .map((entry) => encodeURIComponent(text(entry.key)) + "=" + encodeURIComponent(text(entry.value)))
+      .join("&");
+    if (parsed) {
+      parsed.search = query ? "?" + query : "";
+      return parsed.toString();
+    }
+    const source = text(url.raw).split("#")[0].split("?")[0];
+    return source + (query ? "?" + query : "");
+  };
+  const query = decorateKeyValueList(url.query, (entry) => ({
+    key: text(entry && entry.key), value: text(entry && entry.value), disabled: entry && entry.disabled === true
+  }));
+  refreshQuery();
+  url.query = query;
+  Object.defineProperties(url, {
+    toString: { value: () => url.query.length > 0 ? serializeQuery() : text(url.raw) },
+    getPath: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.pathname : text(url.raw).split("?")[0]; } },
+    getQueryString: { value: () => {
+      if (url.query.length > 0) {
+        const serialized = serializeQuery();
+        return serialized.split("?")[1]?.split("#")[0] || "";
+      }
+      const parsed = parsedUrl();
+      return parsed ? parsed.search.replace(/^\?/, "") : text(url.raw).split("?")[1] || "";
+    } },
+    host: { get: () => { const parsed = parsedUrl(); return parsed ? parsed.hostname : undefined; } },
+    path: { get: () => { const parsed = parsedUrl(); return parsed ? parsed.pathname.split("/").filter(Boolean) : []; } },
+    _usesStructuredQuery: { value: usesStructuredQuery, enumerable: false }
+  });
+  return url;
+}
+
 function scope(name) {
   values[name] = values[name] || {};
   return {
@@ -426,7 +633,9 @@ const runtime = {
   replaceIn
 };
 
-const request = input.request || {};
+const request = { ...(input.request || {}) };
+request.url = makeUrlFacade(request.url, request.query);
+request.body = nativeBodyToPostman(request.body);
 const requestHeaders = request.headers || [];
 requestHeaders.get = (name) => {
   const found = requestHeaders.find((header) => header.key && header.key.toLowerCase() === text(name).toLowerCase() && header.enabled !== false);
@@ -458,6 +667,45 @@ requestHeaders.remove = (name) => {
   }
 };
 request.headers = requestHeaders;
+request.cookies = decorateKeyValueList(request.cookies || [], (cookie) => ({
+  key: text(cookie && (cookie.key || cookie.name)),
+  value: text(cookie && cookie.value),
+  enabled: cookie && cookie.disabled !== true && cookie.enabled !== false
+}));
+
+function serializeRequest() {
+  const serialized = { ...request };
+  if (request.url && typeof request.url === "object" && Array.isArray(request.url.query)
+      && (request.url._usesStructuredQuery || request.url.query.length > 0)) {
+    const rawUrl = text(request.url.raw);
+    const fragmentIndex = rawUrl.indexOf("#");
+    const fragment = fragmentIndex >= 0 ? rawUrl.slice(fragmentIndex) : "";
+    serialized.url = rawUrl.split("?")[0] + fragment;
+    serialized.query = request.url.query.map((entry) => ({
+      key: text(entry && entry.key),
+      value: text(entry && entry.value),
+      enabled: entry && entry.disabled !== true
+    }));
+  } else {
+    serialized.url = typeof request.url === "string"
+      ? request.url
+      : request.url && typeof request.url.toString === "function"
+        ? request.url.toString()
+        : text(request.url);
+  }
+  serialized.body = postmanBodyToNative(request.body);
+  serialized.headers = Array.from(request.headers || []).map((header) => ({
+    key: text(header && header.key),
+    value: text(header && header.value),
+    enabled: header && header.disabled !== true && header.enabled !== false
+  }));
+  serialized.cookies = Array.from(request.cookies || []).map((cookie) => ({
+    key: text(cookie && (cookie.key || cookie.name)),
+    value: text(cookie && cookie.value),
+    enabled: cookie && cookie.disabled !== true && cookie.enabled !== false
+  }));
+  return serialized;
+}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -783,7 +1031,7 @@ while (pendingRequests.size > 0) {
 if (scriptError) throw scriptError;
 if (asyncErrors.length > 0) throw asyncErrors[0];
 process.stdout.write(JSON.stringify({
-  request,
+  request: serializeRequest(),
   changes: { ...changes, removed: removals },
   tests,
   logs
@@ -919,6 +1167,61 @@ mod tests {
         server.join().expect("server");
 
         assert_eq!(result.tests.len(), 1);
+        assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+    }
+
+    #[test]
+    fn supports_postman_request_url_body_and_cookie_facades() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let mut request = Request::new("Facade request", "POST", "https://api.example.test/users");
+        request
+            .query
+            .push(crate::model::KeyValue::enabled("page", "1"));
+        request.body = crate::model::RequestBody::Json {
+            value: serde_json::json!({ "name": "Ada" }),
+        };
+
+        let result = run_script(
+            r#"
+                pm.test("Postman request facade", function () {
+                    pm.expect(pm.request.url.host).to.eql("api.example.test");
+                    pm.expect(pm.request.url.getPath()).to.eql("/users");
+                    pm.expect(pm.request.url.getQueryString()).to.eql("page=1");
+                    pm.expect(pm.request.body.mode).to.eql("raw");
+                    pm.expect(JSON.parse(pm.request.body.raw).name).to.eql("Ada");
+                });
+                pm.request.url.query.add({ key: "filter", value: "active users" });
+                pm.request.body.raw = JSON.stringify({ name: "Grace", role: "admin" });
+                pm.request.cookies.add({ key: "session", value: "local" });
+            "#,
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("script");
+
+        result
+            .apply(&mut request, &mut VariableContext::default())
+            .expect("apply script changes");
+        assert_eq!(
+            request.query,
+            vec![
+                crate::model::KeyValue::enabled("page", "1"),
+                crate::model::KeyValue::enabled("filter", "active users"),
+            ]
+        );
+        assert_eq!(
+            request.body,
+            crate::model::RequestBody::Json {
+                value: serde_json::json!({ "name": "Grace", "role": "admin" }),
+            }
+        );
+        assert_eq!(
+            request.cookies,
+            vec![crate::model::KeyValue::enabled("session", "local")]
+        );
         assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
     }
 

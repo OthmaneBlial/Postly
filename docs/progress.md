@@ -85,6 +85,9 @@ Implemented:
   subrequests with headers, raw bodies, response text/JSON and response
   assertions; direct bridge and collection-runner integration are covered, and
   it intentionally does not claim Postly transport parity.
+- The script bridge now exposes Postman-shaped request URL, query, cookie and
+  body facades, with URL/query mutations and raw/JSON/form body edits converted
+  back into the native request model through a dedicated regression test.
 - Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; saved workspaces persist a bounded ignored local jar.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
 - runner summaries now expose a deterministic HTTP status distribution in JSON
