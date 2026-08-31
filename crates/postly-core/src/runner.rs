@@ -11,6 +11,7 @@ use std::{
 
 use chrono::{DateTime, NaiveDate};
 use futures_util::future::join_all;
+use regex::Regex;
 use serde::Serialize;
 use tokio::sync::Notify;
 use url::Url;
@@ -507,11 +508,42 @@ fn validate_json_schema_object(
             }
         }
     }
+    let mut pattern_matched_properties = std::collections::BTreeSet::new();
+    if let Some(pattern_properties) = schema
+        .get("patternProperties")
+        .and_then(serde_json::Value::as_object)
+    {
+        for (pattern, property_schema) in pattern_properties {
+            let regex = Regex::new(pattern).map_err(|error| {
+                format!("invalid JSON Schema patternProperties regex {pattern:?}: {error}")
+            })?;
+            for (property, property_value) in object {
+                if regex.is_match(property) {
+                    pattern_matched_properties.insert(property.as_str());
+                    validate_json_schema(
+                        property_value,
+                        property_schema,
+                        &format!("{path}/{property}"),
+                    )?;
+                }
+            }
+        }
+    }
+    if let Some(property_name_schema) = schema.get("propertyNames") {
+        for property in object.keys() {
+            validate_json_schema(
+                &serde_json::Value::String(property.clone()),
+                property_name_schema,
+                &format!("{path}/<property-name>"),
+            )?;
+        }
+    }
     if let Some(additional_properties) = schema.get("additionalProperties") {
         for (unknown, unknown_value) in object.iter().filter(|(property, _)| {
             properties
                 .map(|properties| !properties.contains_key(*property))
                 .unwrap_or(true)
+                && !pattern_matched_properties.contains(property.as_str())
         }) {
             match additional_properties {
                 serde_json::Value::Bool(false) => {
@@ -669,6 +701,15 @@ fn validate_json_schema_string(
     )?;
     if let Some(format) = schema.get("format").and_then(serde_json::Value::as_str) {
         validate_json_schema_string_format(string, format, path)?;
+    }
+    if let Some(pattern) = schema.get("pattern").and_then(serde_json::Value::as_str) {
+        let regex = Regex::new(pattern)
+            .map_err(|error| format!("invalid JSON Schema pattern {pattern:?}: {error}"))?;
+        if !regex.is_match(string) {
+            return Err(format!(
+                "string at {path:?} does not match JSON Schema pattern {pattern:?}"
+            ));
+        }
     }
     Ok(())
 }
@@ -1483,6 +1524,44 @@ mod tests {
             ""
         )
         .is_err());
+
+        let patterned = serde_json::json!({
+            "type": "object",
+            "properties": { "id": { "type": "integer" } },
+            "patternProperties": {
+                "^x-": { "type": "string", "pattern": "^[a-z]+$" }
+            },
+            "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9-]*$" },
+            "additionalProperties": false
+        });
+        assert!(validate_json_schema(
+            &serde_json::json!({ "id": 7, "x-trace": "ready" }),
+            &patterned,
+            ""
+        )
+        .is_ok());
+        assert!(validate_json_schema(
+            &serde_json::json!({ "id": 7, "x-trace": "NOT-LOWERCASE" }),
+            &patterned,
+            ""
+        )
+        .is_err());
+        assert!(validate_json_schema(
+            &serde_json::json!({ "id": 7, "other": true }),
+            &patterned,
+            ""
+        )
+        .is_err());
+        assert!(
+            validate_json_schema(&serde_json::json!({ "bad key": "ready" }), &patterned, "")
+                .is_err()
+        );
+        let invalid_pattern = serde_json::json!({ "type": "string", "pattern": "[" });
+        assert!(
+            validate_json_schema(&serde_json::json!("ready"), &invalid_pattern, "")
+                .expect_err("invalid regex should be reported")
+                .contains("invalid JSON Schema pattern")
+        );
 
         let tuple = serde_json::json!({
             "type": "array",

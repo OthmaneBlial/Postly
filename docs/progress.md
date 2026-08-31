@@ -149,6 +149,7 @@ Implemented:
   root or any JSON Pointer: types, const/enum, required/properties,
   boolean/object `additionalProperties`, array/string/object bounds, unique items and
   tuple/`prefixItems` items, `contains` with `minContains`/`maxContains`,
+  string `pattern`, `patternProperties` and `propertyNames`,
   allOf/anyOf/oneOf/not composition, exclusive numeric bounds,
   `multipleOf` and common string formats (`date`, `date-time`, `uuid`, `uri`,
   `email`, `hostname`, `ipv4`, `ipv6`) are covered by runner and GUI tests.
@@ -242,7 +243,7 @@ Not yet implemented:
 - Broader Postman-compatible test/assertion cases beyond the current explicit
   native slice, including richer matcher composition and full JSON Schema
   dialect coverage; the native subset now also covers tuple/`prefixItems` arrays
-  and `contains` cardinality.
+  and `contains` cardinality plus bounded regex-based string and property rules.
 - Full multi-file transactional restore for arbitrary caller-managed canonical
   workspace batches remains open; imports now have a best-effort rollback
   journal that also removes empty directories created by the transaction, while
@@ -351,7 +352,7 @@ checked-in targets (`curl_command`, `variables` and `postman_import`) each
 completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`7a15fd0ddff416556657e8471143272ae3e15b6f8f39c85b98c2839d0d68e72b`.
+`34ed0a4f6b26e8d60ae98bc75bbc67b8d90fb58fcec4cda9c7b72c6766cbe404`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
@@ -370,6 +371,11 @@ The latest native assertion slice adds JSON Schema tuple validation through
 `items` arrays and `prefixItems`, plus `contains` with deterministic
 `minContains`/`maxContains` bounds. Runner tests cover valid and invalid
 positional items, additional-item rejection and exact/zero-match cardinality.
+
+It also validates safe Rust-regex `pattern` expressions, applies overlapping
+`patternProperties` schemas, validates `propertyNames`, and keeps matching
+pattern properties outside `additionalProperties: false` rejection. Invalid
+patterns are reported as schema errors rather than silently ignored.
 
 ## Next highest-value work
 

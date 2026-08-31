@@ -33,6 +33,7 @@ prost-reflect = { version = "0.14", features = ["serde"] }
 protox = "0.7"
 quick-xml = { version = "0.41", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["charset", "cookies", "http2", "json", "multipart", "native-tls", "rustls-tls", "gzip", "brotli", "deflate", "socks", "stream", "system-proxy"] }
+regex = "1.11"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 rustls-pemfile = "2.2"
 serde = { version = "1.0", features = ["derive"] }
