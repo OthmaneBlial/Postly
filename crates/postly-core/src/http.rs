@@ -481,6 +481,21 @@ pub struct HttpResponse {
     pub cookies: Vec<ResponseCookie>,
 }
 
+/// A local, inspectable summary of a cookie currently held by an HTTP engine.
+/// The value is available to trusted callers such as the native GUI, but it is
+/// never included in history, logs or serialized request data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredCookieInfo {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub secure: bool,
+    pub http_only: bool,
+    pub same_site: Option<String>,
+    pub persistent: bool,
+}
+
 /// Response metadata plus a live body for protocols that deliver events over
 /// an HTTP connection, such as Server-Sent Events.
 pub struct HttpStreamResponse {
@@ -663,6 +678,41 @@ impl HttpEngine {
             .cookie_jar
             .cookies(&url)
             .and_then(|value| value.to_str().ok().map(ToOwned::to_owned)))
+    }
+
+    /// Return unexpired cookies in a deterministic order for local inspection.
+    pub fn cookie_snapshot(&self) -> Vec<StoredCookieInfo> {
+        let mut cookies = self
+            .cookie_jar
+            .read_store()
+            .iter_unexpired()
+            .map(|cookie| StoredCookieInfo {
+                name: cookie.name().to_owned(),
+                value: cookie.value().to_owned(),
+                domain: cookie
+                    .domain
+                    .as_cow()
+                    .map(|value| value.into_owned())
+                    .unwrap_or_default(),
+                path: cookie.path.as_ref().to_owned(),
+                secure: cookie.secure().unwrap_or(false),
+                http_only: cookie.http_only().unwrap_or(false),
+                same_site: cookie.same_site().map(|value| format!("{value:?}")),
+                persistent: cookie.is_persistent(),
+            })
+            .collect::<Vec<_>>();
+        cookies.sort_by(|left, right| {
+            (&left.domain, &left.path, &left.name).cmp(&(&right.domain, &right.path, &right.name))
+        });
+        cookies
+    }
+
+    /// Clear all cookies held by this engine and persist the empty jar when
+    /// the engine is backed by a workspace-local cookie file.
+    pub fn clear_cookies(&self) -> Result<(), HttpError> {
+        let mut store = self.cookie_jar.write_store();
+        store.clear();
+        self.cookie_jar.persist(&store)
     }
 
     pub async fn execute(
@@ -3396,6 +3446,13 @@ mod tests {
                 .expect("cookie header"),
             Some("session=abc".to_owned())
         );
+        let snapshot = engine.cookie_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].name, "session");
+        assert_eq!(snapshot[0].value, "abc");
+        assert_eq!(snapshot[0].path, "/");
+        assert!(snapshot[0].http_only);
+        assert_eq!(snapshot[0].same_site.as_deref(), Some("Lax"));
 
         let second_request = Request::new("Next", "GET", format!("http://{address}/next"));
         let second_response = engine
@@ -3438,6 +3495,15 @@ mod tests {
                 .cookie_header("https://example.test/api/users")
                 .expect("reopened cookie header"),
             Some("session=abc".to_owned())
+        );
+        assert_eq!(reopened.cookie_snapshot().len(), 1);
+        reopened.clear_cookies().expect("clear cookie jar");
+        assert!(reopened.cookie_snapshot().is_empty());
+        assert_eq!(
+            reopened
+                .cookie_header("https://example.test/api/users")
+                .expect("cleared cookie header"),
+            None
         );
 
         fs::write(&jar_path, vec![b'x'; MAX_COOKIE_JAR_BYTES + 1]).expect("oversized jar");

@@ -2,7 +2,9 @@
 
 Postly keeps HTTP cookies in a session jar shared by cloned engine handles.
 Responses expose parsed `Set-Cookie` metadata, and the native workspace lets
-you add explicit request cookies from the Cookies tab.
+you add explicit request cookies from the Cookies tab. The same tab lists
+active unexpired session cookies by domain and path with masked values, and
+offers an explicit local clear action.
 
 Saved-request workflows opt into `.postly/cookies.json`. The file is ignored
 by Git, stays inside the workspace, is capped at 1 MiB, and is loaded only by

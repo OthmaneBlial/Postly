@@ -101,7 +101,7 @@ Implemented:
   JSON body path checks, non-empty body checks and header/cookie object views;
   matcher coverage includes exact/all/any keys, contain, deep properties and
   common numeric aliases with regression coverage.
-- Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; saved workspaces persist a bounded ignored local jar.
+- Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; the GUI inspects active session cookies by domain/path with masked values and can clear the jar explicitly; saved workspaces persist a bounded ignored local jar.
 - reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
 - runner summaries now expose a deterministic HTTP status distribution in JSON
   and the pretty reporter.

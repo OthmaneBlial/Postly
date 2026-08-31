@@ -4777,6 +4777,87 @@ impl PostlyApp {
                             "request-cookies",
                             "＋ Add cookie",
                         );
+                        ui.add_space(18.0);
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.heading(
+                                RichText::new("Session cookie jar")
+                                    .color(ui.visuals().text_color()),
+                            );
+                            let cookies = self.engine.cookie_snapshot();
+                            ui.label(
+                                RichText::new(format!("{} active", cookies.len()))
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
+                            if ui
+                                .add_enabled(!cookies.is_empty(), egui::Button::new("Clear jar"))
+                                .clicked()
+                            {
+                                match self.engine.clear_cookies() {
+                                    Ok(()) => {
+                                        self.status_message =
+                                            "Session cookie jar cleared locally".to_owned();
+                                    }
+                                    Err(error) => {
+                                        self.status_message =
+                                            format!("Cookie jar could not be cleared: {error}");
+                                    }
+                                }
+                            }
+                        });
+                        ui.label(
+                            RichText::new(
+                                "Session cookies are shared by this workspace; values stay masked in the inspector.",
+                            )
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                        );
+                        let cookies = self.engine.cookie_snapshot();
+                        if cookies.is_empty() {
+                            ui.label(
+                                RichText::new("No active session cookies.")
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
+                        } else {
+                            egui::ScrollArea::vertical()
+                                .max_height(190.0)
+                                .show(ui, |ui| {
+                                    egui::Grid::new("session-cookie-jar")
+                                        .striped(true)
+                                        .min_col_width(72.0)
+                                        .show(ui, |ui| {
+                                            ui.strong("Cookie");
+                                            ui.strong("Domain");
+                                            ui.strong("Path");
+                                            ui.strong("Value");
+                                            ui.strong("Flags");
+                                            ui.end_row();
+                                            for cookie in cookies {
+                                                ui.label(cookie.name);
+                                                ui.label(cookie.domain);
+                                                ui.label(cookie.path);
+                                                ui.monospace(mask_cookie_value(&cookie.value));
+                                                let mut flags = Vec::new();
+                                                if cookie.secure {
+                                                    flags.push("Secure".to_owned());
+                                                }
+                                                if cookie.http_only {
+                                                    flags.push("HttpOnly".to_owned());
+                                                }
+                                                if let Some(same_site) = cookie.same_site {
+                                                    flags.push(format!("SameSite={same_site}"));
+                                                }
+                                                if cookie.persistent {
+                                                    flags.push("Persistent".to_owned());
+                                                }
+                                                ui.label(flags.join(", "));
+                                                ui.end_row();
+                                            }
+                                        });
+                                });
+                        }
                     }
                     EditorTab::Body => self.render_body(ui),
                     EditorTab::WebSocket => self.render_websocket_editor(ui),
@@ -7711,6 +7792,18 @@ impl eframe::App for PostlyApp {
             let _ = self.persist_recovery();
         }
         let _ = self.save_tabs_settings();
+    }
+}
+
+fn mask_cookie_value(value: &str) -> String {
+    let mut chars = value.chars();
+    let prefix = chars.by_ref().take(2).collect::<String>();
+    if value.is_empty() {
+        "(empty)".to_owned()
+    } else if value.chars().count() <= 4 {
+        "••••".to_owned()
+    } else {
+        format!("{prefix}••••")
     }
 }
 
