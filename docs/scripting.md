@@ -29,6 +29,8 @@ The supported compatibility slice includes:
 - `pm.variables.get/set/unset/has/clear/replaceIn`, including iteration data precedence
 - `pm.request` URL, method and headers with `get`, `has`, `add`, `upsert` and `remove`
 - `pm.response.code/status/responseTime/text/json/headers/cookies`
+- `pm.sendRequest` callback requests for bounded HTTP(S) subrequests with
+  headers, raw bodies and response text/JSON
 - `pm.test` and `pm.expect` equality, inclusion, property, boolean, numeric, type, regex and negated checks
 - `pm.response.to.be.ok`, response header checks and `pm.response.cookies.get`
 - `console.log`, `console.warn` and `console.error` capture
@@ -48,6 +50,10 @@ entries of 4 KiB each and 1,000 test results. These limits are resource guards,
 not a security boundary for hostile code. Filesystem, network and process
 permissions still require a future embedded-runtime or isolated-worker
 decision.
-`pm.sendRequest`, OAuth helpers, broader Postman parity and an embedded or
-isolated runtime remain planned. The current Node bridge is still intended for
-source the user intentionally runs locally; its VM is not a security boundary.
+`pm.sendRequest` is intentionally a partial compatibility slice: it permits up
+to eight HTTP(S) callback requests per script, caps each response at 1 MiB and
+uses a two-second request timeout. Those subrequests use Node's native fetch,
+so Postly proxy, custom-CA, mTLS, OAuth and cookie-jar parity does not apply to
+them yet. OAuth helpers, broader Postman parity and an embedded or isolated
+runtime remain planned. The current Node bridge is still intended for source
+the user intentionally runs locally; its VM is not a security boundary.

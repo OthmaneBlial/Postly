@@ -336,6 +336,7 @@ const NODE_HARNESS: &str = r##"
 const vm = require("node:vm");
 const fs = require("node:fs");
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
+async function main() {
 const changes = { environment: {}, collection: {}, runtime: {} };
 changes.globals = {};
 const removals = { environment: [], collection: [], globals: [], runtime: [] };
@@ -344,6 +345,9 @@ const logs = [];
 const MAX_LOG_ENTRIES = 200;
 const MAX_LOG_MESSAGE_BYTES = 4096;
 const MAX_TEST_ENTRIES = 1000;
+const MAX_SEND_REQUESTS = 8;
+const MAX_SEND_RESPONSE_BYTES = 1024 * 1024;
+const SEND_REQUEST_TIMEOUT_MS = 2000;
 const values = input.variables || {};
 
 function text(value) {
@@ -560,19 +564,28 @@ function expect(value) {
   return { to: expectation(false) };
 }
 
-const responseData = input.response;
-let response = null;
-if (responseData) {
-  const responseHeaders = responseData.headers || [];
+function decorateHeaders(responseHeaders) {
   responseHeaders.get = (name) => {
     const found = responseHeaders.find((header) => header.key.toLowerCase() === text(name).toLowerCase() && header.enabled !== false);
     return found ? found.value : undefined;
   };
-  const responseCookies = responseData.cookies || [];
+  responseHeaders.has = (name) => responseHeaders.get(name) !== undefined;
+  return responseHeaders;
+}
+
+function decorateCookies(responseCookies) {
   responseCookies.get = (name) => {
     const found = responseCookies.find((cookie) => cookie.name.toLowerCase() === text(name).toLowerCase());
     return found ? found.value : undefined;
   };
+  return responseCookies;
+}
+
+function makeScriptResponse(responseData) {
+  const responseHeaders = responseData.headers || [];
+  decorateHeaders(responseHeaders);
+  const responseCookies = responseData.cookies || [];
+  decorateCookies(responseCookies);
   const responseTo = {
     have: {
       status: (expected) => assert(responseData.status === expected, "expected status " + responseData.status + " to equal " + expected),
@@ -587,7 +600,7 @@ if (responseData) {
       }
     }
   });
-  response = {
+  return {
     code: responseData.status,
     status: responseData.status_text,
     responseTime: responseData.duration_ms,
@@ -597,6 +610,106 @@ if (responseData) {
     json: () => JSON.parse(responseData.body_text),
     to: responseTo
   };
+}
+
+const responseData = input.response;
+let response = responseData ? makeScriptResponse(responseData) : null;
+
+const nativeFetch = globalThis.fetch;
+const pendingRequests = new Set();
+const asyncErrors = [];
+let sendRequestCount = 0;
+
+function normalizeHeaders(inputHeaders) {
+  const headers = {};
+  if (Array.isArray(inputHeaders)) {
+    inputHeaders.forEach((header) => {
+      if (!header || header.disabled === true || header.enabled === false) return;
+      const key = text(header.key || header.name).trim();
+      if (key) headers[key] = text(header.value);
+    });
+  } else if (inputHeaders && typeof inputHeaders === "object") {
+    Object.entries(inputHeaders).forEach(([key, value]) => {
+      headers[key] = text(value);
+    });
+  }
+  return headers;
+}
+
+function normalizeSendRequest(inputRequest) {
+  const options = typeof inputRequest === "string" ? { url: inputRequest } : (inputRequest || {});
+  let rawUrl = options.url;
+  if (rawUrl && typeof rawUrl === "object") rawUrl = rawUrl.raw || rawUrl.toString();
+  const url = replaceIn(rawUrl);
+  if (!url) throw new Error("pm.sendRequest requires a URL");
+  const parsed = new URL(url);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("pm.sendRequest only permits http and https URLs");
+  }
+  const method = text(options.method || "GET").toUpperCase();
+  const body = options.body && typeof options.body === "object"
+    ? (options.body.mode === "raw" ? replaceIn(options.body.raw) : undefined)
+    : options.body === undefined || options.body === null ? undefined : replaceIn(options.body);
+  return { url, method, headers: normalizeHeaders(options.header || options.headers), body };
+}
+
+async function performSendRequest(inputRequest) {
+  if (typeof nativeFetch !== "function") throw new Error("Node.js fetch is unavailable for pm.sendRequest");
+  const request = normalizeSendRequest(inputRequest);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SEND_REQUEST_TIMEOUT_MS);
+  const started = Date.now();
+  try {
+    const nativeResponse = await nativeFetch(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      signal: controller.signal
+    });
+    const bodyText = await nativeResponse.text();
+    if (Buffer.byteLength(bodyText, "utf8") > MAX_SEND_RESPONSE_BYTES) {
+      throw new Error("pm.sendRequest response exceeded the " + MAX_SEND_RESPONSE_BYTES + "-byte limit");
+    }
+    const headers = [];
+    nativeResponse.headers.forEach((value, key) => {
+      headers.push({ key, value, enabled: true });
+    });
+    return makeScriptResponse({
+      status: nativeResponse.status,
+      status_text: nativeResponse.statusText,
+      headers,
+      cookies: [],
+      body_text: bodyText,
+      duration_ms: Date.now() - started
+    });
+  } catch (error) {
+    if (error && error.name === "AbortError") throw new Error("pm.sendRequest timed out after " + SEND_REQUEST_TIMEOUT_MS + "ms");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function sendRequest(inputRequest, callback) {
+  const callbackFn = typeof callback === "function" ? callback : () => {};
+  if (sendRequestCount >= MAX_SEND_REQUESTS) {
+    const error = new Error("pm.sendRequest exceeded the maximum of " + MAX_SEND_REQUESTS + " requests");
+    try { callbackFn(error, null); } catch (callbackError) { asyncErrors.push(callbackError); }
+    return Promise.resolve();
+  }
+  sendRequestCount += 1;
+  const operation = performSendRequest(inputRequest);
+  const tracked = operation.then(
+    (result) => {
+      try { callbackFn(null, result); } catch (callbackError) { asyncErrors.push(callbackError); }
+    },
+    (error) => {
+      try { callbackFn(error, null); } catch (callbackError) { asyncErrors.push(callbackError); }
+    }
+  );
+  pendingRequests.add(tracked);
+  tracked.then(() => pendingRequests.delete(tracked));
+  return tracked;
 }
 
 const scriptConsole = {
@@ -639,6 +752,7 @@ const pm = {
   variables: runtime,
   request,
   response,
+  sendRequest,
   test: recordTest,
   expect
 };
@@ -657,13 +771,28 @@ const sandbox = {
   Array
 };
 vm.createContext(sandbox);
-new vm.Script(input.script, { filename: "postly-script.js" }).runInContext(sandbox, { timeout: 2000 });
+let scriptError = null;
+try {
+  new vm.Script(input.script, { filename: "postly-script.js" }).runInContext(sandbox, { timeout: 2000 });
+} catch (error) {
+  scriptError = error;
+}
+while (pendingRequests.size > 0) {
+  await Promise.all(Array.from(pendingRequests));
+}
+if (scriptError) throw scriptError;
+if (asyncErrors.length > 0) throw asyncErrors[0];
 process.stdout.write(JSON.stringify({
   request,
   changes: { ...changes, removed: removals },
   tests,
   logs
 }));
+}
+main().catch((error) => {
+  process.stderr.write(String(error && (error.stack || error.message || error)));
+  process.exitCode = 1;
+});
 "##;
 
 #[cfg(test)]
@@ -726,6 +855,71 @@ mod tests {
         .expect("script");
         assert_eq!(result.tests.len(), 1);
         assert!(result.tests[0].passed);
+    }
+
+    #[test]
+    fn supports_bounded_pm_send_request_callbacks() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+
+            let (mut stream, _) = listener.accept().expect("connection");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            loop {
+                let read = stream.read(&mut buffer).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+            assert!(request.contains("x-script: yes"));
+            let body = r#"{"ok":true}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-request-id: script\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        let request = Request::new("Scripted", "GET", "https://example.test");
+        let result = run_script(
+            &format!(
+                r#"
+                    pm.sendRequest({{
+                        url: "http://{address}/token",
+                        method: "GET",
+                        header: [{{ key: "X-Script", value: "yes" }}]
+                    }}, function (error, response) {{
+                        pm.test("callback received", function () {{
+                            pm.expect(error).to.eql(null);
+                            response.to.have.status(200);
+                            pm.expect(response.headers.get("x-request-id")).to.eql("script");
+                            pm.expect(response.json()).to.have.property("ok", true);
+                        }});
+                    }});
+                "#
+            ),
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("script");
+        server.join().expect("server");
+
+        assert_eq!(result.tests.len(), 1);
+        assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
     }
 
     #[test]
