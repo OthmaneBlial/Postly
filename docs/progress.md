@@ -114,8 +114,8 @@ Implemented:
 - The Node bridge now tests a broader explicit expectation subset including
   stable deep equality, deep.include/deep.members composition, keys, length,
   oneOf, empty, numeric range matchers, array members/include.members,
-  include.keys, deep properties, equality aliases and chainable property/type
-  checks; broad Chai/Postman parity
+  include.keys, deep properties, equality aliases, `closeTo`, predicate
+  `satisfy` and chainable property/type checks; broad Chai/Postman parity
   remains intentionally partial.
 - The opt-in script bridge now exposes a frozen `pm.info` facade with request
   name/ID, event name and iteration metadata; the collection runner passes the
@@ -362,7 +362,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`a5976578376b8f05bf8c95dd5a287d4032feefaa7f64515b33bdfdfc7954e995`.
+`6201207a8fa4bf178796f85bb957cb8617b1709f3740650ca218132c7556bc0d`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest

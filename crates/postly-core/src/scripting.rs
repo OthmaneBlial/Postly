@@ -1382,6 +1382,17 @@ function expect(value) {
       typeMatches(value, type),
       "expected value to" + prefix + " be a " + type
     );
+    const closeTo = (expected, delta) => check(
+      typeof value === "number" && Number.isFinite(value)
+        && typeof expected === "number" && Number.isFinite(expected)
+        && typeof delta === "number" && Number.isFinite(delta) && delta >= 0
+        && Math.abs(value - expected) <= delta,
+      "expected " + JSON.stringify(value) + " to" + prefix + " be close to " + expected + " +/- " + delta
+    );
+    const satisfy = (predicate) => check(
+      typeof predicate === "function" && Boolean(predicate(value)),
+      "expected " + JSON.stringify(value) + " to" + prefix + " satisfy the predicate"
+    );
     const include = (expected) => {
       const included = typeof value === "string"
         ? value.includes(expected)
@@ -1408,6 +1419,8 @@ function expect(value) {
       eql: (expected) => check(deepEqual(value, expected), "expected " + JSON.stringify(value) + " to" + prefix + " deeply equal " + JSON.stringify(expected)),
       include,
       contain: include,
+      closeTo,
+      satisfy,
       match: (pattern) => check(typeof value === "string" && pattern.test(value), "expected " + JSON.stringify(value) + " to" + prefix + " match the pattern"),
       have: {
         property: function (name, expected) {
@@ -1489,6 +1502,7 @@ function expect(value) {
         below: (expected) => check(value < expected, "expected " + JSON.stringify(value) + " to" + prefix + " be below " + expected),
         greaterThan: (expected) => check(value > expected, "expected " + JSON.stringify(value) + " to" + prefix + " be greater than " + expected),
         lessThan: (expected) => check(value < expected, "expected " + JSON.stringify(value) + " to" + prefix + " be less than " + expected),
+        closeTo,
         at: {
           least: (expected) => check(value >= expected, "expected " + JSON.stringify(value) + " to" + prefix + " be at least " + expected),
           most: (expected) => check(value <= expected, "expected " + JSON.stringify(value) + " to" + prefix + " be at most " + expected)
@@ -2246,6 +2260,10 @@ mod tests {
                     pm.expect(3).to.be.within(3, 3);
                     pm.expect(3).to.be.greaterThan(2);
                     pm.expect(3).to.be.lessThan(4);
+                    pm.expect(3.14).to.be.closeTo(3.1, 0.05);
+                    pm.expect({ ready: true }).to.satisfy((value) => value.ready === true);
+                    pm.expect(3.14).to.not.be.closeTo(3, 0.05);
+                    pm.expect({ ready: true }).to.not.satisfy((value) => value.pending === true);
                     pm.expect([]).to.be.empty;
                     pm.expect({}).to.be.empty;
                     pm.expect([]).to.be.an("array");
