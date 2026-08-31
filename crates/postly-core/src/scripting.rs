@@ -844,7 +844,37 @@ function postmanBodyToNative(body) {
 }
 
 function makeUrlFacade(rawValue, structuredQuery) {
-  const url = { raw: text(rawValue), query: [], variables: [] };
+  const raw = text(rawValue);
+  const variableNames = [];
+  const seenVariables = new Set();
+  const variablePattern = /\{\{\s*([^}]+?)\s*\}\}/g;
+  let variableMatch;
+  while ((variableMatch = variablePattern.exec(raw)) !== null) {
+    const key = text(variableMatch[1]).trim();
+    if (key && !seenVariables.has(key)) {
+      seenVariables.add(key);
+      variableNames.push(key);
+    }
+  }
+  const variables = variableNames.map((key) => ({
+    key,
+    value: text(visibleGet(key)),
+    enabled: true
+  }));
+  const decorateReadOnlyList = (list) => {
+    const keyOf = (entry) => text(entry && entry.key);
+    list.get = (key) => list.find((entry) => keyOf(entry) === text(key));
+    list.has = (key) => list.get(key) !== undefined;
+    list.all = () => list.slice();
+    list.count = () => list.length;
+    list.each = (callback) => list.forEach(callback);
+    list.toObject = () => list.reduce((object, entry) => {
+      if (entry && entry.key) object[entry.key] = text(entry.value);
+      return object;
+    }, {});
+    return list;
+  };
+  const url = { raw, query: [], variables: decorateReadOnlyList(variables) };
   const usesStructuredQuery = Array.isArray(structuredQuery) && structuredQuery.length > 0;
   let queryDirty = false;
   const resolvedUrl = () => replaceIn(url.raw);
@@ -896,6 +926,8 @@ function makeUrlFacade(rawValue, structuredQuery) {
   Object.defineProperties(url, {
     toString: { value: () => (usesStructuredQuery || queryDirty) ? serializeQuery() : text(url.raw) },
     getPath: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.pathname : text(url.raw).split("?")[0]; } },
+    getHost: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.hostname : undefined; } },
+    getProtocol: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.protocol.replace(/:$/, "") : undefined; } },
     getQueryString: { value: () => {
       if (url.query.length > 0) {
         const serialized = serializeQuery();
@@ -905,7 +937,11 @@ function makeUrlFacade(rawValue, structuredQuery) {
       return parsed ? parsed.search.replace(/^\?/, "") : text(url.raw).split("?")[1] || "";
     } },
     host: { get: () => { const parsed = parsedUrl(); return parsed ? parsed.hostname : undefined; } },
+    protocol: { get: () => { const parsed = parsedUrl(); return parsed ? parsed.protocol.replace(/:$/, "") : undefined; } },
+    port: { get: () => { const parsed = parsedUrl(); return parsed ? parsed.port : undefined; } },
+    hash: { get: () => { const parsed = parsedUrl(); return parsed ? parsed.hash : undefined; } },
     path: { get: () => { const parsed = parsedUrl(); return parsed ? parsed.pathname.split("/").filter(Boolean) : []; } },
+    variable: { get: () => url.variables },
     _usesStructuredQuery: { value: usesStructuredQuery, enumerable: false },
     _queryDirty: { get: () => queryDirty, enumerable: false }
   });
@@ -2107,6 +2143,42 @@ mod tests {
             request.cookies,
             vec![crate::model::KeyValue::enabled("session", "local")]
         );
+        assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+    }
+
+    #[test]
+    fn exposes_postman_url_metadata_and_read_only_path_variables() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let request = Request::new(
+            "URL metadata",
+            "GET",
+            "https://api.example.test/users/{{userId}}?include=profile#details",
+        );
+        let mut context = VariableContext::default();
+        context
+            .environment
+            .insert("userId".to_owned(), "42".to_owned());
+        let result = run_script(
+            r##"
+                pm.test("URL metadata", function () {
+                    pm.expect(pm.request.url.protocol).to.eql("https");
+                    pm.expect(pm.request.url.getProtocol()).to.eql("https");
+                    pm.expect(pm.request.url.port).to.eql("");
+                    pm.expect(pm.request.url.getHost()).to.eql("api.example.test");
+                    pm.expect(pm.request.url.getPath()).to.eql("/users/42");
+                    pm.expect(pm.request.url.hash).to.eql("#details");
+                    pm.expect(pm.request.url.variables.get("userId").value).to.eql("42");
+                    pm.expect(pm.request.url.variable.toObject()).to.eql({ userId: "42" });
+                });
+            "##,
+            &request,
+            None,
+            &context,
+        )
+        .expect("URL metadata script");
+
         assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
     }
 

@@ -103,7 +103,9 @@ Implemented:
   it intentionally does not claim Postly transport parity.
 - The script bridge now exposes Postman-shaped request URL, query, cookie and
   body facades, with URL/query mutations and raw/JSON/form body edits converted
-  back into the native request model through a dedicated regression test.
+  back into the native request model through dedicated regression tests; URL
+  protocol/host/port/path/hash metadata and read-only path variables are also
+  exposed.
 - Common response-side Postman assertions now include optional header values,
   JSON body path checks, non-empty body and cookie checks, and header/cookie object views;
   matcher coverage includes exact/all/any keys, contain, deep properties and
