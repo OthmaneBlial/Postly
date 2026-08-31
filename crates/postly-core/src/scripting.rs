@@ -2806,6 +2806,65 @@ mod tests {
     }
 
     #[test]
+    fn supports_postman_request_body_update_modes_and_lists() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let mut request = Request::new(
+            "Body update modes",
+            "POST",
+            "https://api.example.test/submit",
+        );
+        let result = run_script(
+            r#"
+                pm.request.body.update("plain text");
+                pm.test("raw body update", function () {
+                    pm.expect(pm.request.body.mode).to.eql("raw");
+                    pm.expect(pm.request.body.raw).to.eql("plain text");
+                });
+                pm.request.body.update({
+                    mode: "urlencoded",
+                    urlencoded: [
+                        { key: "query", value: "Ada Lovelace" },
+                        { key: "skip", value: "ignored", disabled: true }
+                    ]
+                });
+                pm.request.body.urlencoded.add({ key: "role", value: "admin" });
+                pm.test("urlencoded body list", function () {
+                    pm.expect(pm.request.body.urlencoded.count()).to.eql(3);
+                    pm.expect(pm.request.body.urlencoded.toObject()).to.eql({
+                        query: "Ada Lovelace",
+                        role: "admin"
+                    });
+                });
+            "#,
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("body update modes script");
+
+        result
+            .apply(&mut request, &mut VariableContext::default())
+            .expect("apply body update modes");
+        assert_eq!(
+            request.body,
+            crate::model::RequestBody::FormUrlEncoded {
+                fields: vec![
+                    crate::model::KeyValue::enabled("query", "Ada Lovelace"),
+                    crate::model::KeyValue {
+                        key: "skip".to_owned(),
+                        value: "ignored".to_owned(),
+                        enabled: false,
+                    },
+                    crate::model::KeyValue::enabled("role", "admin"),
+                ],
+            }
+        );
+        assert!(result.tests.iter().all(|test| test.passed));
+    }
+
+    #[test]
     fn exposes_postman_info_metadata() {
         if Command::new("node").arg("--version").output().is_err() {
             return;
