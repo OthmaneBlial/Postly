@@ -140,6 +140,10 @@ Implemented:
   temporary files, with coverage that no temporary destination remains after a
   replacement; request and environment relocations roll back their newly
   written destination if the old path cannot be removed.
+- Postman, OpenAPI and environment imports now use a best-effort multi-file
+  rollback journal: canonical files are snapshotted before their first write
+  and restored when a later import write fails, so a failed import does not
+  leave a mixture of new and old TOML files.
 - `postly validate` provides a read-only canonical workspace integrity scan with
   text and JSON output, aggregates malformed collection/request/environment
   files and returns a failing exit status without inspecting ignored `.postly/`
@@ -176,10 +180,11 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
-- Full multi-file transactional restore for arbitrary canonical workspace
-  batches remains open; individual TOML writes now use unique flushed
-  temporary files, and request/environment relocations roll back their newly
-  written destination. Recovery now covers multiple dirty GUI documents.
+- Full multi-file transactional restore for arbitrary caller-managed canonical
+  workspace batches remains open; imports now have a best-effort rollback
+  journal, while individual TOML writes use unique flushed temporary files and
+  request/environment relocations roll back their newly written destination.
+  Empty-directory cleanup after a failed import remains intentionally deferred.
 - Encrypted PKCS#12 identities and transient passphrase handling now work for
   the shared HTTP/SSE engine, CLI and native GUI; per-domain certificate
   association, WebSocket certificate routing and gRPC PKCS#12 remain open.

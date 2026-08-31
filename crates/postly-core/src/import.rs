@@ -14,7 +14,7 @@ use crate::{
         MultipartPart, Request, RequestBody, ResponseExample,
     },
     secrets::{SecretStore, SecretStoreError},
-    storage::{CollectionFiles, Workspace, WorkspaceError},
+    storage::{CollectionFiles, Workspace, WorkspaceError, WorkspaceTransaction},
 };
 
 #[derive(Debug, Error)]
@@ -99,8 +99,9 @@ pub fn import_postman_collection(
         .ok_or(ImportError::MissingCollectionName)?
         .to_owned();
     let workspace = Workspace::open_or_init(&output_directory, name.clone())?;
+    let mut transaction = workspace.begin_transaction();
     let collection = Collection::new(&name);
-    let mut collection_files = workspace.create_collection(&collection)?;
+    let mut collection_files = transaction.create_collection(&collection)?;
     let mut report = ImportReport {
         source: collection_path.display().to_string(),
         collection_name: Some(name),
@@ -119,7 +120,7 @@ pub fn import_postman_collection(
         .and_then(description_text)
     {
         collection_files.collection.description = Some(description);
-        workspace.save_collection(&collection_files)?;
+        transaction.save_collection(&collection_files)?;
     }
 
     if let Some(variables) = document.get("variable").and_then(Value::as_array) {
@@ -134,9 +135,9 @@ pub fn import_postman_collection(
                     .insert(key.to_owned(), value.to_owned());
             }
         }
-        workspace.save_collection(&collection_files)?;
+        transaction.save_collection(&collection_files)?;
     }
-    workspace.save_collection(&collection_files)?;
+    transaction.save_collection(&collection_files)?;
 
     if let Some(items) = document.get("item").and_then(Value::as_array) {
         let inherited = InheritedItemContext {
@@ -146,7 +147,7 @@ pub fn import_postman_collection(
         };
         for item in items {
             import_item(
-                &workspace,
+                &mut transaction,
                 &collection_files,
                 item,
                 None,
@@ -155,6 +156,7 @@ pub fn import_postman_collection(
             )?;
         }
     }
+    transaction.commit();
     Ok(report)
 }
 
@@ -215,7 +217,9 @@ pub fn import_environment(
     } else {
         report.warn("Environment has no values array.");
     }
-    workspace.save_environment(&environment)?;
+    let mut transaction = workspace.begin_transaction();
+    transaction.save_environment(&environment)?;
+    transaction.commit();
     Ok(report)
 }
 
@@ -270,7 +274,9 @@ pub fn import_dotenv(
                 .insert(key, EnvironmentVariable::plain(value));
         }
     }
-    workspace.save_environment(&environment)?;
+    let mut transaction = workspace.begin_transaction();
+    transaction.save_environment(&environment)?;
+    transaction.commit();
     Ok(report)
 }
 
@@ -413,7 +419,7 @@ struct InheritedItemContext {
 }
 
 fn import_item(
-    workspace: &Workspace,
+    transaction: &mut WorkspaceTransaction<'_>,
     collection: &CollectionFiles,
     item: &Value,
     folder: Option<String>,
@@ -444,7 +450,7 @@ fn import_item(
         });
         for child in children {
             import_item(
-                workspace,
+                transaction,
                 collection,
                 child,
                 next_folder.clone(),
@@ -471,7 +477,7 @@ fn import_item(
     scripts.extend(parse_event_scripts(item, name, report));
     scripts.apply_to_request(&mut request);
     request.examples = parse_examples(item, report);
-    let request_path = workspace.save_request(collection, &request)?;
+    let request_path = transaction.save_request(collection, &request)?;
     report.imported_requests += 1;
     if auth_requires_review || request_needs_review(&request) {
         report.manual_review_requests += 1;

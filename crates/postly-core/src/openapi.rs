@@ -124,7 +124,8 @@ pub fn import_openapi_text(
         })
         .unwrap_or_else(|| "Imported OpenAPI".to_owned());
     let workspace = Workspace::open_or_init(output_directory, "Postly workspace")?;
-    let mut collection_files = workspace.create_collection(&Collection::new(title))?;
+    let mut transaction = workspace.begin_transaction();
+    let mut collection_files = transaction.create_collection(&Collection::new(title))?;
     let server = resolve_server(root, &mut collection_files.collection, &mut warnings);
     let security_schemes = root
         .get("components")
@@ -136,7 +137,8 @@ pub fn import_openapi_text(
 
     let Some(paths) = root.get("paths").and_then(Value::as_object) else {
         warnings.push("OpenAPI document has no paths object.".to_owned());
-        workspace.save_collection(&collection_files)?;
+        transaction.save_collection(&collection_files)?;
+        transaction.commit();
         return Ok(OpenApiImportReport {
             source: input_path,
             collection_path: collection_files.directory.join("postly.collection.toml"),
@@ -211,11 +213,12 @@ pub fn import_openapi_text(
                 &mut warnings,
             );
             apply_response_examples(&mut request, operation, &mut warnings);
-            request_paths.push(workspace.save_request(&collection_files, &request)?);
+            request_paths.push(transaction.save_request(&collection_files, &request)?);
             imported_operations += 1;
         }
     }
-    workspace.save_collection(&collection_files)?;
+    transaction.save_collection(&collection_files)?;
+    transaction.commit();
     Ok(OpenApiImportReport {
         source: input_path,
         collection_path: collection_files.directory.join("postly.collection.toml"),

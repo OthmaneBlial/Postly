@@ -3,6 +3,9 @@
 Postly can import OpenAPI 3.0 and 3.1 JSON or YAML documents into the local
 TOML workspace:
 
+The importer writes through a local rollback journal. If a later request or
+collection write fails, files already written by that import are restored.
+
 ~~~bash
 postly import openapi ./openapi.yaml --output ./project
 postly import openapi https://api.example.com/openapi.yaml --output ./project

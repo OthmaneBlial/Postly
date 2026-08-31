@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     fs::{self, File, OpenOptions},
     io::{self, BufRead, Write},
     path::{Component, Path, PathBuf},
@@ -115,6 +115,17 @@ pub struct CollectionFiles {
     pub collection: Collection,
 }
 
+/// A best-effort rollback journal for a group of canonical workspace writes.
+///
+/// Each path is snapshotted before its first write. Dropping an uncommitted
+/// transaction restores those snapshots, so an import cannot leave a mixture
+/// of newly written and old canonical TOML files after a later write fails.
+pub(crate) struct WorkspaceTransaction<'a> {
+    workspace: &'a Workspace,
+    originals: BTreeMap<PathBuf, Option<Vec<u8>>>,
+    committed: bool,
+}
+
 /// A canonical workspace file that could not be parsed during validation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspaceValidationIssue {
@@ -202,6 +213,14 @@ impl Workspace {
             Self::open(root)
         } else {
             Self::init(root, name)
+        }
+    }
+
+    pub(crate) fn begin_transaction(&self) -> WorkspaceTransaction<'_> {
+        WorkspaceTransaction {
+            workspace: self,
+            originals: BTreeMap::new(),
+            committed: false,
         }
     }
 
@@ -755,6 +774,113 @@ impl Workspace {
     }
 }
 
+impl WorkspaceTransaction<'_> {
+    pub(crate) fn create_collection(
+        &mut self,
+        collection: &Collection,
+    ) -> Result<CollectionFiles, WorkspaceError> {
+        let directory = self
+            .workspace
+            .root
+            .join("collections")
+            .join(slugify(&collection.name)?);
+        fs::create_dir_all(directory.join("requests")).map_err(|source| WorkspaceError::Io {
+            path: directory.join("requests"),
+            source,
+        })?;
+        self.write_toml(&directory.join(COLLECTION_FILE), collection)?;
+        Ok(CollectionFiles {
+            directory,
+            collection: collection.clone(),
+        })
+    }
+
+    pub(crate) fn save_collection(
+        &mut self,
+        files: &CollectionFiles,
+    ) -> Result<(), WorkspaceError> {
+        self.write_toml(&files.directory.join(COLLECTION_FILE), &files.collection)
+    }
+
+    pub(crate) fn save_request(
+        &mut self,
+        collection: &CollectionFiles,
+        request: &Request,
+    ) -> Result<PathBuf, WorkspaceError> {
+        let path = self.workspace.request_path_for(collection, request, None)?;
+        self.write_request_file(&path, request)?;
+        Ok(path)
+    }
+
+    pub(crate) fn save_environment(
+        &mut self,
+        environment: &Environment,
+    ) -> Result<PathBuf, WorkspaceError> {
+        let path = self.workspace.environment_path(environment)?;
+        self.write_toml(&path, environment)?;
+        Ok(path)
+    }
+
+    pub(crate) fn commit(mut self) {
+        self.committed = true;
+    }
+
+    fn write_request_file(&mut self, path: &Path, request: &Request) -> Result<(), WorkspaceError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| WorkspaceError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        self.write_toml(path, request)
+    }
+
+    fn write_toml<T: serde::Serialize>(
+        &mut self,
+        path: &Path,
+        value: &T,
+    ) -> Result<(), WorkspaceError> {
+        self.snapshot(path)?;
+        self.workspace.write_toml(path, value)
+    }
+
+    fn snapshot(&mut self, path: &Path) -> Result<(), WorkspaceError> {
+        if self.originals.contains_key(path) {
+            return Ok(());
+        }
+        let original = match fs::read(path) {
+            Ok(bytes) => Some(bytes),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => None,
+            Err(source) => {
+                return Err(WorkspaceError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                })
+            }
+        };
+        self.originals.insert(path.to_path_buf(), original);
+        Ok(())
+    }
+}
+
+impl Drop for WorkspaceTransaction<'_> {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        for (path, original) in &self.originals {
+            match original {
+                Some(bytes) => {
+                    let _ = atomic_write(path, bytes);
+                }
+                None => {
+                    let _ = fs::remove_file(path);
+                }
+            }
+        }
+    }
+}
+
 fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, WorkspaceError> {
     let text = fs::read_to_string(path).map_err(|source| WorkspaceError::Io {
         path: path.to_path_buf(),
@@ -989,6 +1115,33 @@ mod tests {
             .path()
             .join("environments/production.postly-env.toml")
             .exists());
+    }
+
+    #[test]
+    fn uncommitted_workspace_transaction_rolls_back_multiple_files() {
+        let directory = tempfile::tempdir().expect("workspace directory");
+        let workspace = Workspace::init(directory.path(), "Demo API").expect("init");
+        let collection = Collection::new("Imported");
+
+        {
+            let mut transaction = workspace.begin_transaction();
+            let files = transaction
+                .create_collection(&collection)
+                .expect("collection");
+            transaction
+                .save_request(
+                    &files,
+                    &Request::new("First", "GET", "https://example.test"),
+                )
+                .expect("first request");
+            let invalid = Request::new("", "GET", "https://example.test");
+            assert!(transaction.save_request(&files, &invalid).is_err());
+        }
+
+        assert!(workspace.collections().expect("collections").is_empty());
+        let collection_root = directory.path().join("collections/imported");
+        assert!(!collection_root.join(COLLECTION_FILE).exists());
+        assert!(!collection_root.join("requests/first.postly.toml").exists());
     }
 
     #[test]
