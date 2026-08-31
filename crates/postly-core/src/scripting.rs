@@ -1252,6 +1252,56 @@ function hasHeader(headers, name) {
   return Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase());
 }
 
+function sendRequestAuthParameters(auth, section) {
+  const value = auth && auth[section];
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") {
+    return Object.entries(value).map(([key, value]) => ({ key, value }));
+  }
+  return [];
+}
+
+function applySendRequestAuth(auth, headers) {
+  if (!auth || typeof auth !== "object") return null;
+  const type = text(auth.type).toLowerCase();
+  if (!type || type === "none" || type === "noauth") return null;
+  const parameter = (section, names) => authParameterValue(
+    sendRequestAuthParameters(auth, section), names
+  );
+  if (type === "bearer") {
+    const token = parameter("bearer", ["token", "value"]);
+    if (token === undefined) throw new Error("pm.sendRequest bearer auth requires a token");
+    if (!hasHeader(headers, "authorization")) headers.authorization = "Bearer " + replaceIn(token);
+    return null;
+  }
+  if (type === "basic") {
+    const username = parameter("basic", "username");
+    const password = parameter("basic", "password");
+    if (username === undefined || password === undefined) {
+      throw new Error("pm.sendRequest basic auth requires username and password");
+    }
+    if (!hasHeader(headers, "authorization")) {
+      const credentials = Buffer.from(replaceIn(username) + ":" + replaceIn(password)).toString("base64");
+      headers.authorization = "Basic " + credentials;
+    }
+    return null;
+  }
+  if (type === "apikey" || type === "api_key") {
+    const key = parameter("apikey", "key");
+    const value = parameter("apikey", "value");
+    const location = text(parameter("apikey", "in") || "header").toLowerCase();
+    if (key === undefined || value === undefined) {
+      throw new Error("pm.sendRequest API-key auth requires key and value");
+    }
+    const resolvedKey = replaceIn(key);
+    const resolvedValue = replaceIn(value);
+    if (location === "query") return { key: resolvedKey, value: resolvedValue };
+    if (!hasHeader(headers, resolvedKey)) headers[resolvedKey] = resolvedValue;
+    return null;
+  }
+  throw new Error("pm.sendRequest auth type is not supported: " + type);
+}
+
 function normalizeSendRequestBody(inputBody, headers) {
   if (inputBody === undefined || inputBody === null) return undefined;
   if (typeof inputBody !== "object") return replaceIn(inputBody);
@@ -1293,14 +1343,16 @@ function normalizeSendRequest(inputRequest) {
   const options = typeof inputRequest === "string" ? { url: inputRequest } : (inputRequest || {});
   const urlOptions = options.url && typeof options.url === "object" ? options.url : null;
   let rawUrl = urlOptions ? urlOptions.raw || urlOptions.toString() : options.url;
-  const url = appendQueryParameters(replaceIn(rawUrl), urlOptions && urlOptions.query);
+  let url = appendQueryParameters(replaceIn(rawUrl), urlOptions && urlOptions.query);
   if (!url) throw new Error("pm.sendRequest requires a URL");
+  const method = text(options.method || "GET").toUpperCase();
+  const headers = normalizeHeaders(options.header || options.headers);
+  const authQuery = applySendRequestAuth(options.auth, headers);
+  if (authQuery) url = appendQueryParameters(url, [authQuery]);
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("pm.sendRequest only permits http and https URLs");
   }
-  const method = text(options.method || "GET").toUpperCase();
-  const headers = normalizeHeaders(options.header || options.headers);
   const body = normalizeSendRequestBody(options.body, headers);
   return { url, method, headers, body };
 }
@@ -1589,6 +1641,123 @@ mod tests {
 
         assert_eq!(result.tests.len(), 1);
         assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+    }
+
+    #[test]
+    fn supports_pm_send_request_authentication_shapes() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().expect("connection");
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    let read = stream.read(&mut buffer).expect("read request");
+                    assert!(read > 0, "request ended before headers");
+                    request.extend_from_slice(&buffer[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                if request.starts_with("get /bearer") {
+                    assert!(
+                        request.contains("authorization: bearer script-token"),
+                        "{request}"
+                    );
+                } else if request.starts_with("get /basic") {
+                    assert!(
+                        request.contains("authorization: basic dxnlcjpwyxnz"),
+                        "{request}"
+                    );
+                } else if request.starts_with("get /query") {
+                    assert!(
+                        request.starts_with("get /query?api_key=query-value http/1.1"),
+                        "{request}"
+                    );
+                } else {
+                    panic!("unexpected pm.sendRequest path: {request}");
+                }
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                    )
+                    .expect("write response");
+            }
+        });
+
+        let mut context = VariableContext::default();
+        context
+            .environment
+            .insert("token".to_owned(), "script-token".to_owned());
+        context
+            .environment
+            .insert("username".to_owned(), "user".to_owned());
+        context
+            .environment
+            .insert("password".to_owned(), "pass".to_owned());
+        context
+            .environment
+            .insert("queryKey".to_owned(), "api_key".to_owned());
+        context
+            .environment
+            .insert("queryValue".to_owned(), "query-value".to_owned());
+        let request = Request::new("Scripted auth", "GET", "https://example.test");
+        let result = run_script(
+            &format!(
+                r#"
+                    const base = "http://{address}";
+                    pm.sendRequest({{
+                        url: base + "/bearer",
+                        auth: {{ type: "bearer", bearer: [{{ key: "token", value: "{{{{token}}}}" }}] }}
+                    }}, function (error, response) {{
+                        pm.test("bearer auth", function () {{
+                            pm.expect(error).to.eql(null);
+                            response.to.have.status(200);
+                        }});
+                    }});
+                    pm.sendRequest({{
+                        url: base + "/basic",
+                        auth: {{ type: "basic", basic: [
+                            {{ key: "username", value: "{{{{username}}}}" }},
+                            {{ key: "password", value: "{{{{password}}}}" }}
+                        ] }}
+                    }}, function (error, response) {{
+                        pm.test("basic auth", function () {{
+                            pm.expect(error).to.eql(null);
+                            response.to.have.status(200);
+                        }});
+                    }});
+                    pm.sendRequest({{
+                        url: base + "/query",
+                        auth: {{ type: "apikey", apikey: [
+                            {{ key: "key", value: "{{{{queryKey}}}}" }},
+                            {{ key: "value", value: "{{{{queryValue}}}}" }},
+                            {{ key: "in", value: "query" }}
+                        ] }}
+                    }}, function (error, response) {{
+                        pm.test("query API key", function () {{
+                            pm.expect(error).to.eql(null);
+                            response.to.have.status(200);
+                        }});
+                    }});
+                "#
+            ),
+            &request,
+            None,
+            &context,
+        )
+        .expect("script auth requests");
+        server.join().expect("server");
+
+        assert_eq!(result.tests.len(), 3);
+        assert!(result.tests.iter().all(|test| test.passed), "{result:?}");
     }
 
     #[test]
