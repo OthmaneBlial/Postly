@@ -159,8 +159,10 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
-- transactional restore for canonical workspace files remains open; recovery
-  now covers multiple dirty GUI documents.
+- Multi-file transactional restore for canonical workspace files remains open;
+  individual TOML writes now use unique flushed temporary files, and failed
+  request relocation rolls back its newly written destination. Recovery now
+  covers multiple dirty GUI documents.
 - Encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association and explicit insecure TLS remain open; gRPC custom PEM CA/client identity and SOCKS5 routing are now available in CLI and GUI.
 - OpenAPI cyclic/remote references, richer schema generation beyond the current composed/format-aware samples and deeper protocol-specific GUI tooling.
 - richer deterministic protocol test server tooling beyond the HTTP mock,

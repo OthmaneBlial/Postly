@@ -3,6 +3,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufRead, Write},
     path::{Component, Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,7 @@ const REQUEST_SUFFIX: &str = ".postly.toml";
 const HISTORY_FILE: &str = ".postly/history.jsonl";
 const MAX_HISTORY_ENTRIES: usize = 1_000;
 const MAX_HISTORY_BYTES: usize = 1_048_576;
+static ATOMIC_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
     let parent = path
@@ -30,11 +32,44 @@ fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?
         .to_string_lossy();
-    let temporary = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
-    if let Err(error) = fs::write(&temporary, contents) {
+    let mut temporary = None;
+    let mut temporary_file = None;
+    for _ in 0..100 {
+        let sequence = ATOMIC_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            ".{file_name}.{}-{sequence}.tmp",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                temporary = Some(candidate);
+                temporary_file = Some(file);
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    let Some(temporary) = temporary else {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not allocate a unique atomic-write temporary file",
+        ));
+    };
+    let mut temporary_file = temporary_file.expect("temporary path has a file");
+    if let Err(error) = temporary_file
+        .write_all(contents)
+        .and_then(|_| temporary_file.sync_all())
+    {
+        drop(temporary_file);
         let _ = fs::remove_file(&temporary);
         return Err(error);
     }
+    drop(temporary_file);
     if let Err(error) = fs::rename(&temporary, path) {
         let _ = fs::remove_file(&temporary);
         return Err(error);
@@ -225,10 +260,13 @@ impl Workspace {
         let new_path = self.request_path_for(collection, request, Some(old_path))?;
         self.write_request_file(&new_path, request)?;
         if new_path != old_path {
-            fs::remove_file(old_path).map_err(|source| WorkspaceError::Io {
-                path: old_path.to_path_buf(),
-                source,
-            })?;
+            if let Err(source) = fs::remove_file(old_path) {
+                let _ = fs::remove_file(&new_path);
+                return Err(WorkspaceError::Io {
+                    path: old_path.to_path_buf(),
+                    source,
+                });
+            }
         }
         Ok(new_path)
     }
@@ -711,6 +749,33 @@ mod tests {
             .expect("entries");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].file_name(), "request.postly.toml");
+    }
+
+    #[test]
+    fn failed_request_relocation_rolls_back_the_new_destination() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = Workspace::init(directory.path(), "Demo API").expect("init");
+        let collection = workspace
+            .create_collection(&Collection::new("Users"))
+            .expect("collection");
+        let request = Request::new("List users", "GET", "https://example.com/users");
+        let old_path = workspace
+            .save_request(&collection, &request)
+            .expect("request");
+
+        std::fs::remove_file(&old_path).expect("remove request for failure setup");
+        std::fs::create_dir(&old_path).expect("replace old path with directory");
+        let mut renamed = request;
+        renamed.name = "Renamed users".to_owned();
+
+        assert!(workspace
+            .relocate_request(&old_path, &collection, &renamed)
+            .is_err());
+        assert!(old_path.is_dir());
+        assert!(!collection
+            .directory
+            .join("requests/renamed-users.postly.toml")
+            .exists());
     }
 
     #[test]
