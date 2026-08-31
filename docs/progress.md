@@ -196,8 +196,11 @@ Implemented:
   diagnostics and safe reproduction workflow; the root `SECURITY.md` points to
   the same policy.
 - The dependency-free `website/` showcase has responsive navigation, SEO
-  metadata, JSON-LD and source-backed documentation links; local browser QA
-  covers 390px and 1440px layouts, mobile menu state and response-tab switching.
+  metadata, JSON-LD, crawlable `robots.txt`/`sitemap.xml`/`llms.txt` assets and
+  source-backed documentation links; local browser QA covers 390px and 1440px
+  layouts, mobile menu state and response-tab switching. The isolated `Postly/`
+  folder is published at `https://othmaneblial.github.io/Postly/` and its home,
+  docs, logo and crawl assets were rechecked over HTTPS after propagation.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:
