@@ -8152,6 +8152,55 @@ mod tests {
     }
 
     #[test]
+    fn send_worker_keeps_response_when_post_response_assertion_fails() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("connection");
+            let mut request = [0_u8; 4096];
+            let _request_length = stream.read(&mut request).expect("read");
+            let body = br#"{"script":true}"#;
+            let headers = format!(
+                "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).expect("headers");
+            stream.write_all(body).expect("body");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.url = format!("http://{address}/script-failure");
+        app.test_script =
+            "pm.test('expected failure', function () { pm.response.to.have.status(201); });"
+                .to_owned();
+        app.run_scripts_on_send = true;
+        app.send_current().expect("send with failing script");
+
+        let mut finished = false;
+        for _ in 0..400 {
+            if !app.poll_pending() {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.join().expect("server");
+        assert!(finished, "failing scripted GUI worker did not finish");
+        assert_eq!(
+            app.response.as_ref().map(|response| response.status),
+            Some(202),
+            "response_error={:?}, status_message={}",
+            app.response_error,
+            app.status_message
+        );
+        assert!(app.script_error.is_none());
+        let report = app.script_report.as_ref().expect("test report");
+        assert_eq!(report.kind, ScriptRunKind::Tests);
+        assert_eq!(report.result.failed_tests().count(), 1);
+        assert!(app.status_message.contains("1 script test(s) failed"));
+    }
+
+    #[test]
     fn graphql_schema_worker_fetches_and_parses_a_local_schema() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
         let address = listener.local_addr().expect("address");
