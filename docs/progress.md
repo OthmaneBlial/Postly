@@ -141,9 +141,9 @@ Implemented:
   back into the native request model through dedicated regression tests;
   `pm.request.body.update(...)` replaces supported Postman body modes and is
   serialized back to the native request model; URL
-  protocol/host/port/path/hash metadata, `toObject()` serialization and mutable
-  path-variable helpers are also exposed and materialized back into the request
-  URL.
+  protocol/host/port/path/hash metadata, `toObject()` serialization, mutable
+  path-variable helpers and `addQueryParams`/`removeQueryParams`/
+  `getQueryParams` are also exposed and materialized back into the request URL.
 - Common response-side Postman assertions now include optional header values,
   JSON body path checks, non-empty body and cookie checks, negated header
   presence/value checks, JSON response categories and header/cookie object
@@ -363,7 +363,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`ee7667129d251634afecbbb753b8bec514e0d09bd49f3e2dff2a1bfdb53d5910`.
+`42585b1d80aa52880a16b14544b4e58f6b08cda4db11408aa0927de7c480df6a`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest

@@ -1096,9 +1096,23 @@ function makeUrlFacade(rawValue, structuredQuery) {
       query.add(entry);
     }
   };
+  const queryParamEntries = (params) => {
+    if (Array.isArray(params)) return params;
+    if (params && typeof params === "object") {
+      return Object.entries(params).map(([key, value]) => ({ key, value }));
+    }
+    return [];
+  };
+  const queryParamKey = (entry) => text(entry && typeof entry === "object" ? entry.key : entry);
   refreshQuery();
   url.query = query;
   Object.defineProperties(url, {
+    addQueryParams: { value: (params) => queryParamEntries(params).forEach((entry) => query.add(entry)) },
+    removeQueryParams: { value: (params) => {
+      const entries = Array.isArray(params) ? params : [params];
+      entries.forEach((entry) => query.remove(queryParamKey(entry)));
+    }},
+    getQueryParams: { value: () => query },
     toString: { value: () => (usesStructuredQuery || queryDirty || hasVariableChanges()) ? serializeQuery() : text(url.raw) },
     toObject: { value: () => {
       const parsed = parsedUrl();
@@ -2829,6 +2843,15 @@ mod tests {
                     pm.expect(JSON.parse(pm.request.body.raw).name).to.eql("Ada");
                 });
                 pm.request.url.query.add({ key: "filter", value: "active users" });
+                pm.request.url.addQueryParams([
+                    { key: "tag", value: "rust" },
+                    { key: "tag", value: "api", disabled: true }
+                ]);
+                pm.test("URL query helpers are available", function () {
+                    pm.expect(pm.request.url.getQueryParams().count()).to.eql(4);
+                    pm.expect(pm.request.url.getQueryParams().get("tag").value).to.eql("rust");
+                });
+                pm.request.url.removeQueryParams("page");
                 pm.request.body.update({
                     mode: "raw",
                     raw: JSON.stringify({ name: "Grace", role: "admin" }),
@@ -2852,8 +2875,13 @@ mod tests {
         assert_eq!(
             request.query,
             vec![
-                crate::model::KeyValue::enabled("page", "1"),
                 crate::model::KeyValue::enabled("filter", "active users"),
+                crate::model::KeyValue::enabled("tag", "rust"),
+                crate::model::KeyValue {
+                    key: "tag".to_owned(),
+                    value: "api".to_owned(),
+                    enabled: false,
+                },
             ]
         );
         assert_eq!(
