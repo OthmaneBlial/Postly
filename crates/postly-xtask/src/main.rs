@@ -18,6 +18,7 @@ use tokio::{
 
 const BENCHMARK_ITERATIONS: usize = 5;
 const WORKSPACE_REQUESTS: usize = 1_000;
+const LARGE_WORKSPACE_REQUESTS: usize = 10_000;
 const RUNNER_REQUESTS: usize = 100;
 
 fn main() -> ExitCode {
@@ -678,6 +679,64 @@ fn collect_benchmarks() -> Result<Vec<BenchmarkResult>, String> {
         }
         Ok(())
     })?;
+
+    let large_workspace = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let large_model = Workspace::init(large_workspace.path(), "Large benchmark workspace")
+        .map_err(|error| error.to_string())?;
+    let large_collection = large_model
+        .create_collection(&Collection::new("Large benchmark collection"))
+        .map_err(|error| error.to_string())?;
+    for index in 0..LARGE_WORKSPACE_REQUESTS {
+        let marker = if index % 10 == 0 {
+            "needle"
+        } else {
+            "ordinary"
+        };
+        let request = Request::new(
+            format!("Request {index} {marker}"),
+            "GET",
+            format!("https://api.example.test/{marker}/{index}"),
+        );
+        large_model
+            .save_request(&large_collection, &request)
+            .map_err(|error| error.to_string())?;
+    }
+    drop(large_model);
+
+    let large_load = measure("workspace_open_10000_requests", || {
+        let opened = Workspace::open(large_workspace.path()).map_err(|error| error.to_string())?;
+        let collections = opened.collections().map_err(|error| error.to_string())?;
+        if collections.len() != 1 {
+            return Err(format!(
+                "expected one large collection, got {}",
+                collections.len()
+            ));
+        }
+        let requests = opened
+            .requests(&collections[0])
+            .map_err(|error| error.to_string())?;
+        if requests.len() != LARGE_WORKSPACE_REQUESTS {
+            return Err(format!(
+                "expected {LARGE_WORKSPACE_REQUESTS} requests, got {}",
+                requests.len()
+            ));
+        }
+        Ok(())
+    })?;
+    let large_search = measure("workspace_search_10000_requests", || {
+        let opened = Workspace::open(large_workspace.path()).map_err(|error| error.to_string())?;
+        let results = opened
+            .search_requests("needle")
+            .map_err(|error| error.to_string())?;
+        if results.len() != LARGE_WORKSPACE_REQUESTS / 10 {
+            return Err(format!(
+                "expected {} large search results, got {}",
+                LARGE_WORKSPACE_REQUESTS / 10,
+                results.len()
+            ));
+        }
+        Ok(())
+    })?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -685,7 +744,15 @@ fn collect_benchmarks() -> Result<Vec<BenchmarkResult>, String> {
     let runner = measure("runner_local_100_requests", || {
         runtime.block_on(run_local_runner_benchmark())
     })?;
-    Ok(vec![cli_startup, import, load, search, runner])
+    Ok(vec![
+        cli_startup,
+        import,
+        load,
+        search,
+        large_load,
+        large_search,
+        runner,
+    ])
 }
 
 async fn run_local_runner_benchmark() -> Result<(), String> {

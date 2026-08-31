@@ -10,13 +10,13 @@ cargo xtask bench --json > bench-generated/local.json
 ```
 
 The command currently covers a CLI `--help` startup, an eight-request Postman
-import, generated 1,000-request workspace open/search paths and a deterministic
-100-request local HTTP runner workload. Each operation runs five samples and
-prints median, minimum and maximum duration. On macOS, the startup measurement
-also records the median peak resident set size reported by `/usr/bin/time -l`;
-other platforms omit that optional field until a platform-specific process
-measurement is added. The startup measurement launches the already-built local
-CLI; it does not include a build.
+import, generated 1,000- and 10,000-request workspace open/search paths and a
+deterministic 100-request local HTTP runner workload. Each operation runs five
+samples and prints median, minimum and maximum duration. On macOS, the startup
+measurement also records the median peak resident set size reported by
+`/usr/bin/time -l`; other platforms omit that optional field until a
+platform-specific process measurement is added. The startup measurement
+launches the already-built local CLI; it does not include a build.
 Temporary benchmark workspaces are created outside the repository; only the
 ignored `bench-generated/` destination may contain output.
 
