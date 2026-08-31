@@ -2173,6 +2173,7 @@ fn apply_response_examples(
             headers,
             cookies,
             body,
+            original_request: None,
             delay_ms,
         });
     }
@@ -3107,6 +3108,7 @@ paths:
                 max_age_seconds: Some(120),
             }],
             body: Some(r#"{"id":1}"#.to_owned()),
+            original_request: None,
             delay_ms: 0,
         });
         workspace

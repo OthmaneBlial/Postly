@@ -534,6 +534,11 @@ pub struct ResponseExample {
     pub cookies: Vec<ResponseExampleCookie>,
     #[serde(default)]
     pub body: Option<String>,
+    /// Optional request snapshot embedded by Postman in a saved response
+    /// example. It is kept behind a `Box` because requests can themselves
+    /// contain response examples.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_request: Option<Box<Request>>,
     /// Optional local mock delay. Postly-native data only; Postman exports
     /// preserve it under the `x-postly-delay-ms` extension.
     #[serde(default)]

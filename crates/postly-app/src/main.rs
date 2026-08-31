@@ -2541,6 +2541,7 @@ impl PostlyApp {
                 })
                 .collect(),
             body: Some(body),
+            original_request: None,
             delay_ms: 0,
         };
         if let Some(existing) = request.examples.iter_mut().find(|item| item.name == name) {

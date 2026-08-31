@@ -32,9 +32,11 @@ Implemented:
   headers, with a dedicated regression covering every entry type.
 - Postman imports now preserve scalar environment values (including numeric and
   boolean values with `currentValue`/`initialValue` fallbacks), and report
-  unsupported request-level `protocolProfileBehavior`, proxy/certificate settings and
-  response-example `originalRequest` data as explicit manual-review gaps
-  instead of silently dropping them. Malformed header, query, cookie and
+  unknown request-level `protocolProfileBehavior` fields, proxy/certificate settings and
+  non-object response-example `originalRequest` data as explicit manual-review gaps
+  instead of silently dropping them. Object-shaped response-example
+  `originalRequest` snapshots now round-trip through the native model and Postman
+  export. Malformed header, query, cookie and
   urlencoded entries are also reported with deterministic request-level review
   status.
 - The supported Postman `protocolProfileBehavior` subset now round-trips and
@@ -395,7 +397,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`1a8ba9db565cee890f31d87abc76ce95068c0c258237167cae910b843950b439`.
+`379c6ec87f91dacc060d845fadc7553b26e27a6dfb0ee8a192bdc42d998e83f9`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest

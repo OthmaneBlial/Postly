@@ -1447,17 +1447,29 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> (Vec<ResponseExamp
             examples
                 .iter()
                 .map(|example| {
-                    if has_meaningful_value(example.get("originalRequest").unwrap_or(&Value::Null)) {
-                        report.warn(
-                            "A Postman response example contains originalRequest; the saved response data was imported, but the embedded request needs manual review.",
-                        );
-                        requires_review = true;
-                    }
                     let name = example
                         .get("name")
                         .and_then(Value::as_str)
                         .unwrap_or("Example")
                         .to_owned();
+                    let original_request = match example.get("originalRequest") {
+                        Some(value) if has_meaningful_value(value) => {
+                            if !value.is_object() {
+                                report.warn(format!(
+                                    "Response example {name} has a non-object originalRequest; it requires manual review."
+                                ));
+                                requires_review = true;
+                                None
+                            } else {
+                                let embedded_name = format!("Response example {name} request");
+                                let (request, request_requires_review) =
+                                    parse_request(&embedded_name, value, None, report);
+                                requires_review |= request_requires_review;
+                                Some(Box::new(request))
+                            }
+                        }
+                        _ => None,
+                    };
                     let status = example
                         .get("code")
                         .and_then(Value::as_u64)
@@ -1545,6 +1557,7 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> (Vec<ResponseExamp
                         headers,
                         cookies,
                         body,
+                        original_request,
                         delay_ms,
                     }
                 })
@@ -1747,12 +1760,22 @@ mod tests {
             }]
         });
         let (examples, examples_require_review) = parse_examples(&item, &mut report);
-        assert!(examples_require_review);
+        assert!(!examples_require_review);
         assert_eq!(examples.len(), 1);
-        assert!(report
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("originalRequest")));
+        assert_eq!(
+            examples[0]
+                .original_request
+                .as_ref()
+                .map(|request| request.method.as_str()),
+            Some("GET")
+        );
+        assert_eq!(
+            examples[0]
+                .original_request
+                .as_ref()
+                .map(|request| request.url.as_str()),
+            Some("https://example.test")
+        );
 
         let malformed = serde_json::json!({
             "method": "POST",

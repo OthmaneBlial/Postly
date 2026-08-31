@@ -64,6 +64,11 @@
                   "maxAge": 120
                 }
               ],
+              "originalRequest": {
+                "method": "GET",
+                "url": "https://api.example.test/users/search",
+                "header": [{ "key": "Accept", "value": "application/json" }]
+              },
               "body": ""
             }
           ]

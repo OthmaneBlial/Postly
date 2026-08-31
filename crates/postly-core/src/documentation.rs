@@ -317,6 +317,7 @@ mod tests {
             headers: Vec::new(),
             cookies: Vec::new(),
             body: Some("{\"id\":\"pay_123\"}".to_owned()),
+            original_request: None,
             delay_ms: 0,
         }];
         workspace.save_request(&files, &request).expect("request");

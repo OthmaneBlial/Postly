@@ -10,7 +10,7 @@ use thiserror::Error;
 use crate::{
     model::{
         ApiKeyLocation, Auth, Collection, Environment, MultipartPart, Request, RequestBody,
-        ResponseExampleCookie,
+        ResponseExample, ResponseExampleCookie,
     },
     secrets::{SecretStore, SecretStoreError},
     storage::{CollectionFiles, Workspace, WorkspaceError},
@@ -201,6 +201,30 @@ fn collection_events(collection: &Collection) -> Vec<Value> {
 }
 
 fn postman_item(request: &Request) -> Result<Value, ExportError> {
+    let mut item = Map::new();
+    item.insert("name".to_owned(), json!(request.name));
+    item.insert("request".to_owned(), postman_request_value(request)?);
+    if !request.examples.is_empty() {
+        let responses = request
+            .examples
+            .iter()
+            .map(postman_response_example)
+            .collect::<Result<Vec<_>, _>>()?;
+        item.insert("response".to_owned(), Value::Array(responses));
+    }
+    if request.pre_request_script.is_some() || request.test_script.is_some() {
+        item.insert(
+            "event".to_owned(),
+            json!(script_events(
+                request.pre_request_script.as_deref(),
+                request.test_script.as_deref(),
+            )),
+        );
+    }
+    Ok(Value::Object(item))
+}
+
+fn postman_request_value(request: &Request) -> Result<Value, ExportError> {
     let mut request_value = Map::new();
     request_value.insert("method".to_owned(), json!(request.method));
     request_value.insert("header".to_owned(), json!(headers(&request.headers)));
@@ -234,44 +258,34 @@ fn postman_item(request: &Request) -> Result<Value, ExportError> {
     if let Some(description) = &request.description {
         request_value.insert("description".to_owned(), json!(description));
     }
+    Ok(Value::Object(request_value))
+}
 
-    let mut item = Map::new();
-    item.insert("name".to_owned(), json!(request.name));
-    item.insert("request".to_owned(), Value::Object(request_value));
-    if !request.examples.is_empty() {
-        item.insert(
-            "response".to_owned(),
-            json!(request
-                .examples
+fn postman_response_example(example: &ResponseExample) -> Result<Value, ExportError> {
+    let mut response = Map::new();
+    response.insert("name".to_owned(), json!(example.name));
+    response.insert("code".to_owned(), json!(example.status));
+    response.insert("status".to_owned(), json!(example.status_text));
+    response.insert("header".to_owned(), json!(headers(&example.headers)));
+    response.insert(
+        "cookie".to_owned(),
+        Value::Array(
+            example
+                .cookies
                 .iter()
-                .map(|example| {
-                    json!({
-                        "name": example.name,
-                        "code": example.status,
-                        "status": example.status_text,
-                        "header": headers(&example.headers),
-                        "cookie": example
-                            .cookies
-                            .iter()
-                            .map(postman_response_cookie)
-                            .collect::<Vec<_>>(),
-                        "body": example.body,
-                        "x-postly-delay-ms": example.delay_ms,
-                    })
-                })
-                .collect::<Vec<_>>()),
+                .map(postman_response_cookie)
+                .collect(),
+        ),
+    );
+    response.insert("body".to_owned(), json!(example.body));
+    response.insert("x-postly-delay-ms".to_owned(), json!(example.delay_ms));
+    if let Some(original_request) = &example.original_request {
+        response.insert(
+            "originalRequest".to_owned(),
+            postman_request_value(original_request)?,
         );
     }
-    if request.pre_request_script.is_some() || request.test_script.is_some() {
-        item.insert(
-            "event".to_owned(),
-            json!(script_events(
-                request.pre_request_script.as_deref(),
-                request.test_script.as_deref(),
-            )),
-        );
-    }
-    Ok(Value::Object(item))
+    Ok(Value::Object(response))
 }
 
 fn request_url(request: &Request) -> Value {
@@ -667,6 +681,11 @@ mod tests {
                 max_age_seconds: Some(300),
             }],
             body: Some("{\"id\":1}".to_owned()),
+            original_request: Some(Box::new(Request::new(
+                "Original request",
+                "GET",
+                "https://example.test/users/1",
+            ))),
             delay_ms: 0,
         });
         workspace
@@ -721,6 +740,15 @@ mod tests {
             document["item"][0]["item"][0]["item"][0]["response"][0]["status"],
             "Created"
         );
+        assert_eq!(
+            document["item"][0]["item"][0]["item"][0]["response"][0]["originalRequest"]["method"],
+            "GET"
+        );
+        assert_eq!(
+            document["item"][0]["item"][0]["item"][0]["response"][0]["originalRequest"]["url"]
+                ["raw"],
+            "https://example.test/users/1"
+        );
 
         let imported_directory = directory.path().join("round-trip");
         let import_report = import_postman_collection(&export_path, &imported_directory)
@@ -758,6 +786,20 @@ mod tests {
         assert_eq!(
             imported_requests[0].1.examples[0].status_text.as_deref(),
             Some("Created")
+        );
+        assert_eq!(
+            imported_requests[0].1.examples[0]
+                .original_request
+                .as_deref()
+                .map(|request| request.method.as_str()),
+            Some("GET")
+        );
+        assert_eq!(
+            imported_requests[0].1.examples[0]
+                .original_request
+                .as_deref()
+                .map(|request| request.url.as_str()),
+            Some("https://example.test/users/1")
         );
     }
 

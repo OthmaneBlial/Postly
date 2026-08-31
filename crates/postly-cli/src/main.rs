@@ -5460,6 +5460,7 @@ mod tests {
                     max_age_seconds: Some(60),
                 }],
                 body: Some(r#"{"ok":true}"#.to_owned()),
+                original_request: None,
                 delay_ms: 7,
             },
         }];
@@ -5505,6 +5506,7 @@ mod tests {
                     max_age_seconds: None,
                 }],
                 body: Some(r#"{"hello":"{{name}}"}"#.to_owned()),
+                original_request: None,
                 delay_ms: 0,
             },
             &context,
