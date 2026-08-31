@@ -5,12 +5,12 @@ use std::{
 };
 
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use thiserror::Error;
 
 use crate::{
-    model::{ApiKeyLocation, Auth, Collection, KeyValue, Request, RequestBody},
-    storage::{Workspace, WorkspaceError},
+    model::{ApiKeyLocation, Auth, Collection, HeaderEntry, KeyValue, Request, RequestBody},
+    storage::{CollectionFiles, Workspace, WorkspaceError},
 };
 
 const HTTP_METHODS: [&str; 8] = [
@@ -43,6 +43,29 @@ pub struct OpenApiImportReport {
     pub imported_operations: usize,
     pub request_paths: Vec<PathBuf>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenApiExportReport {
+    pub source_collection: String,
+    pub output: PathBuf,
+    pub exported_operations: usize,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Error)]
+pub enum OpenApiExportError {
+    #[error("workspace error: {0}")]
+    Workspace(#[from] WorkspaceError),
+    #[error("could not serialize OpenAPI JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("could not serialize OpenAPI YAML: {0}")]
+    Yaml(#[from] serde_yaml::Error),
+    #[error("could not write OpenAPI file {path}: {source}")]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 pub fn import_openapi(
@@ -198,6 +221,728 @@ pub fn import_openapi_text(
         imported_operations,
         request_paths,
         warnings,
+    })
+}
+
+/// Export a native collection as an OpenAPI 3.0 document.
+///
+/// OpenAPI cannot represent every Postly feature, so unsupported operations
+/// are left out of the standard paths map and described in the report and
+/// x-postly-unmapped-requests extension instead of being silently changed.
+pub fn export_openapi_collection(
+    workspace: &Workspace,
+    collection: &CollectionFiles,
+    output: impl AsRef<Path>,
+) -> Result<OpenApiExportReport, OpenApiExportError> {
+    let output = output.as_ref().to_path_buf();
+    let requests = workspace.requests(collection)?;
+    let mut warnings = Vec::new();
+    let mut paths = BTreeMap::<String, Map<String, Value>>::new();
+    let mut security_schemes = Map::new();
+    let mut root_security = None;
+    let mut unmapped_requests = Vec::new();
+    let mut server_url = None;
+    let mut exported_operations = 0;
+
+    if let Some(security_name) = security_scheme_for_auth(
+        &collection.collection.auth,
+        &mut security_schemes,
+        &mut warnings,
+    ) {
+        root_security = Some(security_requirement(&security_name));
+    }
+
+    for (_, request) in &requests {
+        if request.grpc.is_some() {
+            warnings.push(format!(
+                "Request {} is gRPC and has no standard OpenAPI operation; it was preserved in x-postly-unmapped-requests.",
+                request.name
+            ));
+            unmapped_requests.push(json!({
+                "name": request.name,
+                "method": request.method,
+                "url": request.url,
+                "reason": "grpc request",
+            }));
+            continue;
+        }
+
+        let (request_server, path) = split_export_url(&request.url, &mut warnings);
+        if server_url.is_none() {
+            server_url = Some(request_server);
+        } else if server_url.as_deref() != Some(request_server.as_str()) {
+            warnings.push(format!(
+                "Request {} uses a different server URL; the first server remains the document default.",
+                request.name
+            ));
+        }
+
+        let method = request.method.to_ascii_lowercase();
+        if !HTTP_METHODS.contains(&method.as_str()) {
+            warnings.push(format!(
+                "Request {} uses custom method {}; it was preserved in x-postly-unmapped-requests.",
+                request.name, request.method
+            ));
+            unmapped_requests.push(json!({
+                "name": request.name,
+                "method": request.method,
+                "url": request.url,
+                "reason": "custom HTTP method",
+            }));
+            continue;
+        }
+
+        let operation = export_operation(request, &path, &mut security_schemes, &mut warnings);
+        paths
+            .entry(path)
+            .or_default()
+            .insert(method, Value::Object(operation));
+        exported_operations += 1;
+    }
+
+    let mut document = Map::new();
+    document.insert("openapi".to_owned(), json!("3.0.3"));
+    let mut info = Map::new();
+    info.insert("title".to_owned(), json!(collection.collection.name));
+    info.insert("version".to_owned(), json!("0.1.0"));
+    if let Some(description) = &collection.collection.description {
+        info.insert("description".to_owned(), json!(description));
+    }
+    document.insert("info".to_owned(), Value::Object(info));
+    if let Some(server_url) = &server_url {
+        document.insert(
+            "servers".to_owned(),
+            json!([openapi_server(server_url, &collection.collection)]),
+        );
+    }
+    document.insert(
+        "paths".to_owned(),
+        Value::Object(
+            paths
+                .into_iter()
+                .map(|(path, operations)| (path, Value::Object(operations)))
+                .collect(),
+        ),
+    );
+    if let Some(security) = root_security {
+        document.insert("security".to_owned(), security);
+    }
+    if !security_schemes.is_empty() {
+        document.insert(
+            "components".to_owned(),
+            json!({ "securitySchemes": security_schemes }),
+        );
+    }
+    document.insert(
+        "x-postly-collection-id".to_owned(),
+        json!(collection.collection.id.to_string()),
+    );
+    if !unmapped_requests.is_empty() {
+        document.insert(
+            "x-postly-unmapped-requests".to_owned(),
+            Value::Array(unmapped_requests),
+        );
+    }
+    if !warnings.is_empty() {
+        document.insert("x-postly-export-warnings".to_owned(), json!(warnings));
+    }
+    write_openapi(&output, &Value::Object(document))?;
+
+    Ok(OpenApiExportReport {
+        source_collection: collection.collection.name.clone(),
+        output,
+        exported_operations,
+        warnings,
+    })
+}
+
+fn export_operation(
+    request: &Request,
+    path: &str,
+    security_schemes: &mut Map<String, Value>,
+    warnings: &mut Vec<String>,
+) -> Map<String, Value> {
+    let mut operation = Map::new();
+    operation.insert("operationId".to_owned(), json!(operation_id(request)));
+    operation.insert("summary".to_owned(), json!(request.name));
+    operation.insert("x-postly-original-url".to_owned(), json!(request.url));
+    operation.insert(
+        "x-postly-request-id".to_owned(),
+        json!(request.id.to_string()),
+    );
+    if let Some(folder) = &request.folder {
+        operation.insert("x-postly-folder".to_owned(), json!(folder));
+    }
+    if let Some(description) = &request.description {
+        operation.insert("description".to_owned(), json!(description));
+    }
+    let parameters = export_parameters(request, path);
+    if !parameters.is_empty() {
+        operation.insert("parameters".to_owned(), Value::Array(parameters));
+    }
+    if let Some(body) = export_request_body(request, warnings) {
+        operation.insert("requestBody".to_owned(), body);
+    }
+    operation.insert(
+        "responses".to_owned(),
+        export_responses(&request.examples, warnings),
+    );
+    if let Some(security_name) = security_scheme_for_auth(&request.auth, security_schemes, warnings)
+    {
+        operation.insert("security".to_owned(), security_requirement(&security_name));
+    }
+    if let Some(extension) = auth_extension(&request.auth) {
+        operation.insert("x-postly-auth".to_owned(), extension);
+    }
+    operation
+}
+
+fn export_parameters(request: &Request, path: &str) -> Vec<Value> {
+    let mut parameters = path_parameter_names(path)
+        .into_iter()
+        .map(|name| {
+            json!({
+                "name": name,
+                "in": "path",
+                "required": true,
+                "schema": { "type": "string" },
+            })
+        })
+        .collect::<Vec<_>>();
+    parameters.extend(
+        request
+            .query
+            .iter()
+            .map(|parameter| export_key_value_parameter(parameter, "query")),
+    );
+    parameters.extend(
+        request
+            .headers
+            .iter()
+            .filter(|header| !header.key.eq_ignore_ascii_case("content-type"))
+            .map(export_header_parameter),
+    );
+    parameters.extend(
+        request
+            .cookies
+            .iter()
+            .map(|parameter| export_key_value_parameter(parameter, "cookie")),
+    );
+    parameters
+}
+
+fn export_key_value_parameter(parameter: &KeyValue, location: &str) -> Value {
+    let mut value = Map::new();
+    value.insert("name".to_owned(), json!(parameter.key));
+    value.insert("in".to_owned(), json!(location));
+    value.insert("required".to_owned(), json!(location == "path"));
+    value.insert("schema".to_owned(), json!({ "type": "string" }));
+    value.insert("example".to_owned(), json!(parameter.value));
+    if !parameter.enabled {
+        value.insert("x-postly-disabled".to_owned(), json!(true));
+    }
+    Value::Object(value)
+}
+
+fn export_header_parameter(parameter: &HeaderEntry) -> Value {
+    let mut value = Map::new();
+    value.insert("name".to_owned(), json!(parameter.key));
+    value.insert("in".to_owned(), json!("header"));
+    value.insert("required".to_owned(), json!(false));
+    value.insert("schema".to_owned(), json!({ "type": "string" }));
+    value.insert("example".to_owned(), json!(parameter.value));
+    if !parameter.enabled {
+        value.insert("x-postly-disabled".to_owned(), json!(true));
+    }
+    Value::Object(value)
+}
+
+fn export_request_body(request: &Request, warnings: &mut Vec<String>) -> Option<Value> {
+    let request_content_type = request
+        .headers
+        .iter()
+        .find(|header| header.enabled && header.key.eq_ignore_ascii_case("content-type"))
+        .map(|header| header.value.clone());
+    let (media_type, schema, example, extension) = match &request.body {
+        RequestBody::None => return None,
+        RequestBody::Raw { text, content_type } => (
+            content_type
+                .clone()
+                .or(request_content_type)
+                .unwrap_or_else(|| "text/plain".to_owned()),
+            json!({ "type": "string" }),
+            Some(json!(text)),
+            None,
+        ),
+        RequestBody::Json { value } => (
+            request_content_type
+                .filter(|value| value == "application/json" || value.ends_with("+json"))
+                .unwrap_or_else(|| "application/json".to_owned()),
+            schema_for_example(value),
+            Some(value.clone()),
+            None,
+        ),
+        RequestBody::Graphql {
+            query,
+            variables,
+            operation_name,
+        } => {
+            let mut example = Map::new();
+            example.insert("query".to_owned(), json!(query));
+            example.insert("variables".to_owned(), variables.clone());
+            if let Some(operation_name) = operation_name {
+                example.insert("operationName".to_owned(), json!(operation_name));
+            }
+            warnings.push(format!(
+                "Request {} exports GraphQL as an application/json envelope with x-postly-body-kind.",
+                request.name
+            ));
+            (
+                "application/json".to_owned(),
+                json!({ "type": "object" }),
+                Some(Value::Object(example)),
+                Some(json!("graphql")),
+            )
+        }
+        RequestBody::FormUrlEncoded { fields } => (
+            "application/x-www-form-urlencoded".to_owned(),
+            form_schema(fields.iter().map(|field| (&field.key, &field.value))),
+            Some(form_example(
+                fields.iter().map(|field| (&field.key, &field.value)),
+            )),
+            None,
+        ),
+        RequestBody::Multipart { parts } => {
+            let mut properties = Map::new();
+            let mut example = Map::new();
+            for part in parts {
+                if let Some(file_path) = &part.file_path {
+                    warnings.push(format!(
+                        "Multipart file path for {} in request {} is not embedded in OpenAPI: {}.",
+                        part.name, request.name, file_path
+                    ));
+                    properties.insert(
+                        part.name.clone(),
+                        json!({ "type": "string", "format": "binary" }),
+                    );
+                } else {
+                    properties.insert(part.name.clone(), json!({ "type": "string" }));
+                    if part.enabled {
+                        example.insert(part.name.clone(), json!(part.value));
+                    }
+                }
+            }
+            (
+                "multipart/form-data".to_owned(),
+                json!({ "type": "object", "properties": properties }),
+                Some(Value::Object(example)),
+                None,
+            )
+        }
+        RequestBody::BinaryFile { content_type, path } => {
+            warnings.push(format!(
+                "Binary file path for request {} is not embedded in OpenAPI: {}.",
+                request.name, path
+            ));
+            (
+                content_type
+                    .clone()
+                    .unwrap_or_else(|| "application/octet-stream".to_owned()),
+                json!({ "type": "string", "format": "binary" }),
+                None,
+                None,
+            )
+        }
+    };
+    let mut media = Map::new();
+    media.insert("schema".to_owned(), schema);
+    if let Some(example) = example {
+        media.insert("example".to_owned(), example);
+    }
+    if let Some(extension) = extension {
+        media.insert("x-postly-body-kind".to_owned(), extension);
+    }
+    let mut content = Map::new();
+    content.insert(media_type, Value::Object(media));
+    Some(json!({
+        "required": false,
+        "content": Value::Object(content),
+    }))
+}
+
+fn export_responses(
+    examples: &[crate::model::ResponseExample],
+    warnings: &mut Vec<String>,
+) -> Value {
+    let mut responses = Map::new();
+    if examples.is_empty() {
+        responses.insert(
+            "default".to_owned(),
+            json!({ "description": "Response captured by Postly." }),
+        );
+        return Value::Object(responses);
+    }
+    for example in examples {
+        let key = example
+            .status
+            .map(|status| status.to_string())
+            .unwrap_or_else(|| "default".to_owned());
+        if responses.contains_key(&key) {
+            warnings.push(format!(
+                "Response example {} duplicates status {}; only the first example is exported.",
+                example.name, key
+            ));
+            continue;
+        }
+        let mut response = Map::new();
+        let description = if example.name.trim().is_empty() {
+            "Response captured by Postly.".to_owned()
+        } else {
+            example.name.clone()
+        };
+        response.insert("description".to_owned(), json!(description));
+        if !example.headers.is_empty() {
+            let headers = example
+                .headers
+                .iter()
+                .map(|header| {
+                    (
+                        header.key.clone(),
+                        json!({
+                            "schema": { "type": "string" },
+                            "example": header.value,
+                        }),
+                    )
+                })
+                .collect::<Map<String, Value>>();
+            response.insert("headers".to_owned(), Value::Object(headers));
+        }
+        if let Some(body) = &example.body {
+            let (media_type, example_value) = match serde_json::from_str::<Value>(body) {
+                Ok(value) => ("application/json".to_owned(), value),
+                Err(_) => ("text/plain".to_owned(), json!(body)),
+            };
+            let mut media = Map::new();
+            media.insert("schema".to_owned(), schema_for_example(&example_value));
+            media.insert("example".to_owned(), example_value);
+            let mut content = Map::new();
+            content.insert(media_type, Value::Object(media));
+            response.insert("content".to_owned(), Value::Object(content));
+        }
+        if example.delay_ms > 0 {
+            response.insert("x-postly-delay-ms".to_owned(), json!(example.delay_ms));
+        }
+        responses.insert(key, Value::Object(response));
+    }
+    Value::Object(responses)
+}
+
+fn security_scheme_for_auth(
+    auth: &Auth,
+    schemes: &mut Map<String, Value>,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
+    let (name, scheme) = match auth {
+        Auth::None => return None,
+        Auth::Basic { .. } => ("basicAuth", json!({ "type": "http", "scheme": "basic" })),
+        Auth::Bearer { .. } => ("bearerAuth", json!({ "type": "http", "scheme": "bearer" })),
+        Auth::ApiKey { key, location, .. } => (
+            match location {
+                ApiKeyLocation::Header => "apiKeyHeader",
+                ApiKeyLocation::Query => "apiKeyQuery",
+            },
+            json!({
+                "type": "apiKey",
+                "name": key,
+                "in": match location {
+                    ApiKeyLocation::Header => "header",
+                    ApiKeyLocation::Query => "query",
+                },
+            }),
+        ),
+        Auth::OAuth2ClientCredentials {
+            token_url, scope, ..
+        } => (
+            "oauth2ClientCredentials",
+            json!({
+                "type": "oauth2",
+                "flows": { "clientCredentials": {
+                    "tokenUrl": normalize_openapi_template(token_url),
+                    "scopes": openapi_scopes(scope.as_deref()),
+                }}
+            }),
+        ),
+        Auth::OAuth2AuthorizationCodePkce {
+            authorization_url,
+            token_url,
+            scope,
+            ..
+        } => (
+            "oauth2AuthorizationCode",
+            json!({
+                "type": "oauth2",
+                "flows": { "authorizationCode": {
+                    "authorizationUrl": normalize_openapi_template(authorization_url),
+                    "tokenUrl": normalize_openapi_template(token_url),
+                    "scopes": openapi_scopes(scope.as_deref()),
+                }}
+            }),
+        ),
+        Auth::OAuth2RefreshToken { .. } => {
+            warnings.push(
+                "Refresh-token-only authentication is approximated as bearer security; details are kept in x-postly-auth."
+                    .to_owned(),
+            );
+            ("bearerAuth", json!({ "type": "http", "scheme": "bearer" }))
+        }
+    };
+    schemes.entry(name.to_owned()).or_insert(scheme);
+    Some(name.to_owned())
+}
+
+fn security_requirement(name: &str) -> Value {
+    let mut requirement = Map::new();
+    requirement.insert(name.to_owned(), Value::Array(Vec::new()));
+    Value::Array(vec![Value::Object(requirement)])
+}
+
+fn auth_extension(auth: &Auth) -> Option<Value> {
+    match auth {
+        Auth::OAuth2AuthorizationCodePkce {
+            authorization_url,
+            token_url,
+            redirect_uri,
+            ..
+        } => Some(json!({
+            "type": "oauth2_authorization_code_pkce",
+            "authorizationUrl": authorization_url,
+            "tokenUrl": token_url,
+            "redirectUri": redirect_uri,
+            "pkce": true,
+        })),
+        Auth::OAuth2RefreshToken {
+            token_url,
+            client_id,
+            scope,
+            ..
+        } => Some(json!({
+            "type": "oauth2_refresh_token",
+            "tokenUrl": token_url,
+            "clientId": client_id,
+            "scope": scope,
+        })),
+        _ => None,
+    }
+}
+
+fn openapi_scopes(scope: Option<&str>) -> Value {
+    let mut scopes = Map::new();
+    for name in scope.into_iter().flat_map(str::split_whitespace) {
+        scopes.insert(name.to_owned(), json!(""));
+    }
+    Value::Object(scopes)
+}
+
+fn form_schema<'a>(fields: impl Iterator<Item = (&'a String, &'a String)>) -> Value {
+    let properties = fields
+        .map(|(key, _)| (key.clone(), json!({ "type": "string" })))
+        .collect::<Map<String, Value>>();
+    json!({ "type": "object", "properties": properties })
+}
+
+fn form_example<'a>(fields: impl Iterator<Item = (&'a String, &'a String)>) -> Value {
+    Value::Object(
+        fields
+            .map(|(key, value)| (key.clone(), json!(value)))
+            .collect(),
+    )
+}
+
+fn schema_for_example(value: &Value) -> Value {
+    match value {
+        Value::Null => json!({}),
+        Value::Bool(_) => json!({ "type": "boolean" }),
+        Value::Number(number) => json!({
+            "type": if number.is_i64() || number.is_u64() { "integer" } else { "number" }
+        }),
+        Value::String(_) => json!({ "type": "string" }),
+        Value::Array(values) => {
+            let mut schema = Map::new();
+            schema.insert("type".to_owned(), json!("array"));
+            if let Some(first) = values.first() {
+                schema.insert("items".to_owned(), schema_for_example(first));
+            }
+            Value::Object(schema)
+        }
+        Value::Object(object) => {
+            let properties = object
+                .iter()
+                .map(|(key, value)| (key.clone(), schema_for_example(value)))
+                .collect::<Map<String, Value>>();
+            json!({ "type": "object", "properties": properties })
+        }
+    }
+}
+
+fn operation_id(request: &Request) -> String {
+    let mut slug = String::new();
+    for character in request.name.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+        } else if !slug.ends_with('_') {
+            slug.push('_');
+        }
+    }
+    let slug = slug.trim_matches('_');
+    let slug = if slug.is_empty() { "request" } else { slug };
+    format!("{}_{}", slug, request.id.simple())
+}
+
+fn path_parameter_names(path: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = path;
+    while let Some(start) = rest.find('{') {
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('}') else {
+            break;
+        };
+        let name = &after_start[..end];
+        if !name.is_empty() && !names.iter().any(|existing| existing == name) {
+            names.push(name.to_owned());
+        }
+        rest = &after_start[end + 1..];
+    }
+    names
+}
+
+fn normalize_openapi_template(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find("{{") {
+        result.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("}}") else {
+            result.push_str(&rest[start..]);
+            return result;
+        };
+        result.push('{');
+        result.push_str(&after_start[..end]);
+        result.push('}');
+        rest = &after_start[end + 2..];
+    }
+    result.push_str(rest);
+    result
+}
+
+fn split_export_url(url: &str, warnings: &mut Vec<String>) -> (String, String) {
+    let normalized = normalize_openapi_template(url.trim());
+    if let Some(scheme_end) = normalized.find("://") {
+        let scheme = &normalized[..scheme_end];
+        if matches!(scheme, "http" | "https") {
+            let rest = &normalized[scheme_end + 3..];
+            let boundary = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+            let authority = &rest[..boundary];
+            let authority = if let Some((_, host)) = authority.rsplit_once('@') {
+                warnings.push(format!(
+                    "Credentials embedded in URL {url} were omitted from the exported server."
+                ));
+                host
+            } else {
+                authority
+            };
+            let server = format!("{scheme}://{authority}");
+            let suffix = &rest[boundary..];
+            let path = suffix
+                .split(['?', '#'])
+                .next()
+                .filter(|path| !path.is_empty())
+                .unwrap_or("/");
+            if suffix.contains('?') || suffix.contains('#') {
+                warnings.push(format!(
+                    "Query or fragment data embedded in URL {url} was omitted from the OpenAPI path; keep request query fields separately."
+                ));
+            }
+            return (server, ensure_path(path));
+        }
+    }
+    if normalized.starts_with('{') {
+        if let Some(end) = normalized.find('}') {
+            let server = normalized[..=end].to_owned();
+            let suffix = &normalized[end + 1..];
+            let path = suffix
+                .split(['?', '#'])
+                .next()
+                .filter(|path| !path.is_empty())
+                .unwrap_or("/");
+            if suffix.contains('?') || suffix.contains('#') {
+                warnings.push(format!(
+                    "Query or fragment data embedded in URL {url} was omitted from the OpenAPI path."
+                ));
+            }
+            return (server, ensure_path(path));
+        }
+    }
+    warnings.push(format!(
+        "URL {url} could not be split into an OpenAPI server and path; it was placed under https://postly.invalid."
+    ));
+    (
+        "https://postly.invalid".to_owned(),
+        ensure_path(&normalized),
+    )
+}
+
+fn ensure_path(path: &str) -> String {
+    if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        format!("/{path}")
+    }
+}
+
+fn openapi_server(server: &str, collection: &Collection) -> Value {
+    let mut object = Map::new();
+    object.insert("url".to_owned(), json!(server));
+    let variables = path_parameter_names(server)
+        .into_iter()
+        .map(|name| {
+            let default = collection
+                .variables
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|| "https://api.example.invalid".to_owned());
+            (name, json!({ "default": default }))
+        })
+        .collect::<Map<String, Value>>();
+    if !variables.is_empty() {
+        object.insert("variables".to_owned(), Value::Object(variables));
+    }
+    Value::Object(object)
+}
+
+fn write_openapi(path: &Path, document: &Value) -> Result<(), OpenApiExportError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|source| OpenApiExportError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let is_yaml = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "yaml" | "yml"));
+    let text = if is_yaml {
+        serde_yaml::to_string(document)?
+    } else {
+        let mut text = serde_json::to_string_pretty(document)?;
+        text.push('\n');
+        text
+    };
+    fs::write(path, text).map_err(|source| OpenApiExportError::Write {
+        path: path.to_path_buf(),
+        source,
     })
 }
 
@@ -1034,5 +1779,83 @@ components:
             other => panic!("expected resolved JSON body, got {other:?}"),
         }
         fs::remove_file(outside).expect("cleanup outside schema");
+    }
+
+    #[test]
+    fn exports_openapi_json_and_yaml_with_native_request_semantics() {
+        let directory = tempfile::tempdir().expect("workspace directory");
+        let workspace = Workspace::init(directory.path(), "Demo").expect("workspace");
+        let mut collection = workspace
+            .create_collection(&Collection::new("Users"))
+            .expect("collection");
+        collection.collection.description = Some("A local user API".to_owned());
+        collection
+            .collection
+            .variables
+            .insert("baseUrl".to_owned(), "https://api.example.test".to_owned());
+        workspace.save_collection(&collection).expect("collection");
+
+        let mut request = Request::new("Create user", "POST", "{{baseUrl}}/users/{{userId}}");
+        request.folder = Some("Users / Write".to_owned());
+        request.query.push(KeyValue::enabled("verbose", "true"));
+        request
+            .headers
+            .push(HeaderEntry::enabled("Content-Type", "application/json"));
+        request.auth = Auth::Bearer {
+            token: "{{accessToken}}".to_owned(),
+        };
+        request.body = RequestBody::Json {
+            value: json!({ "name": "Ada", "active": true }),
+        };
+        request.examples.push(crate::model::ResponseExample {
+            name: "Created".to_owned(),
+            status: Some(201),
+            headers: vec![HeaderEntry::enabled("content-type", "application/json")],
+            body: Some(r#"{"id":1}"#.to_owned()),
+            delay_ms: 0,
+        });
+        workspace
+            .save_request(&collection, &request)
+            .expect("request");
+
+        let json_path = directory.path().join("users.openapi.json");
+        let report =
+            export_openapi_collection(&workspace, &collection, &json_path).expect("JSON export");
+        assert_eq!(report.exported_operations, 1);
+        assert!(report.warnings.is_empty());
+        let document: Value =
+            serde_json::from_str(&fs::read_to_string(&json_path).expect("JSON document"))
+                .expect("OpenAPI JSON");
+        assert_eq!(document["openapi"], "3.0.3");
+        assert_eq!(document["servers"][0]["url"], "{baseUrl}");
+        assert_eq!(
+            document["servers"][0]["variables"]["baseUrl"]["default"],
+            "https://api.example.test"
+        );
+        assert_eq!(
+            document["paths"]["/users/{userId}"]["post"]["summary"],
+            "Create user"
+        );
+        assert_eq!(
+            document["paths"]["/users/{userId}"]["post"]["security"][0]["bearerAuth"],
+            json!([])
+        );
+        assert_eq!(
+            document["paths"]["/users/{userId}"]["post"]["requestBody"]["content"]
+                ["application/json"]["example"]["name"],
+            "Ada"
+        );
+        assert_eq!(
+            document["paths"]["/users/{userId}"]["post"]["responses"]["201"]["content"]
+                ["application/json"]["example"]["id"],
+            1
+        );
+
+        let yaml_path = directory.path().join("users.openapi.yaml");
+        export_openapi_collection(&workspace, &collection, &yaml_path).expect("YAML export");
+        let yaml: serde_yaml::Value =
+            serde_yaml::from_str(&fs::read_to_string(yaml_path).expect("YAML document"))
+                .expect("OpenAPI YAML");
+        assert_eq!(yaml["openapi"], "3.0.3");
     }
 }

@@ -82,6 +82,8 @@ This repository contains working vertical slices, not a static interface mockup.
   with guarded local references, and cURL paste/copy.
 - **API documentation:** generate deterministic local Markdown from collections,
   request descriptions, parameters, headers and response-example metadata.
+- **OpenAPI export:** turn a native collection into OpenAPI 3.0 JSON or YAML,
+  with explicit warnings and x-postly extensions for lossy cases.
 - **Project site:** a responsive, dependency-free static showcase with SEO
   metadata, JSON-LD, reduced-motion support and source-backed navigation.
 - **Code snippets:** generate reviewable cURL, JavaScript fetch, Python

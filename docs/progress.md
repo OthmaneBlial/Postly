@@ -50,6 +50,9 @@ Implemented:
 - response Pretty/Raw views now use virtualized line rows with optional wrapping, clipboard copy and workspace-local response snapshots.
 - OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components and same-source-directory external refs, parameters, JSON bodies and auth placeholders.
 - OpenAPI import accepts local files or explicit HTTP(S) URLs with a bounded download and source-preserving report.
+- Native collections export to OpenAPI 3.0 JSON/YAML with operation paths,
+  parameters, request bodies, common security schemes, response examples and
+  explicit x-postly-* warnings/extensions for lossy or non-standard cases.
 - Structured GraphQL core/CLI/GUI request model with variables, operation names, partial-data/error parsing, validated GUI editing and local HTTP integration coverage.
 - GraphQL schema introspection through the CLI and native GUI, with parsed roots, fields, arguments, nested type references, enums, input fields, filtering and deprecated markers.
 - SSE parser plus progressive CLI/native GUI subscriptions with chunk-safe event decoding, event metadata, bounded GUI history, JSON-lines output and local streaming coverage.
@@ -130,7 +133,7 @@ Not yet implemented:
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
 - transactional workspace restore and broader multi-document crash recovery.
 - Device Code OAuth flow and a browser callback UX for Authorization Code/PKCE; encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association, explicit insecure TLS and certificate settings for WebSocket workflows; gRPC custom PEM CA/client identity is available in CLI and GUI, while SOCKS gRPC/WebSocket routing remains unsupported.
-- OpenAPI cyclic/remote references and deeper protocol-specific GUI tooling.
+- OpenAPI cyclic/remote references, richer schema generation and deeper protocol-specific GUI tooling.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
   cross-client/memory benchmarks and deeper packaging/release validation.
 
@@ -156,6 +159,10 @@ The latest transport slice adds local CLI and GUI gRPC calls through HTTP CONNEC
 The release packaging gate has since been validated locally with the macOS
 ARM64 archive, internal SHA256 manifest and packaged CLI smoke checks. External
 review, public distribution and manual desktop QA remain separate gates.
+
+The OpenAPI export slice is covered by a native JSON/YAML serialization test
+and a real CLI smoke run from a temporary workspace; operation paths, server
+variables, security metadata and request/response examples were inspected.
 
 ## Next highest-value work
 

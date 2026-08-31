@@ -28,3 +28,22 @@ The JSON report is part of the migration artifact. Cyclic graphs, remote or
 out-of-source `$ref` targets, OAuth coordination, binary/multipart body
 generation, OpenAPI 2/Swagger documents and response examples still require
 manual review or a future milestone.
+
+## Export a native collection
+
+Native collections can be exported as an OpenAPI 3.0 document in either JSON
+or YAML, selected by the output extension:
+
+~~~bash
+postly export openapi ./my-api --collection "My API" --output ./openapi.json
+postly export openapi ./my-api --collection "My API" --output ./openapi.yaml
+~~~
+
+The exporter maps HTTP operations, path/query/header/cookie parameters,
+request bodies, common authentication schemes, response examples and
+collection server variables. Auth-field secrets and file contents are not
+embedded, while request and response examples remain user data and should be
+reviewed before sharing. GraphQL bodies are represented as JSON envelopes,
+while refresh-token-only OAuth, binary file paths and custom HTTP methods
+receive explicit x-postly-* metadata and warnings. gRPC requests are preserved
+in x-postly-unmapped-requests because they are not standard OpenAPI operations.

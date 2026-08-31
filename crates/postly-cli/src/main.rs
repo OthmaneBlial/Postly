@@ -14,14 +14,14 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use hyper_util::rt::TokioIo;
 use postly_core::{
-    export_postman_collection, export_postman_environment_with_store, generate_code_snippet,
-    generate_markdown_docs, import_curl_command, import_dotenv, import_environment,
-    import_postman_collection, message_from_json, message_to_json, parse_graphql_response,
-    parse_graphql_schema, parse_variables_json, run_requests, schema_introspection_query, Auth,
-    Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, GrpcSchema,
-    HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody,
-    ResponseExample, RunnerOptions, ScriptResult, ScriptTestResult, SecretStore, SnippetLanguage,
-    SseParser, VariableContext, Workspace,
+    export_openapi_collection, export_postman_collection, export_postman_environment_with_store,
+    generate_code_snippet, generate_markdown_docs, import_curl_command, import_dotenv,
+    import_environment, import_postman_collection, message_from_json, message_to_json,
+    parse_graphql_response, parse_graphql_schema, parse_variables_json, run_requests,
+    schema_introspection_query, Auth, Collection, EngineOptions, Environment, EnvironmentVariable,
+    GraphqlRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome,
+    HttpEngine, Request, RequestBody, ResponseExample, RunnerOptions, ScriptResult,
+    ScriptTestResult, SecretStore, SnippetLanguage, SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -1197,6 +1197,18 @@ enum ImportKind {
 enum ExportKind {
     /// Export a local collection as Postman Collection v2.1 JSON.
     Collection {
+        #[arg(default_value = ".")]
+        workspace: PathBuf,
+        #[arg(
+            long,
+            help = "Collection name; required when multiple collections exist"
+        )]
+        collection: Option<String>,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Export a local collection as an OpenAPI 3.0 JSON or YAML document.
+    Openapi {
         #[arg(default_value = ".")]
         workspace: PathBuf,
         #[arg(
@@ -3032,6 +3044,32 @@ fn export_command(kind: ExportKind) -> Result<()> {
                 })?,
             };
             let report = export_postman_collection(&workspace, collection, output)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        ExportKind::Openapi {
+            workspace,
+            collection,
+            output,
+        } => {
+            let workspace = Workspace::open(&workspace)?;
+            let collections = workspace.collections()?;
+            let collection = match collection {
+                Some(name) => collections
+                    .iter()
+                    .find(|candidate| {
+                        candidate.collection.name == name
+                            || candidate.collection.name.eq_ignore_ascii_case(&name)
+                    })
+                    .with_context(|| format!("collection not found: {name}"))?,
+                None => collections.first().with_context(|| {
+                    if collections.len() > 1 {
+                        "multiple collections found; pass --collection"
+                    } else {
+                        "no collections found"
+                    }
+                })?,
+            };
+            let report = export_openapi_collection(&workspace, collection, output)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         ExportKind::Environment {

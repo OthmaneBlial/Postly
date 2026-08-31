@@ -49,7 +49,10 @@ pub use http::{
 };
 pub use import::{import_dotenv, import_environment, import_postman_collection, ImportReport};
 pub use model::*;
-pub use openapi::{import_openapi, import_openapi_text, OpenApiImportError, OpenApiImportReport};
+pub use openapi::{
+    export_openapi_collection, import_openapi, import_openapi_text, OpenApiExportError,
+    OpenApiExportReport, OpenApiImportError, OpenApiImportReport,
+};
 pub use runner::{run_requests, CancellationToken, RunnerItemResult, RunnerOptions, RunnerSummary};
 pub use scripting::{run_script, ScriptError, ScriptLog, ScriptResult, ScriptTestResult};
 pub use secrets::{SecretReference, SecretStore, SecretStoreError};

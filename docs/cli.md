@@ -19,6 +19,20 @@ postly list ./my-api
 
 During development, use `cargo run --` in place of `postly`.
 
+## Export collections
+
+Export a native collection to Postman Collection v2.1 or OpenAPI 3.0:
+
+~~~bash
+postly export collection ./my-api --collection "My API" --output ./my-api.postman.json
+postly export openapi ./my-api --collection "My API" --output ./my-api.openapi.yaml
+~~~
+
+OpenAPI output is selected by the .json, .yaml or .yml extension. The command
+prints a JSON report with the number of exported operations and any
+manual-review warnings; unsupported custom methods and gRPC requests are
+retained in x-postly-* extensions instead of being silently rewritten.
+
 ## Search the workspace
 
 Search covers collection names, request names, folders, methods, URLs and
