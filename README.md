@@ -75,7 +75,7 @@ This repository contains working vertical slices, not a static interface mockup.
   proxy routing, CLI/GUI WebSocket and gRPC HTTP CONNECT routing, WebSocket
   custom CA/client-identity support, native GUI exact-host/wildcard
   certificate associations, environment proxy support
-  and bypass rules, with actionable
+  and bypass rules, per-request redirect/cookie overrides, with actionable
   diagnostics.
 - **Response inspection:** Pretty/Raw views with JSON, YAML and well-formed XML
   formatting, detected JSON/YAML/XML/HTML/JavaScript/Text previews with lightweight

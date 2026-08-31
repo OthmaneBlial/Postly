@@ -39,8 +39,9 @@ Implemented:
   status.
 - The supported Postman `protocolProfileBehavior` subset now round-trips and
   executes per request: redirect following/limits and cookie-jar disabling are
-  applied by the shared HTTP engine, runner and GUI sends; unknown profile keys
-  remain explicit manual-review warnings.
+  applied by the shared HTTP engine, runner and GUI sends, with editable
+  per-request overrides in the GUI Transport tab; unknown profile keys remain
+  explicit manual-review warnings.
 - `postly import environment --secure` now moves Postman environment entries
   marked `secret` into the OS credential store and persists only opaque
   workspace-scoped references; the default import warns when those values stay
@@ -394,7 +395,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`a70a8c00099beff354e980caba68e834dd760541559e34c8eb141dfa47431c68`.
+`1a8ba9db565cee890f31d87abc76ce95068c0c258237167cae910b843950b439`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest

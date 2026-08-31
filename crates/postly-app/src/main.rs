@@ -6028,6 +6028,97 @@ impl PostlyApp {
                 .changed();
             ui.label("(0 disables redirects)");
         });
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.heading(RichText::new("Per-request Postman overrides").color(ui.visuals().text_color()));
+        ui.label(
+            RichText::new(
+                "These settings are saved with this request and override the workspace defaults when it runs. Imported protocolProfileBehavior values are editable here.",
+            )
+            .small()
+            .color(ui.visuals().weak_text_color()),
+        );
+        ui.add_space(6.0);
+        let mut request_transport = self.request.transport.clone().unwrap_or_default();
+        let mut request_changed = false;
+        ui.horizontal(|ui| {
+            ui.label("Redirect behavior");
+            let selected = match request_transport.follow_redirects {
+                None => "Workspace default",
+                Some(true) => "Follow redirects",
+                Some(false) => "Do not follow redirects",
+            };
+            egui::ComboBox::from_id_salt("request-redirect-behavior")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    request_changed |= ui
+                        .selectable_value(
+                            &mut request_transport.follow_redirects,
+                            None,
+                            "Workspace default",
+                        )
+                        .changed();
+                    request_changed |= ui
+                        .selectable_value(
+                            &mut request_transport.follow_redirects,
+                            Some(true),
+                            "Follow redirects",
+                        )
+                        .changed();
+                    request_changed |= ui
+                        .selectable_value(
+                            &mut request_transport.follow_redirects,
+                            Some(false),
+                            "Do not follow redirects",
+                        )
+                        .changed();
+                });
+        });
+        ui.horizontal(|ui| {
+            let mut has_max_redirects = request_transport.max_redirects.is_some();
+            if ui
+                .checkbox(&mut has_max_redirects, "Override maximum redirects")
+                .changed()
+            {
+                request_changed = true;
+                request_transport.max_redirects = has_max_redirects.then_some(
+                    request_transport
+                        .max_redirects
+                        .unwrap_or(self.transport.max_redirects as usize),
+                );
+            }
+            if let Some(max_redirects) = request_transport.max_redirects.as_mut() {
+                request_changed |= ui
+                    .add(
+                        egui::DragValue::new(max_redirects)
+                            .range(0..=100)
+                            .speed(0.2),
+                    )
+                    .changed();
+            }
+        });
+        request_changed |= ui
+            .checkbox(
+                &mut request_transport.disable_cookies,
+                "Disable the shared cookie jar for this request",
+            )
+            .changed();
+        ui.label(
+            RichText::new(
+                "Explicit cookies in the Cookies tab remain request data; this switch disables automatic session-cookie attachment and storage for this send.",
+            )
+            .small()
+            .color(ui.visuals().weak_text_color()),
+        );
+        if request_changed {
+            let next_transport = (!request_transport.is_empty()).then_some(request_transport);
+            if self.request.transport != next_transport {
+                self.request.transport = next_transport;
+                self.dirty = true;
+            }
+        }
+        ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.label("Max buffered response");
             changed |= ui
@@ -9333,6 +9424,7 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postly_core::RequestTransportSettings;
     use std::{
         convert::Infallible,
         io::{Read, Write},
@@ -9419,6 +9511,30 @@ mod tests {
         let request = app.edited_request().expect("custom method editor state");
 
         assert_eq!(request.method, "PROPFIND");
+    }
+
+    #[test]
+    fn editor_state_round_trips_request_transport_overrides() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.transport = Some(RequestTransportSettings {
+            follow_redirects: Some(false),
+            max_redirects: Some(2),
+            disable_cookies: true,
+        });
+        app.load_request_editors();
+
+        let request = app
+            .edited_request()
+            .expect("request transport editor state");
+        assert_eq!(
+            request.transport,
+            Some(RequestTransportSettings {
+                follow_redirects: Some(false),
+                max_redirects: Some(2),
+                disable_cookies: true,
+            })
+        );
     }
 
     #[test]
