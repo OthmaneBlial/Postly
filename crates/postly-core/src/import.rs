@@ -125,15 +125,32 @@ pub fn import_postman_collection(
 
     if let Some(variables) = document.get("variable").and_then(Value::as_array) {
         for variable in variables {
-            if let (Some(key), Some(value)) = (
-                variable.get("key").and_then(Value::as_str),
-                variable.get("value").and_then(Value::as_str),
-            ) {
-                collection_files
-                    .collection
-                    .variables
-                    .insert(key.to_owned(), value.to_owned());
+            let Some(key) = variable.get("key").and_then(Value::as_str) else {
+                report.warn("Skipped a collection variable without a key.");
+                continue;
+            };
+            let disabled = variable
+                .get("disabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                || variable.get("enabled").and_then(Value::as_bool) == Some(false);
+            if disabled {
+                report.warn(format!(
+                    "Collection variable {key} is disabled and was not activated."
+                ));
+                continue;
             }
+            let value = postman_variable_value(variable);
+            let Some(value) = value else {
+                report.warn(format!(
+                    "Skipped collection variable {key}: it has no usable value."
+                ));
+                continue;
+            };
+            collection_files
+                .collection
+                .variables
+                .insert(key.to_owned(), value);
         }
         transaction.save_collection(&collection_files)?;
     }
@@ -1020,6 +1037,20 @@ fn string_value(value: Option<&Value>) -> Option<String> {
     }
 }
 
+fn postman_variable_value(variable: &Value) -> Option<String> {
+    let value = variable
+        .get("value")
+        .and_then(|value| string_value(Some(value)));
+    let current = variable
+        .get("current")
+        .and_then(|value| string_value(Some(value)));
+    match value {
+        Some(value) if !value.is_empty() => Some(value),
+        Some(value) => current.or(Some(value)),
+        None => current,
+    }
+}
+
 fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExample> {
     item.get("response")
         .and_then(Value::as_array)
@@ -1149,6 +1180,45 @@ mod tests {
             .is_some_and(|script| script.contains("collection pre-request")));
         assert!(list.1.test_script.is_some());
         assert!(matches!(list.1.auth, Auth::Bearer { .. }));
+    }
+
+    #[test]
+    fn imports_collection_variable_variants_without_activating_disabled_values() {
+        let output = tempfile::tempdir().expect("output");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../compat/postman-import/collection-variable-variants-v2.1.json");
+
+        let report = import_postman_collection(&fixture, output.path()).expect("import");
+        assert_eq!(report.imported_requests, 1);
+        assert_eq!(report.fully_supported_requests, 1);
+        assert_eq!(report.manual_review_requests, 0);
+        assert_eq!(
+            report
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("disabled"))
+                .count(),
+            2
+        );
+
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let collection = workspace.collections().expect("collections").remove(0);
+        assert_eq!(
+            collection.collection.variables.get("currentOnly"),
+            Some(&"from-current".to_owned())
+        );
+        assert_eq!(
+            collection.collection.variables.get("numericValue"),
+            Some(&"42".to_owned())
+        );
+        assert!(!collection
+            .collection
+            .variables
+            .contains_key("disabledValue"));
+        assert!(!collection
+            .collection
+            .variables
+            .contains_key("disabledByEnabled"));
     }
 
     #[test]

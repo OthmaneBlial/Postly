@@ -1,0 +1,22 @@
+{
+  "info": {
+    "name": "Postly collection variable variants fixture",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://api.example.test" },
+    { "key": "currentOnly", "current": "from-current" },
+    { "key": "numericValue", "value": 42 },
+    { "key": "disabledValue", "value": "must-not-activate", "disabled": true },
+    { "key": "disabledByEnabled", "value": "must-not-activate", "enabled": false }
+  ],
+  "item": [
+    {
+      "name": "Variable request",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/users/{{currentOnly}}?limit={{numericValue}}"
+      }
+    }
+  ]
+}
