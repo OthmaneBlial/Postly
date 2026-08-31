@@ -425,7 +425,11 @@ fn json_schema_type_matches(value: &serde_json::Value, expected: &str) -> bool {
         "null" => value.is_null(),
         "boolean" => value.is_boolean(),
         "number" => value.is_number(),
-        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "integer" => {
+            value.as_i64().is_some()
+                || value.as_u64().is_some()
+                || value.as_f64().is_some_and(|number| number.fract() == 0.0)
+        }
         "string" => value.is_string(),
         "array" => value.is_array(),
         "object" => value.is_object(),
@@ -488,25 +492,26 @@ fn validate_json_schema_object(
             }
         }
     }
-    if let Some(properties) = schema
+    let properties = schema
         .get("properties")
-        .and_then(serde_json::Value::as_object)
-    {
+        .and_then(serde_json::Value::as_object);
+    if let Some(properties) = properties {
         for (property, property_schema) in properties {
             if let Some(property_value) = object.get(property) {
                 let property_path = format!("{path}/{property}");
                 validate_json_schema(property_value, property_schema, &property_path)?;
             }
         }
-        if schema.get("additionalProperties") == Some(&serde_json::Value::Bool(false)) {
-            if let Some((unknown, _)) = object
-                .iter()
-                .find(|(property, _)| !properties.contains_key(*property))
-            {
-                return Err(format!(
-                    "additional JSON Schema property {unknown:?} is not allowed at {path:?}"
-                ));
-            }
+    }
+    if schema.get("additionalProperties") == Some(&serde_json::Value::Bool(false)) {
+        if let Some((unknown, _)) = object.iter().find(|(property, _)| {
+            properties
+                .map(|properties| !properties.contains_key(*property))
+                .unwrap_or(true)
+        }) {
+            return Err(format!(
+                "additional JSON Schema property {unknown:?} is not allowed at {path:?}"
+            ));
         }
     }
     validate_json_schema_bound(
@@ -1269,6 +1274,20 @@ mod tests {
         assert!(validate_json_schema(
             &actual,
             &serde_json::json!({ "not": { "type": "object" } }),
+            ""
+        )
+        .is_err());
+        let closed = serde_json::json!({
+            "type": "object",
+            "properties": { "id": { "type": "integer" } },
+            "additionalProperties": false
+        });
+        assert!(validate_json_schema(&serde_json::json!({ "id": 7 }), &closed, "").is_ok());
+        assert!(validate_json_schema(&serde_json::json!({ "extra": true }), &closed, "").is_err());
+        let closed_without_properties = serde_json::json!({ "additionalProperties": false });
+        assert!(validate_json_schema(
+            &serde_json::json!({ "extra": true }),
+            &closed_without_properties,
             ""
         )
         .is_err());

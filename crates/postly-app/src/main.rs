@@ -2608,19 +2608,26 @@ impl PostlyApp {
             BodyKind::Advanced => request.body,
         };
         for (index, assertion) in request.assertions.iter_mut().enumerate() {
-            if let Assertion::JsonPointerEquals { expected, .. }
-            | Assertion::JsonPointerContains { expected, .. }
-            | Assertion::JsonSchema {
-                schema: expected, ..
-            } = assertion
-            {
-                let text = self
-                    .assertion_json_text
-                    .get(index)
-                    .map(String::as_str)
-                    .unwrap_or("null");
-                *expected = serde_json::from_str(text)
-                    .map_err(|error| format!("assertion JSON value is invalid: {error}"))?;
+            let text = self
+                .assertion_json_text
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or("null");
+            match assertion {
+                Assertion::JsonPointerEquals { expected, .. }
+                | Assertion::JsonPointerContains { expected, .. } => {
+                    *expected = serde_json::from_str(text)
+                        .map_err(|error| format!("assertion JSON value is invalid: {error}"))?;
+                }
+                Assertion::JsonSchema { schema, .. } => {
+                    let parsed = serde_json::from_str::<serde_json::Value>(text)
+                        .map_err(|error| format!("assertion JSON value is invalid: {error}"))?;
+                    if !parsed.is_boolean() && !parsed.is_object() {
+                        return Err("JSON Schema must be a boolean or object".to_owned());
+                    }
+                    *schema = parsed;
+                }
+                _ => {}
             }
         }
         request.auth = match self.auth_kind {
