@@ -260,11 +260,11 @@ variables, security metadata and request/response examples were inspected.
 On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 7
 checked-in fixtures; its separate request-mapping signal was 16/21 (76.19%),
 with the remaining cases retained as explicit manual review. The latest local
-`cargo xtask bench --json` run on macOS arm64 reported a CLI `--help` startup
-median of 11.28 ms and median peak RSS of 12,192 KiB, 5.54 ms for the Postman
-variant import, 150.75 ms to open a generated 1,000-request workspace, 151.42
-ms to search it, 1.58 s to open a generated 10,000-request workspace, 1.58 s
-to search it and 28.58 ms for 100 local runner requests. These are local
+`cargo xtask bench` run on macOS arm64 reported a CLI `--help` startup median
+of 11.760 ms and peak RSS of 12,768 KiB, 48.941 ms for the Postman variant
+import, 153.092 ms to open a generated 1,000-request workspace, 153.149 ms to
+search it, 1.579 s to open a generated 10,000-request workspace, 1.603 s to
+search it and 28.566 ms for 100 local runner requests. These are local
 measurements rather than competitor claims or universal performance guarantees.
 
 The latest local validation also passed `cargo xtask fuzz`: the three checked-in
