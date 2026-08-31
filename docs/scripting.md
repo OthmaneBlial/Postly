@@ -53,7 +53,10 @@ The supported compatibility slice includes:
   URL query parameters, headers, Basic/Bearer/Digest/API-key auth, one bounded
   Digest challenge retry, raw/urlencoded/form-data/GraphQL bodies and response
   text/JSON; file bodies remain rejected explicitly
-- `pm.test` and `pm.expect` equality, inclusion, property, boolean, numeric, type, regex and negated checks; each collected test reports pass/fail, callback duration and a bounded error stack when available
+- `pm.test` and `pm.expect` equality, inclusion, property, boolean, numeric,
+  `closeTo`, predicate `satisfy`, type, regex and negated checks; each collected
+  test reports pass/fail, callback duration and a bounded error stack when
+  available
 - `pm.response.to.be.ok/success/redirection/clientError/serverError/error/withBody/json`,
   `pm.response.to.have.body/cookie/status/header/jsonBody` and negated header
   presence/value checks, header/cookie
@@ -64,7 +67,8 @@ The tested expectation subset also includes deep equality with stable object-key
 comparison, primitive/array/object inclusion, `include.keys`, array `members`/`include.members`, direct/nested/deep properties, lengthOf, exact/all/any keys, oneOf, empty,
 null/undefined/exist, numeric at.least/at.most/within/greaterThan/lessThan, contain,
 direct and nested property equality, chainable `that`/`is` properties, the
-`equal`/`equals` aliases, `deep.include`/`deep.members` composition and the a/an type aliases. This remains a compatibility
+`equal`/`equals` aliases, `closeTo`, predicate `satisfy`,
+`deep.include`/`deep.members` composition and the a/an type aliases. This remains a compatibility
 slice rather than a claim of complete Chai or Postman assertion parity.
 
 Script output is kept local. CLI output reports assertions but deliberately
