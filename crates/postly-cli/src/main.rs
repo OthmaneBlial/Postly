@@ -71,6 +71,8 @@ struct ImmediateRequestOptions {
     bearer: Option<String>,
     basic_user: Option<String>,
     basic_password: Option<String>,
+    digest_user: Option<String>,
+    digest_password: Option<String>,
     oauth_token_url: Option<String>,
     oauth_client_id: Option<String>,
     oauth_client_secret: Option<String>,
@@ -594,6 +596,8 @@ struct NewRequestOptions {
     bearer: Option<String>,
     basic_user: Option<String>,
     basic_password: Option<String>,
+    digest_user: Option<String>,
+    digest_password: Option<String>,
     oauth_token_url: Option<String>,
     oauth_client_id: Option<String>,
     oauth_client_secret: Option<String>,
@@ -741,6 +745,10 @@ enum Command {
         basic_user: Option<String>,
         #[arg(long)]
         basic_password: Option<String>,
+        #[arg(long, help = "HTTP Digest username")]
+        digest_user: Option<String>,
+        #[arg(long, help = "HTTP Digest password")]
+        digest_password: Option<String>,
         #[command(flatten)]
         oauth: Box<OAuthCliArgs>,
         #[arg(long, default_value_t = 30)]
@@ -1190,6 +1198,10 @@ enum NewKind {
         basic_user: Option<String>,
         #[arg(long)]
         basic_password: Option<String>,
+        #[arg(long, help = "HTTP Digest username")]
+        digest_user: Option<String>,
+        #[arg(long, help = "HTTP Digest password")]
+        digest_password: Option<String>,
         #[command(flatten)]
         oauth: Box<OAuthCliArgs>,
     },
@@ -1423,6 +1435,8 @@ async fn main() -> Result<()> {
                 bearer,
                 basic_user,
                 basic_password,
+                digest_user,
+                digest_password,
                 oauth,
             } => create_request(NewRequestOptions {
                 workspace,
@@ -1438,6 +1452,8 @@ async fn main() -> Result<()> {
                 bearer,
                 basic_user,
                 basic_password,
+                digest_user,
+                digest_password,
                 oauth_token_url: oauth.oauth_token_url,
                 oauth_client_id: oauth.oauth_client_id,
                 oauth_client_secret: oauth.oauth_client_secret,
@@ -1466,6 +1482,8 @@ async fn main() -> Result<()> {
             bearer,
             basic_user,
             basic_password,
+            digest_user,
+            digest_password,
             oauth,
             timeout,
             max_redirects,
@@ -1486,6 +1504,8 @@ async fn main() -> Result<()> {
                 bearer,
                 basic_user,
                 basic_password,
+                digest_user,
+                digest_password,
                 oauth_token_url: oauth.oauth_token_url,
                 oauth_client_id: oauth.oauth_client_id,
                 oauth_client_secret: oauth.oauth_client_secret,
@@ -2225,10 +2245,12 @@ fn create_request(options: NewRequestOptions) -> Result<()> {
     request.folder = options.folder;
     request.query = parse_pairs_flags(&options.query)?;
     request.headers = parse_headers(&options.headers)?;
-    request.auth = parse_auth_flags_with_oauth(
+    request.auth = parse_auth_flags_with_oauth_and_digest(
         options.bearer,
         options.basic_user,
         options.basic_password,
+        options.digest_user,
+        options.digest_password,
         OAuthCliArgs {
             oauth_token_url: options.oauth_token_url,
             oauth_client_id: options.oauth_client_id,
@@ -2258,10 +2280,12 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
     let mut request = Request::new("CLI request", options.method, options.url);
     request.query = parse_pairs_flags(&options.query)?;
     request.headers = parse_headers(&options.headers)?;
-    request.auth = parse_auth_flags_with_oauth(
+    request.auth = parse_auth_flags_with_oauth_and_digest(
         options.bearer,
         options.basic_user,
         options.basic_password,
+        options.digest_user,
+        options.digest_password,
         OAuthCliArgs {
             oauth_token_url: options.oauth_token_url,
             oauth_client_id: options.oauth_client_id,
@@ -4284,6 +4308,17 @@ fn parse_auth_flags_with_oauth(
     basic_password: Option<String>,
     oauth: OAuthCliArgs,
 ) -> Result<Auth> {
+    parse_auth_flags_with_oauth_and_digest(bearer, basic_user, basic_password, None, None, oauth)
+}
+
+fn parse_auth_flags_with_oauth_and_digest(
+    bearer: Option<String>,
+    basic_user: Option<String>,
+    basic_password: Option<String>,
+    digest_user: Option<String>,
+    digest_password: Option<String>,
+    oauth: OAuthCliArgs,
+) -> Result<Auth> {
     let OAuthCliArgs {
         oauth_token_url,
         oauth_client_id,
@@ -4322,8 +4357,13 @@ fn parse_auth_flags_with_oauth(
         {
             bail!("choose either AWS Signature V4 or OAuth 2.0 authentication");
         }
-        if bearer.is_some() || basic_user.is_some() || basic_password.is_some() {
-            bail!("choose either AWS Signature V4 or bearer/basic authentication");
+        if bearer.is_some()
+            || basic_user.is_some()
+            || basic_password.is_some()
+            || digest_user.is_some()
+            || digest_password.is_some()
+        {
+            bail!("choose either AWS Signature V4 or bearer/basic/Digest authentication");
         }
         return Ok(Auth::AwsSignatureV4 {
             access_key_id: aws_access_key_id.context("--aws-access-key-id is required")?,
@@ -4346,8 +4386,13 @@ fn parse_auth_flags_with_oauth(
         || oauth_refresh_token.is_some()
         || oauth_browser
     {
-        if bearer.is_some() || basic_user.is_some() || basic_password.is_some() {
-            bail!("choose either bearer/basic authentication or OAuth 2.0");
+        if bearer.is_some()
+            || basic_user.is_some()
+            || basic_password.is_some()
+            || digest_user.is_some()
+            || digest_password.is_some()
+        {
+            bail!("choose either bearer/basic/Digest authentication or OAuth 2.0");
         }
         let token_url = oauth_token_url.context("--oauth-token-url is required for OAuth 2.0")?;
         let client_id = oauth_client_id.context("--oauth-client-id is required for OAuth 2.0")?;
@@ -4420,6 +4465,12 @@ fn parse_auth_flags_with_oauth(
             client_id,
             client_secret,
             scope: oauth_scope,
+        });
+    }
+    if digest_user.is_some() || digest_password.is_some() {
+        return Ok(Auth::Digest {
+            username: digest_user.context("--digest-user is required")?,
+            password: digest_password.unwrap_or_default(),
         });
     }
     match (bearer, basic_user, basic_password) {
@@ -4891,6 +4942,38 @@ mod tests {
                 session_token: Some("session".to_owned()),
             }
         );
+    }
+
+    #[test]
+    fn parses_digest_cli_flags() {
+        let auth = parse_auth_flags_with_oauth_and_digest(
+            None,
+            None,
+            None,
+            Some("Mufasa".to_owned()),
+            Some("Circle Of Life".to_owned()),
+            OAuthCliArgs::default(),
+        )
+        .expect("Digest flags");
+        assert_eq!(
+            auth,
+            Auth::Digest {
+                username: "Mufasa".to_owned(),
+                password: "Circle Of Life".to_owned(),
+            }
+        );
+
+        let cli = Cli::try_parse_from([
+            "postly",
+            "request",
+            "https://api.example.test/users",
+            "--digest-user",
+            "Mufasa",
+            "--digest-password",
+            "Circle Of Life",
+        ])
+        .expect("Digest command flags");
+        assert!(matches!(cli.command, Command::Request { .. }));
     }
 
     #[test]

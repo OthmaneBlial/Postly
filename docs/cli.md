@@ -232,6 +232,8 @@ generated file should be reviewed before sharing.
 
 Saved requests can use OAuth 2.0 Client Credentials without an account or
 cloud service. `postly request` and `postly new request` also accept
+`--digest-user` and `--digest-password` for local HTTP Digest challenge
+negotiation, alongside the basic and bearer options. They also accept
 `--oauth-token-url`, `--oauth-client-id`, `--oauth-client-secret` and
 `--oauth-scope` directly. For an explicit Authorization Code + PKCE exchange,
 add `--oauth-authorization-url`, `--oauth-redirect-uri`, `--oauth-code` and
