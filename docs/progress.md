@@ -172,6 +172,14 @@ The OpenAPI export slice is covered by a native JSON/YAML serialization test
 and a real CLI smoke run from a temporary workspace; operation paths, server
 variables, security metadata and request/response examples were inspected.
 
+On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 6
+checked-in fixtures; its separate request-mapping signal was 10/15 (66.67%),
+with the remaining cases retained as explicit manual review. The same
+revision's `cargo xtask bench --json` run reported medians of 5.02 ms for the
+Postman variant import, 202.86 ms to open a generated 1,000-request workspace
+and 175.75 ms to search it. These are local measurements, not competitor
+claims or universal performance guarantees.
+
 ## Next highest-value work
 
 1. Add importer fixtures for more Postman body/auth/URL variants.
