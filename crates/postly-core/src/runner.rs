@@ -356,14 +356,28 @@ fn json_value_type_matches(value: &serde_json::Value, expected: JsonValueType) -
     )
 }
 
+const MAX_JSON_SCHEMA_REFERENCE_DEPTH: usize = 64;
+
 /// Validate the deliberately bounded JSON Schema subset used by persisted
 /// response assertions. It is JSON-native, deterministic and dependency-free;
 /// unsupported annotation keywords are ignored, while the structural and
-/// composition keywords below are enforced.
+/// composition keywords below are enforced. Local `$ref` pointers into
+/// `$defs`/`definitions` are resolved with a bounded depth guard.
 fn validate_json_schema(
     value: &serde_json::Value,
     schema: &serde_json::Value,
     path: &str,
+) -> Result<(), String> {
+    let mut reference_stack = Vec::new();
+    validate_json_schema_inner(value, schema, path, schema, &mut reference_stack)
+}
+
+fn validate_json_schema_inner(
+    value: &serde_json::Value,
+    schema: &serde_json::Value,
+    path: &str,
+    root: &serde_json::Value,
+    reference_stack: &mut Vec<String>,
 ) -> Result<(), String> {
     match schema {
         serde_json::Value::Bool(true) => return Ok(()),
@@ -372,9 +386,50 @@ fn validate_json_schema(
         }
         serde_json::Value::Object(schema) => {
             if let Some(reference) = schema.get("$ref") {
-                return Err(format!(
-                    "JSON Schema $ref is not supported in native assertions: {reference}"
-                ));
+                let Some(reference) = reference.as_str() else {
+                    return Err(format!("JSON Schema $ref must be a string at {path:?}"));
+                };
+                if reference != "#" && !reference.starts_with("#/") {
+                    return Err(format!(
+                        "external JSON Schema $ref is not supported in native assertions: {reference}"
+                    ));
+                }
+                if reference_stack.len() >= MAX_JSON_SCHEMA_REFERENCE_DEPTH {
+                    return Err(format!(
+                        "JSON Schema $ref depth exceeded {} in native assertions (possible cycle): {reference}",
+                        MAX_JSON_SCHEMA_REFERENCE_DEPTH
+                    ));
+                }
+                let target = if reference == "#" {
+                    Some(root)
+                } else {
+                    root.pointer(&reference[1..])
+                }
+                .ok_or_else(|| {
+                    format!(
+                        "JSON Schema $ref target was not found in native assertions: {reference}"
+                    )
+                })?;
+                reference_stack.push(reference.to_owned());
+                let result = validate_json_schema_inner(value, target, path, root, reference_stack);
+                reference_stack.pop();
+                result?;
+
+                let siblings = schema
+                    .iter()
+                    .filter(|(key, _)| key.as_str() != "$ref")
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect::<serde_json::Map<_, _>>();
+                if !siblings.is_empty() {
+                    validate_json_schema_inner(
+                        value,
+                        &serde_json::Value::Object(siblings),
+                        path,
+                        root,
+                        reference_stack,
+                    )?;
+                }
+                return Ok(());
             }
 
             if let Some(expected) = schema.get("type") {
@@ -410,10 +465,10 @@ fn validate_json_schema(
                 }
             }
 
-            validate_json_schema_composition(value, schema, path)?;
-            validate_json_schema_conditionals(value, schema, path)?;
-            validate_json_schema_object(value, schema, path)?;
-            validate_json_schema_array(value, schema, path)?;
+            validate_json_schema_composition(value, schema, path, root, reference_stack)?;
+            validate_json_schema_conditionals(value, schema, path, root, reference_stack)?;
+            validate_json_schema_object(value, schema, path, root, reference_stack)?;
+            validate_json_schema_array(value, schema, path, root, reference_stack)?;
             validate_json_schema_string(value, schema, path)?;
             validate_json_schema_number(value, schema, path)?;
         }
@@ -447,25 +502,28 @@ fn validate_json_schema_composition(
     value: &serde_json::Value,
     schema: &serde_json::Map<String, serde_json::Value>,
     path: &str,
+    root: &serde_json::Value,
+    reference_stack: &mut Vec<String>,
 ) -> Result<(), String> {
     if let Some(all_of) = schema.get("allOf").and_then(serde_json::Value::as_array) {
         for (index, branch) in all_of.iter().enumerate() {
-            validate_json_schema(value, branch, path)
+            validate_json_schema_inner(value, branch, path, root, reference_stack)
                 .map_err(|error| format!("allOf branch {index}: {error}"))?;
         }
     }
     if let Some(any_of) = schema.get("anyOf").and_then(serde_json::Value::as_array) {
-        if !any_of
-            .iter()
-            .any(|branch| validate_json_schema(value, branch, path).is_ok())
-        {
+        if !any_of.iter().any(|branch| {
+            validate_json_schema_inner(value, branch, path, root, reference_stack).is_ok()
+        }) {
             return Err(format!("no anyOf schema matched value at {path:?}"));
         }
     }
     if let Some(one_of) = schema.get("oneOf").and_then(serde_json::Value::as_array) {
         let matches = one_of
             .iter()
-            .filter(|branch| validate_json_schema(value, branch, path).is_ok())
+            .filter(|branch| {
+                validate_json_schema_inner(value, branch, path, root, reference_stack).is_ok()
+            })
             .count();
         if matches != 1 {
             return Err(format!(
@@ -474,7 +532,7 @@ fn validate_json_schema_composition(
         }
     }
     if let Some(not) = schema.get("not") {
-        if validate_json_schema(value, not, path).is_ok() {
+        if validate_json_schema_inner(value, not, path, root, reference_stack).is_ok() {
             return Err(format!("not schema unexpectedly matched value at {path:?}"));
         }
     }
@@ -485,6 +543,8 @@ fn validate_json_schema_conditionals(
     value: &serde_json::Value,
     schema: &serde_json::Map<String, serde_json::Value>,
     path: &str,
+    root: &serde_json::Value,
+    reference_stack: &mut Vec<String>,
 ) -> Result<(), String> {
     if let Some(dependent_required) = schema
         .get("dependentRequired")
@@ -522,7 +582,14 @@ fn validate_json_schema_conditionals(
         if let Some(object) = value.as_object() {
             for (property, dependent_schema) in dependent_schemas {
                 if object.contains_key(property) {
-                    validate_json_schema(value, dependent_schema, path).map_err(|error| {
+                    validate_json_schema_inner(
+                        value,
+                        dependent_schema,
+                        path,
+                        root,
+                        reference_stack,
+                    )
+                    .map_err(|error| {
                         format!("dependent JSON Schema for property {property:?}: {error}")
                     })?;
                 }
@@ -531,13 +598,14 @@ fn validate_json_schema_conditionals(
     }
 
     if let Some(if_schema) = schema.get("if") {
-        let branch = if validate_json_schema(value, if_schema, path).is_ok() {
-            schema.get("then")
-        } else {
-            schema.get("else")
-        };
+        let branch =
+            if validate_json_schema_inner(value, if_schema, path, root, reference_stack).is_ok() {
+                schema.get("then")
+            } else {
+                schema.get("else")
+            };
         if let Some(branch) = branch {
-            validate_json_schema(value, branch, path)?;
+            validate_json_schema_inner(value, branch, path, root, reference_stack)?;
         }
     }
     Ok(())
@@ -547,6 +615,8 @@ fn validate_json_schema_object(
     value: &serde_json::Value,
     schema: &serde_json::Map<String, serde_json::Value>,
     path: &str,
+    root: &serde_json::Value,
+    reference_stack: &mut Vec<String>,
 ) -> Result<(), String> {
     let Some(object) = value.as_object() else {
         return Ok(());
@@ -567,7 +637,13 @@ fn validate_json_schema_object(
         for (property, property_schema) in properties {
             if let Some(property_value) = object.get(property) {
                 let property_path = format!("{path}/{property}");
-                validate_json_schema(property_value, property_schema, &property_path)?;
+                validate_json_schema_inner(
+                    property_value,
+                    property_schema,
+                    &property_path,
+                    root,
+                    reference_stack,
+                )?;
             }
         }
     }
@@ -583,10 +659,12 @@ fn validate_json_schema_object(
             for (property, property_value) in object {
                 if regex.is_match(property) {
                     pattern_matched_properties.insert(property.as_str());
-                    validate_json_schema(
+                    validate_json_schema_inner(
                         property_value,
                         property_schema,
                         &format!("{path}/{property}"),
+                        root,
+                        reference_stack,
                     )?;
                 }
             }
@@ -594,10 +672,12 @@ fn validate_json_schema_object(
     }
     if let Some(property_name_schema) = schema.get("propertyNames") {
         for property in object.keys() {
-            validate_json_schema(
+            validate_json_schema_inner(
                 &serde_json::Value::String(property.clone()),
                 property_name_schema,
                 &format!("{path}/<property-name>"),
+                root,
+                reference_stack,
             )?;
         }
     }
@@ -614,10 +694,12 @@ fn validate_json_schema_object(
                         "additional JSON Schema property {unknown:?} is not allowed at {path:?}"
                     ));
                 }
-                serde_json::Value::Object(_) => validate_json_schema(
+                serde_json::Value::Object(_) => validate_json_schema_inner(
                     unknown_value,
                     additional_properties,
                     &format!("{path}/{unknown}"),
+                    root,
+                    reference_stack,
                 )?,
                 serde_json::Value::Bool(true) => {}
                 _ => {}
@@ -645,6 +727,8 @@ fn validate_json_schema_array(
     value: &serde_json::Value,
     schema: &serde_json::Map<String, serde_json::Value>,
     path: &str,
+    root: &serde_json::Value,
+    reference_stack: &mut Vec<String>,
 ) -> Result<(), String> {
     let Some(array) = value.as_array() else {
         return Ok(());
@@ -675,7 +759,13 @@ fn validate_json_schema_array(
     if let Some(prefix_items) = prefix_items {
         for (index, item_schema) in prefix_items.iter().enumerate() {
             if let Some(item) = array.get(index) {
-                validate_json_schema(item, item_schema, &format!("{path}/{index}"))?;
+                validate_json_schema_inner(
+                    item,
+                    item_schema,
+                    &format!("{path}/{index}"),
+                    root,
+                    reference_stack,
+                )?;
             }
         }
     }
@@ -687,16 +777,34 @@ fn validate_json_schema_array(
                 for (index, item) in array.iter().enumerate().skip(offset) {
                     let tuple_index = index - offset;
                     if let Some(tuple_schema) = tuple_items.get(tuple_index) {
-                        validate_json_schema(item, tuple_schema, &format!("{path}/{index}"))?;
+                        validate_json_schema_inner(
+                            item,
+                            tuple_schema,
+                            &format!("{path}/{index}"),
+                            root,
+                            reference_stack,
+                        )?;
                     } else if let Some(additional_items) = schema.get("additionalItems") {
-                        validate_json_schema(item, additional_items, &format!("{path}/{index}"))?;
+                        validate_json_schema_inner(
+                            item,
+                            additional_items,
+                            &format!("{path}/{index}"),
+                            root,
+                            reference_stack,
+                        )?;
                     }
                 }
             }
             _ => {
                 let offset = prefix_items.map_or(0, |items| items.len());
                 for (index, item) in array.iter().enumerate().skip(offset) {
-                    validate_json_schema(item, item_schema, &format!("{path}/{index}"))?;
+                    validate_json_schema_inner(
+                        item,
+                        item_schema,
+                        &format!("{path}/{index}"),
+                        root,
+                        reference_stack,
+                    )?;
                 }
             }
         }
@@ -707,7 +815,14 @@ fn validate_json_schema_array(
             .iter()
             .enumerate()
             .filter(|(_, item)| {
-                validate_json_schema(item, contains_schema, &format!("{path}/contains")).is_ok()
+                validate_json_schema_inner(
+                    item,
+                    contains_schema,
+                    &format!("{path}/contains"),
+                    root,
+                    reference_stack,
+                )
+                .is_ok()
             })
             .count();
         let minimum = schema
@@ -1790,6 +1905,83 @@ mod tests {
             ""
         )
         .is_err());
+    }
+
+    #[test]
+    fn json_schema_assertions_resolve_bounded_local_references() {
+        let schema = serde_json::json!({
+            "$defs": {
+                "userId": { "type": "integer", "minimum": 1 },
+                "user": {
+                    "type": "object",
+                    "required": ["id", "email"],
+                    "properties": {
+                        "id": { "$ref": "#/$defs/userId" },
+                        "email": { "$ref": "#/definitions/email" }
+                    }
+                },
+                "node": {
+                    "type": "object",
+                    "properties": {
+                        "child": { "$ref": "#/$defs/node" }
+                    }
+                }
+            },
+            "definitions": {
+                "email": { "type": "string", "format": "email" }
+            },
+            "$ref": "#/$defs/user"
+        });
+        assert!(validate_json_schema(
+            &serde_json::json!({ "id": 7, "email": "ada@example.test" }),
+            &schema,
+            ""
+        )
+        .is_ok());
+        let invalid = validate_json_schema(
+            &serde_json::json!({ "id": 0, "email": "not-an-email" }),
+            &schema,
+            "",
+        )
+        .expect_err("local references must enforce their target schemas");
+        assert!(invalid.contains("minimum") || invalid.contains("format"));
+
+        let recursive = serde_json::json!({
+            "$defs": {
+                "node": {
+                    "type": "object",
+                    "properties": { "child": { "$ref": "#/$defs/node" } }
+                }
+            },
+            "$ref": "#/$defs/node"
+        });
+        assert!(validate_json_schema(
+            &serde_json::json!({ "child": { "child": {} } }),
+            &recursive,
+            ""
+        )
+        .is_ok());
+
+        let external = validate_json_schema(
+            &serde_json::json!("Ada"),
+            &serde_json::json!({ "$ref": "https://example.test/schema.json#/name" }),
+            "",
+        )
+        .expect_err("external references require an explicit import boundary");
+        assert!(external.contains("external JSON Schema $ref"));
+
+        let missing = validate_json_schema(
+            &serde_json::json!("Ada"),
+            &serde_json::json!({ "$ref": "#/$defs/missing" }),
+            "",
+        )
+        .expect_err("missing local references must not be ignored");
+        assert!(missing.contains("target was not found"));
+
+        let cyclic = serde_json::json!({ "$ref": "#" });
+        let cyclic_error = validate_json_schema(&serde_json::json!(true), &cyclic, "")
+            .expect_err("direct reference cycles must remain bounded");
+        assert!(cyclic_error.contains("depth exceeded"));
     }
 
     #[tokio::test]

@@ -93,7 +93,7 @@ Implemented:
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs, combined PEM or PKCS#12 client identities and explicit HTTP CONNECT proxy routing; explicit insecure TLS remains pending.
 - CLI gRPC server reflection discovery supports protocol v1 with a v1alpha fallback, keeps reflected descriptors in memory and reports services, methods and streaming shapes as text or JSON.
 - Native GUI gRPC requests now persist local proto/include paths or server-reflection mode/host, method paths and metadata, edit protobuf JSON bodies, and execute unary plus finite streaming shapes through the same dynamic descriptor model; GUI local-proto and reflection worker coverage is backed by local tonic HTTP/2 servers.
-- Persistable response assertions for exact/ranged status, present/absent/equal/containing headers and cookies, valid JSON bodies, body text, response-time thresholds, JSON Pointer presence/absence/equality/deep inclusion/type checks and a bounded JSON Schema subset, evaluated by the runner without Node.js.
+- Persistable response assertions for exact/ranged status, present/absent/equal/containing headers and cookies, valid JSON bodies, body text, response-time thresholds, JSON Pointer presence/absence/equality/deep inclusion/type checks and a bounded JSON Schema subset with local `$defs`/`definitions` references, evaluated by the runner without Node.js.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
 - Script compatibility boundary now carries explicit variable unsets, globals,
   read-only iteration data, request header mutations and bounded source size;
@@ -162,6 +162,8 @@ Implemented:
   rules, allOf/anyOf/oneOf/not composition, exclusive numeric bounds,
   `multipleOf` and common string formats (`date`, `date-time`, `uuid`, `uri`,
   `email`, `hostname`, `ipv4`, `ipv6`) are covered by runner and GUI tests.
+  Local `$ref` pointers into `$defs` and `definitions` are resolved with a
+  bounded depth guard; external and missing references fail explicitly.
   Unknown formats remain annotation-only.
 - Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; the GUI and `postly cookies` inspect active session cookies by domain/path with masked values and can clear the jar explicitly; saved workspaces persist a bounded ignored local jar.
 - reusable runner results with pass/fail status, deterministic order, bounded
@@ -373,7 +375,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`96650d3a0f364d9d300cbe4036aa4976251688142481f61bea304e067b4bff15`.
+`7725727569a3270836d9ce5ed169969d13ff52f6c0080b65d7806382c908725d`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
@@ -402,8 +404,15 @@ Conditional JSON Schema rules now enforce property dependencies and apply
 bounded `if`/`then`/`else` branches to response objects, with runner coverage
 for both dependent-required and dependent-schema failures.
 
+The JSON Schema assertion validator now resolves local `$ref` pointers into
+`$defs` and legacy `definitions` while preserving nested composition and
+conditional validation. Missing or external references fail with actionable
+diagnostics, and recursive schemas are bounded by a deterministic reference
+depth guard; the runner regression covers valid, invalid, recursive, missing
+and external-reference cases.
+
 The latest `cargo xtask check` passed format, clippy and all workspace targets:
-37 CLI tests, 59 native GUI tests, 148 core tests and 1 xtask test (245 tests
+37 CLI tests, 59 native GUI tests, 149 core tests and 1 xtask test (246 tests
 total). The OpenAPI compatibility fixture and non-JSON body regression are
 included in that local result.
 
