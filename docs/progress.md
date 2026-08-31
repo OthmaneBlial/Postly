@@ -132,6 +132,10 @@ Implemented:
 - Workspace TOML writes now replace canonical files through same-directory
   temporary files, with coverage that no temporary destination remains after a
   replacement.
+- `postly validate` provides a read-only canonical workspace integrity scan with
+  text and JSON output, aggregates malformed collection/request/environment
+  files and returns a failing exit status without inspecting ignored `.postly/`
+  runtime state.
 - Native GUI saved-request tabs support dirty indicators, activation,
   close-others, reordering and restoration from ignored local path-only state.
 - Native GUI developer console retains bounded execution, protocol and script

@@ -13,6 +13,13 @@ cargo xtask fuzz
 cargo xtask package
 ~~~
 
+Validate a project without changing it:
+
+~~~bash
+cargo run -- validate ./my-api
+cargo run -- validate ./my-api --output-json
+~~~
+
 For low-disk environments:
 
 ~~~bash

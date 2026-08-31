@@ -153,6 +153,8 @@ cargo run -- new request \
   --name health \
   https://example.com/health \
   --query "probe=1"
+
+cargo run -- validate ./my-api
 ```
 
 ### 2. Send a request

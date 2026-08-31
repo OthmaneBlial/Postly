@@ -947,6 +947,13 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Validate canonical workspace files without changing them.
+    Validate {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        output_json: bool,
+    },
     /// Search saved request metadata across every local collection.
     Search {
         query: String,
@@ -1617,6 +1624,7 @@ async fn main() -> Result<()> {
             } => migrate_environment_secrets(&workspace, &name, &keys, all),
         },
         Command::List { path } => list_workspace(&path),
+        Command::Validate { path, output_json } => validate_workspace(&path, output_json),
         Command::Search {
             query,
             workspace,
@@ -3478,6 +3486,41 @@ fn list_workspace(path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_workspace(path: &Path, output_json: bool) -> Result<()> {
+    let workspace = Workspace::open(path)?;
+    let report = workspace.validate()?;
+    if output_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "valid": report.is_valid(),
+                "collections": report.collections,
+                "requests": report.requests,
+                "environments": report.environments,
+                "issues": report.issues,
+            }))?
+        );
+    } else if report.is_valid() {
+        println!(
+            "Workspace is valid: {} collection(s), {} request(s), {} environment(s).",
+            report.collections, report.requests, report.environments
+        );
+    } else {
+        println!(
+            "Workspace has {} issue(s): {} valid collection(s), {} valid request(s), {} valid environment(s).",
+            report.issues.len(), report.collections, report.requests, report.environments
+        );
+        for issue in &report.issues {
+            println!("  {} — {}", issue.path.display(), issue.message);
+        }
+    }
+    if report.is_valid() {
+        Ok(())
+    } else {
+        bail!("workspace validation failed")
+    }
 }
 
 fn search_workspace(path: &Path, query: &str, output_json: bool) -> Result<()> {

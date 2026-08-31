@@ -58,5 +58,8 @@ pub use runner::{run_requests, CancellationToken, RunnerItemResult, RunnerOption
 pub use scripting::{run_script, ScriptError, ScriptLog, ScriptResult, ScriptTestResult};
 pub use secrets::{SecretReference, SecretStore, SecretStoreError};
 pub use sse::{parse_sse, SseError, SseEvent, SseParser};
-pub use storage::{CollectionFiles, RequestSearchResult, Workspace, WorkspaceError};
+pub use storage::{
+    CollectionFiles, RequestSearchResult, Workspace, WorkspaceError, WorkspaceValidationIssue,
+    WorkspaceValidationReport,
+};
 pub use variables::{ResolvedText, VariableContext, VariableDiagnostic, VariableDiagnosticKind};

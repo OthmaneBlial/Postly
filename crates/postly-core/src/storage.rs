@@ -115,6 +115,29 @@ pub struct CollectionFiles {
     pub collection: Collection,
 }
 
+/// A canonical workspace file that could not be parsed during validation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceValidationIssue {
+    /// Path relative to the workspace root so reports stay portable.
+    pub path: PathBuf,
+    pub message: String,
+}
+
+/// A non-destructive report over the canonical workspace files.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceValidationReport {
+    pub collections: usize,
+    pub requests: usize,
+    pub environments: usize,
+    pub issues: Vec<WorkspaceValidationIssue>,
+}
+
+impl WorkspaceValidationReport {
+    pub fn is_valid(&self) -> bool {
+        self.issues.is_empty()
+    }
+}
+
 /// A secret-free index entry for a request found by workspace search.
 ///
 /// Search deliberately covers navigational metadata only. Headers, cookies,
@@ -235,6 +258,92 @@ impl Workspace {
             }
         }
         Ok(collections)
+    }
+
+    /// Validate every canonical collection, request and environment file.
+    ///
+    /// The scan is read-only and keeps going after a malformed file so a CLI
+    /// or GUI can show all actionable issues in one pass. Ignored local state
+    /// under `.postly/` is intentionally outside this report.
+    pub fn validate(&self) -> Result<WorkspaceValidationReport, WorkspaceError> {
+        let mut report = WorkspaceValidationReport {
+            collections: 0,
+            requests: 0,
+            environments: 0,
+            issues: Vec::new(),
+        };
+        let collections_directory = self.root.join("collections");
+        if collections_directory.is_dir() {
+            for entry in read_dir_sorted(&collections_directory)? {
+                let directory = entry.path();
+                if !entry
+                    .file_type()
+                    .map_err(|source| WorkspaceError::Io {
+                        path: directory.clone(),
+                        source,
+                    })?
+                    .is_dir()
+                {
+                    continue;
+                }
+                let collection_path = directory.join(COLLECTION_FILE);
+                if !collection_path.is_file() {
+                    report.issues.push(WorkspaceValidationIssue {
+                        path: relative_path(&self.root, &collection_path),
+                        message: "collection manifest is missing".to_owned(),
+                    });
+                } else {
+                    match read_toml::<Collection>(&collection_path) {
+                        Ok(_) => report.collections += 1,
+                        Err(error) => report.issues.push(WorkspaceValidationIssue {
+                            path: relative_path(&self.root, &collection_path),
+                            message: error.to_string(),
+                        }),
+                    }
+                }
+
+                let requests_directory = directory.join("requests");
+                let mut request_paths = Vec::new();
+                collect_files(&requests_directory, &mut request_paths)?;
+                for request_path in request_paths {
+                    match read_toml::<Request>(&request_path) {
+                        Ok(_) => report.requests += 1,
+                        Err(error) => report.issues.push(WorkspaceValidationIssue {
+                            path: relative_path(&self.root, &request_path),
+                            message: error.to_string(),
+                        }),
+                    }
+                }
+            }
+        }
+
+        let environments_directory = self.root.join("environments");
+        if environments_directory.is_dir() {
+            for entry in read_dir_sorted(&environments_directory)? {
+                let path = entry.path();
+                if !entry
+                    .file_type()
+                    .map_err(|source| WorkspaceError::Io {
+                        path: path.clone(),
+                        source,
+                    })?
+                    .is_file()
+                    || path
+                        .extension()
+                        .map_or(true, |extension| extension != "toml")
+                {
+                    continue;
+                }
+                match read_toml::<Environment>(&path) {
+                    Ok(_) => report.environments += 1,
+                    Err(error) => report.issues.push(WorkspaceValidationIssue {
+                        path: relative_path(&self.root, &path),
+                        message: error.to_string(),
+                    }),
+                }
+            }
+        }
+        Ok(report)
     }
 
     pub fn save_request(
@@ -611,6 +720,12 @@ fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, Workspace
     })
 }
 
+fn relative_path(root: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(root)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn read_dir_sorted(directory: &Path) -> Result<Vec<fs::DirEntry>, WorkspaceError> {
     let entries = fs::read_dir(directory).map_err(|source| WorkspaceError::Io {
         path: directory.to_path_buf(),
@@ -776,6 +891,44 @@ mod tests {
             .directory
             .join("requests/renamed-users.postly.toml")
             .exists());
+    }
+
+    #[test]
+    fn validates_canonical_files_and_reports_all_parse_failures() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = Workspace::init(directory.path(), "Demo API").expect("init");
+        let collection = workspace
+            .create_collection(&Collection::new("Users"))
+            .expect("collection");
+        let request = Request::new("List users", "GET", "https://example.com/users");
+        let request_path = workspace
+            .save_request(&collection, &request)
+            .expect("request");
+        let environment_path = workspace
+            .save_environment(&Environment::new("Local"))
+            .expect("environment");
+
+        let valid = workspace.validate().expect("valid report");
+        assert!(valid.is_valid());
+        assert_eq!(valid.collections, 1);
+        assert_eq!(valid.requests, 1);
+        assert_eq!(valid.environments, 1);
+
+        std::fs::write(&request_path, "not = [valid").expect("corrupt request");
+        std::fs::write(&environment_path, "not = [valid").expect("corrupt environment");
+        let invalid = workspace.validate().expect("invalid report");
+        assert!(!invalid.is_valid());
+        assert_eq!(invalid.collections, 1);
+        assert_eq!(invalid.requests, 0);
+        assert_eq!(invalid.environments, 0);
+        assert_eq!(invalid.issues.len(), 2);
+        assert!(invalid
+            .issues
+            .iter()
+            .any(|issue| issue.path == request_path.strip_prefix(directory.path()).unwrap()));
+        assert!(invalid.issues.iter().any(|issue| {
+            issue.path == environment_path.strip_prefix(directory.path()).unwrap()
+        }));
     }
 
     #[test]

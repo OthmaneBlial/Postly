@@ -19,6 +19,20 @@ postly list ./my-api
 
 During development, use `cargo run --` in place of `postly`.
 
+## Validate a workspace
+
+Run a read-only integrity scan over the canonical manifest, collection files,
+saved requests and environments:
+
+~~~bash
+postly validate ./my-api
+postly validate ./my-api --output-json
+~~~
+
+The scan reports every malformed canonical file it can find, uses paths
+relative to the workspace root and exits non-zero when issues are present.
+Ignored `.postly/` runtime state is intentionally not part of the result.
+
 ## Export collections
 
 Export a native collection to Postman Collection v2.1 or OpenAPI 3.0:
