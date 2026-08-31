@@ -1,0 +1,20 @@
+# Postly
+
+> Postly is an open-source, local-first Postman alternative without an account.
+It is a native Rust API client and testing workspace with a CLI and desktop app.
+
+## Canonical resources
+
+- [Project site](https://othmaneblial.github.io/Postly/): product overview and workflow.
+- [Documentation hub](https://othmaneblial.github.io/Postly/docs.html): install, migration, protocols and trust boundaries.
+- [GitHub repository](https://github.com/OthmaneBlial/Postly): source, README and versioned evidence.
+- [Compatibility matrix](https://github.com/OthmaneBlial/Postly/blob/main/docs/compatibility.md): fixture-backed support and open gaps.
+- [Progress log](https://github.com/OthmaneBlial/Postly/blob/main/docs/progress.md): local verification and release boundaries.
+
+## Product facts
+
+- Local project files use Git-friendly TOML collections, requests and environments.
+- The shared core supports HTTP/REST, GraphQL, SSE, WebSocket and dynamic gRPC workflows.
+- The CLI can run saved requests and collections without the desktop app.
+- Postman Collection v2.1 and environment import/export are supported with explicit review diagnostics.
+- Compatibility and benchmarks are reported as measured local evidence; full Postman parity is not claimed.

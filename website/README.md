@@ -12,6 +12,8 @@ python3 -m http.server 4173 --directory website
 ~~~
 
 The page links back to the repository's README and versioned documentation.
+`robots.txt`, `sitemap.xml` and `llms.txt` keep the small public surface
+crawlable and make the project's factual boundaries easy to discover.
 Before each GitHub Pages update, verify the final base path, link targets,
 mobile overflow, keyboard focus, reduced-motion behavior and browser console.
 The site does not claim download counts, benchmark advantages or full Postman
