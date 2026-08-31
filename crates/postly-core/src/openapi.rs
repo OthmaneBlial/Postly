@@ -2169,6 +2169,7 @@ fn apply_response_examples(
         request.examples.push(crate::model::ResponseExample {
             name,
             status,
+            status_text: None,
             headers,
             cookies,
             body,
@@ -3092,6 +3093,7 @@ paths:
         request.examples.push(crate::model::ResponseExample {
             name: "Created".to_owned(),
             status: Some(201),
+            status_text: None,
             headers: vec![HeaderEntry::enabled("content-type", "application/json")],
             cookies: vec![crate::model::ResponseExampleCookie {
                 name: "sid".to_owned(),

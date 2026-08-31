@@ -29,7 +29,9 @@ postly mock ./my-api/collections/users --port 3001
 postly mock ./my-api --port 3002 --once
 ```
 
-The response uses the saved status (default `200`), enabled headers and body.
+The response uses the saved status (default `200`), saved status text when
+present, enabled headers and body.
+Saved response-example status text is used as the reason phrase when present.
 Saved response-example cookies are emitted as `Set-Cookie` headers, including
 their supported `Domain`, `Path`, `SameSite`, `Expires`, `Max-Age`, `Secure` and
 `HttpOnly` attributes. Cookie names/values and attributes containing unsafe

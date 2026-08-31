@@ -502,6 +502,8 @@ pub struct ResponseExample {
     pub name: String,
     #[serde(default)]
     pub status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_text: Option<String>,
     #[serde(default)]
     pub headers: Vec<HeaderEntry>,
     #[serde(default)]

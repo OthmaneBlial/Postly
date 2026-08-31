@@ -2205,6 +2205,7 @@ fn mock_response_for(routes: &[MockRoute], method: &str, target: &str) -> MockRe
         };
     };
     let example = &route.example;
+    let status = example.status.unwrap_or(200);
     let mut headers = example
         .headers
         .iter()
@@ -2234,8 +2235,13 @@ fn mock_response_for(routes: &[MockRoute], method: &str, target: &str) -> MockRe
             .map(|value| ("set-cookie".to_owned(), value)),
     );
     MockResponse {
-        status: example.status.unwrap_or(200),
-        status_text: status_text(example.status.unwrap_or(200)).to_owned(),
+        status,
+        status_text: example
+            .status_text
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| status_text(status))
+            .to_owned(),
         headers,
         body: example.body.clone().unwrap_or_default().into_bytes(),
         delay_ms: example.delay_ms,
@@ -5430,6 +5436,7 @@ mod tests {
             example: ResponseExample {
                 name: "Healthy".to_owned(),
                 status: Some(201),
+                status_text: Some("Fixture Created".to_owned()),
                 headers: vec![HeaderEntry::enabled("content-type", "application/json")],
                 cookies: vec![ResponseExampleCookie {
                     name: "sid".to_owned(),
@@ -5450,7 +5457,7 @@ mod tests {
         let response = mock_response_for(&routes, "get", "/health?token=secret");
 
         assert_eq!(response.status, 201);
-        assert_eq!(response.status_text, "Created");
+        assert_eq!(response.status_text, "Fixture Created");
         assert_eq!(response.body, br#"{"ok":true}"#);
         assert_eq!(response.delay_ms, 7);
         assert_eq!(response.headers.len(), 2);
@@ -5474,6 +5481,7 @@ mod tests {
             ResponseExample {
                 name: "Greeting".to_owned(),
                 status: Some(200),
+                status_text: None,
                 headers: vec![HeaderEntry::enabled("x-api-token", "{{apiToken}}")],
                 cookies: vec![ResponseExampleCookie {
                     name: "sid".to_owned(),

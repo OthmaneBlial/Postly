@@ -1232,6 +1232,11 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExampl
                         .get("code")
                         .and_then(Value::as_u64)
                         .and_then(|code| u16::try_from(code).ok());
+                    let status_text = example
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .filter(|status| !status.trim().is_empty())
+                        .map(ToOwned::to_owned);
                     let body = example
                         .get("body")
                         .and_then(Value::as_str)
@@ -1307,6 +1312,7 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExampl
                     ResponseExample {
                         name,
                         status,
+                        status_text,
                         headers,
                         cookies,
                         body,
@@ -1700,6 +1706,10 @@ TOKEN='last value'
         assert!(search.1.examples[0].cookies[0].http_only);
         assert_eq!(search.1.examples[0].cookies[0].path.as_deref(), Some("/"));
         assert_eq!(search.1.examples[0].cookies[0].max_age_seconds, Some(120));
+        assert_eq!(
+            search.1.examples[0].status_text.as_deref(),
+            Some("No Content")
+        );
 
         let upload = requests
             .iter()

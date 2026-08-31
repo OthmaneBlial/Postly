@@ -313,6 +313,7 @@ mod tests {
         request.examples = vec![ResponseExample {
             name: "Created".to_owned(),
             status: Some(201),
+            status_text: None,
             headers: Vec::new(),
             cookies: Vec::new(),
             body: Some("{\"id\":\"pay_123\"}".to_owned()),

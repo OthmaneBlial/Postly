@@ -2522,6 +2522,8 @@ impl PostlyApp {
         let example = ResponseExample {
             name: name.clone(),
             status: Some(response.status),
+            status_text: (!response.status_text.trim().is_empty())
+                .then(|| response.status_text.clone()),
             headers: response.headers.clone(),
             cookies: response
                 .cookies
@@ -10699,6 +10701,7 @@ mod tests {
         assert_eq!(saved.examples.len(), 1);
         assert_eq!(saved.examples[0].name, "Created user");
         assert_eq!(saved.examples[0].status, Some(201));
+        assert_eq!(saved.examples[0].status_text.as_deref(), Some("Created"));
         assert_eq!(saved.examples[0].body.as_deref(), Some(r#"{"id":1}"#));
     }
 

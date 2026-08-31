@@ -228,8 +228,8 @@ Implemented:
 - Native GUI appearance supports persisted dark, light and system themes while
   deriving secondary text, panels and headings from the active egui palette.
 - Native GUI responses can be saved as named canonical response examples for
-  local mocks, with a bounded UTF-8 body check, captured response cookies and
-  an explicit secret-data warning. Postman response-example cookies survive
+  local mocks, with a bounded UTF-8 body check, captured status text and response cookies and
+  an explicit secret-data warning. Postman response-example status text and cookies survive
   import/export, and the local mock emits sanitized `Set-Cookie` headers with
   common attributes.
 - `postly mock` serves saved response examples through a deterministic local HTTP
@@ -379,7 +379,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`9ced8130f82c79ccc111495c405b32df8496c38d44ae52f9453fbc2844485b89`.
+`5e0fc561abdfb87f73c4463087333a9197a7409fa9fc715b8b15eb7ceb650e19`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest

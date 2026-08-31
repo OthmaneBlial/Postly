@@ -242,6 +242,7 @@ fn postman_item(request: &Request) -> Result<Value, ExportError> {
                     json!({
                         "name": example.name,
                         "code": example.status,
+                        "status": example.status_text,
                         "header": headers(&example.headers),
                         "cookie": example
                             .cookies
@@ -623,6 +624,7 @@ mod tests {
         request.examples.push(ResponseExample {
             name: "Created".to_owned(),
             status: Some(201),
+            status_text: Some("Created".to_owned()),
             headers: vec![HeaderEntry::enabled("content-type", "application/json")],
             cookies: vec![ResponseExampleCookie {
                 name: "session".to_owned(),
@@ -671,6 +673,10 @@ mod tests {
             document["item"][0]["item"][0]["item"][0]["response"][0]["cookie"][0]["maxAge"],
             300
         );
+        assert_eq!(
+            document["item"][0]["item"][0]["item"][0]["response"][0]["status"],
+            "Created"
+        );
 
         let imported_directory = directory.path().join("round-trip");
         let import_report = import_postman_collection(&export_path, &imported_directory)
@@ -697,6 +703,10 @@ mod tests {
             "session"
         );
         assert!(imported_requests[0].1.examples[0].cookies[0].secure);
+        assert_eq!(
+            imported_requests[0].1.examples[0].status_text.as_deref(),
+            Some("Created")
+        );
     }
 
     #[test]

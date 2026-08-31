@@ -47,6 +47,7 @@
             {
               "name": "No content",
               "code": 204,
+              "status": "No Content",
               "header": [{ "key": "X-Result", "value": "empty" }],
               "cookie": [
                 {
