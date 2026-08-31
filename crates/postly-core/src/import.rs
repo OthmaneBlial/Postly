@@ -571,6 +571,7 @@ fn parse_request(
     folder: Option<String>,
     report: &mut ImportReport,
 ) -> (Request, bool) {
+    let subject = format!("Request {name}");
     let method = value.get("method").and_then(Value::as_str).unwrap_or("GET");
     let url = parse_url(value.get("url")).unwrap_or_else(|| {
         report.warn(format!(
@@ -580,8 +581,12 @@ fn parse_request(
     });
     let mut request = Request::new(name, method, url);
     request.folder = folder;
+    let mut malformed_entries_require_review = false;
     if let Some(url_object) = value.get("url").and_then(Value::as_object) {
-        request.query = parse_pairs(url_object.get("query"));
+        let (query, query_requires_review) =
+            parse_pairs(url_object.get("query"), &subject, "query", report);
+        request.query = query;
+        malformed_entries_require_review |= query_requires_review;
         if !request.query.is_empty() {
             let (without_fragment, fragment) = request
                 .url
@@ -600,12 +605,13 @@ fn parse_request(
         }
     }
     request.description = value.get("description").and_then(description_text);
-    request.headers = value
-        .get("header")
-        .and_then(Value::as_array)
-        .map(|headers| headers.iter().filter_map(parse_header_entry).collect())
-        .unwrap_or_default();
-    request.cookies = parse_pairs(value.get("cookie"));
+    let (headers, headers_require_review) = parse_headers(value.get("header"), &subject, report);
+    request.headers = headers;
+    malformed_entries_require_review |= headers_require_review;
+    let (cookies, cookies_require_review) =
+        parse_pairs(value.get("cookie"), &subject, "cookie", report);
+    request.cookies = cookies;
+    malformed_entries_require_review |= cookies_require_review;
     let parsed_auth = parse_auth(value.get("auth"), name, report);
     request.auth = parsed_auth.auth;
     let request_content_type = request
@@ -617,7 +623,9 @@ fn parse_request(
     let unsupported_fields_require_review = warn_unsupported_request_fields(name, value, report);
     (
         request,
-        parsed_auth.requires_review || unsupported_fields_require_review,
+        parsed_auth.requires_review
+            || unsupported_fields_require_review
+            || malformed_entries_require_review,
     )
 }
 
@@ -798,9 +806,15 @@ fn parse_body(
             }
             RequestBody::Raw { text, content_type }
         }
-        "urlencoded" => RequestBody::FormUrlEncoded {
-            fields: parse_pairs(body.get("urlencoded")),
-        },
+        "urlencoded" => {
+            let (fields, _) = parse_pairs(
+                body.get("urlencoded"),
+                &format!("Request {name} urlencoded body"),
+                "field",
+                report,
+            );
+            RequestBody::FormUrlEncoded { fields }
+        }
         "formdata" => {
             let parts = body
                 .get("formdata")
@@ -914,22 +928,41 @@ fn normalize_content_type(value: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn parse_pairs(value: Option<&Value>) -> Vec<KeyValue> {
-    value
-        .and_then(Value::as_array)
-        .map(|pairs| {
-            pairs
-                .iter()
-                .filter_map(|pair| {
-                    Some(KeyValue {
-                        key: pair.get("key").and_then(Value::as_str)?.to_owned(),
-                        value: string_value(pair.get("value")).unwrap_or_default(),
-                        enabled: postman_entry_enabled(pair),
-                    })
-                })
-                .collect()
+fn parse_pairs(
+    value: Option<&Value>,
+    subject: &str,
+    kind: &str,
+    report: &mut ImportReport,
+) -> (Vec<KeyValue>, bool) {
+    let Some(pairs) = value.and_then(Value::as_array) else {
+        if value.is_some() {
+            report.warn(format!(
+                "{subject} has a non-array {kind} list; it was skipped."
+            ));
+            return (Vec::new(), true);
+        }
+        return (Vec::new(), false);
+    };
+    let mut requires_review = false;
+    let pairs = pairs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, pair)| {
+            let Some(key) = pair.get("key").and_then(Value::as_str) else {
+                report.warn(format!(
+                    "{subject} {kind} entry {index} has no usable key; it was skipped."
+                ));
+                requires_review = true;
+                return None;
+            };
+            Some(KeyValue {
+                key: key.to_owned(),
+                value: string_value(pair.get("value")).unwrap_or_default(),
+                enabled: postman_entry_enabled(pair),
+            })
         })
-        .unwrap_or_default()
+        .collect();
+    (pairs, requires_review)
 }
 
 fn postman_entry_enabled(value: &Value) -> bool {
@@ -946,6 +979,38 @@ fn parse_header_entry(value: &Value) -> Option<HeaderEntry> {
             .unwrap_or_default(),
         enabled: postman_entry_enabled(value),
     })
+}
+
+fn parse_headers(
+    value: Option<&Value>,
+    subject: &str,
+    report: &mut ImportReport,
+) -> (Vec<HeaderEntry>, bool) {
+    let Some(headers) = value.and_then(Value::as_array) else {
+        if value.is_some() {
+            report.warn(format!(
+                "{subject} has a non-array header list; it was skipped."
+            ));
+            return (Vec::new(), true);
+        }
+        return (Vec::new(), false);
+    };
+    let mut requires_review = false;
+    let headers = headers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, header)| {
+            let parsed = parse_header_entry(header);
+            if parsed.is_none() {
+                report.warn(format!(
+                    "{subject} header entry {index} has no usable key; it was skipped."
+                ));
+                requires_review = true;
+            }
+            parsed
+        })
+        .collect();
+    (headers, requires_review)
 }
 
 #[derive(Debug, Clone)]
@@ -1313,11 +1378,10 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> (Vec<ResponseExamp
                         .get("body")
                         .and_then(Value::as_str)
                         .map(ToOwned::to_owned);
-                    let headers = example
-                        .get("header")
-                        .and_then(Value::as_array)
-                        .map(|headers| headers.iter().filter_map(parse_header_entry).collect())
-                        .unwrap_or_default();
+                    let example_subject = format!("Response example {name}");
+                    let (headers, headers_require_review) =
+                        parse_headers(example.get("header"), &example_subject, report);
+                    requires_review |= headers_require_review;
                     let cookies = example
                         .get("cookie")
                         .or_else(|| example.get("cookies"))
@@ -1589,6 +1653,39 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("originalRequest")));
+
+        let malformed = serde_json::json!({
+            "method": "POST",
+            "url": {
+                "raw": "https://api.example.test/users",
+                "query": [{ "value": "missing-key" }]
+            },
+            "header": [{ "value": "missing-key" }],
+            "cookie": [{ "value": "missing-key" }],
+            "body": {
+                "mode": "urlencoded",
+                "urlencoded": [{ "value": "missing-key" }]
+            }
+        });
+        let (_, malformed_requires_review) =
+            parse_request("Malformed entries", &malformed, None, &mut report);
+        assert!(malformed_requires_review);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Malformed entries query entry 0")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Malformed entries header entry 0")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Malformed entries cookie entry 0")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Malformed entries urlencoded body field entry 0")));
     }
 
     #[test]

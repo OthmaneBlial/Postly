@@ -34,7 +34,9 @@ Implemented:
   boolean values with `currentValue`/`initialValue` fallbacks), and report
   request-level `protocolProfileBehavior`, proxy/certificate settings and
   response-example `originalRequest` data as explicit manual-review gaps
-  instead of silently dropping them.
+  instead of silently dropping them. Malformed header, query, cookie and
+  urlencoded entries are also reported with deterministic request-level review
+  status.
 - Incomplete Postman OAuth2 exports now preserve an existing `accessToken` as
   bearer authentication so the request remains runnable, while the migration
   report keeps token renewal marked for manual review.
@@ -384,7 +386,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`4bd13ff047d17506d36874ac66d33d8110d71c9eadc0f57e0e27b9542e511974`.
+`57699195adfd2e4474cdddfbb7e2a8eb469251795de8a017e1d05235f3012637`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
