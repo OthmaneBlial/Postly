@@ -4217,11 +4217,12 @@ fn print_response_with_tests(
         if let Some(tests) = tests {
             for test in tests {
                 if test.passed {
-                    println!("PASS test: {}", test.name);
+                    println!("PASS test: {} ({} ms)", test.name, test.duration_ms);
                 } else {
                     println!(
-                        "FAIL test: {} — {}",
+                        "FAIL test: {} ({} ms) — {}",
                         test.name,
+                        test.duration_ms,
                         test.error.as_deref().unwrap_or("assertion failed")
                     );
                 }

@@ -94,6 +94,9 @@ Implemented:
 - The Node bridge now tests a broader explicit expectation subset including
   stable deep equality, keys, length, oneOf, empty and numeric range matchers;
   broad Chai/Postman parity remains intentionally partial.
+- Script reports now preserve individual post-response test names, pass/fail
+  state, callback duration and bounded error details in runner JSON; the native
+  GUI and CLI show the same per-test timing.
 - `pm.sendRequest` now has a tested, opt-in callback slice for bounded HTTP(S)
   subrequests with headers, raw bodies, response text/JSON and response
   assertions; direct bridge and collection-runner integration are covered, and

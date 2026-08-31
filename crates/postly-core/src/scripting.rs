@@ -45,6 +45,10 @@ pub enum ScriptError {
 pub struct ScriptTestResult {
     pub name: String,
     pub passed: bool,
+    /// Wall-clock duration of the test callback in milliseconds.
+    /// Older serialized results may omit this field.
+    #[serde(default)]
+    pub duration_ms: u128,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -1557,15 +1561,22 @@ function recordTest(name, callback) {
     tests.push({
       name: "Postly script test limit",
       passed: false,
+      duration_ms: 0,
       error: "The script exceeded the maximum of " + MAX_TEST_ENTRIES + " tests."
     });
     return;
   }
+  const started = Date.now();
   try {
     callback();
-    tests.push({ name: text(name), passed: true });
+    tests.push({ name: text(name), passed: true, duration_ms: Date.now() - started });
   } catch (error) {
-    tests.push({ name: text(name), passed: false, error: text(error && (error.stack || error.message || error)) });
+    tests.push({
+      name: text(name),
+      passed: false,
+      duration_ms: Date.now() - started,
+      error: text(error && (error.stack || error.message || error))
+    });
   }
 }
 
@@ -1735,6 +1746,39 @@ mod tests {
         .expect("script");
         assert_eq!(result.tests.len(), 1);
         assert!(result.tests[0].passed);
+    }
+
+    #[test]
+    fn reports_individual_script_test_durations_and_errors() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let request = Request::new("Timed tests", "GET", "https://example.test");
+        let result = run_script(
+            r#"
+                pm.test("slow pass", function () {
+                    const started = Date.now();
+                    while (Date.now() - started < 5) {}
+                });
+                pm.test("fast failure", function () {
+                    pm.expect(false).to.be.true;
+                });
+            "#,
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("timed script");
+
+        assert_eq!(result.tests.len(), 2);
+        assert!(result.tests[0].passed);
+        assert!(result.tests[0].duration_ms >= 4);
+        assert!(!result.tests[1].passed);
+        assert!(result.tests[1].duration_ms < 2_000);
+        assert!(result.tests[1]
+            .error
+            .as_deref()
+            .is_some_and(|error| { error.contains("expected false to be true") }));
     }
 
     #[test]

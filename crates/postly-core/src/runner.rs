@@ -15,7 +15,7 @@ use tokio::sync::Notify;
 use crate::{
     http::{HttpEngine, HttpResponse},
     model::{Assertion, Request, Variables},
-    scripting::{run_script, ScriptResult},
+    scripting::{run_script, ScriptResult, ScriptTestResult},
     variables::VariableContext,
 };
 
@@ -97,6 +97,11 @@ pub struct RunnerItemResult {
     pub assertions: usize,
     #[serde(default)]
     pub assertion_failures: Vec<String>,
+    /// Individual Postman-style test results from the optional post-response
+    /// script. Native assertions remain represented in `assertions` and
+    /// `assertion_failures` for compact compatibility with existing reports.
+    #[serde(default)]
+    pub script_tests: Vec<ScriptTestResult>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -286,6 +291,7 @@ async fn execute_concurrent_request(
                 error,
                 assertions: request.assertions.len(),
                 assertion_failures,
+                script_tests: Vec::new(),
             })
         }
         Err(error) => Some(RunnerItemResult {
@@ -299,6 +305,7 @@ async fn execute_concurrent_request(
             error: Some(error.to_string()),
             assertions: 0,
             assertion_failures: Vec::new(),
+            script_tests: Vec::new(),
         }),
     }
 }
@@ -449,6 +456,7 @@ pub async fn run_requests(
             let duration_ms = started.elapsed().as_millis();
             let mut assertions = 0;
             let mut assertion_failures = Vec::new();
+            let mut script_tests = Vec::new();
             let item = match result {
                 Ok(response) => {
                     *summary
@@ -475,6 +483,7 @@ pub async fn run_requests(
                             .await
                             {
                                 Ok(script_result) => {
+                                    script_tests = script_result.tests.clone();
                                     assertions += script_result.tests.len();
                                     assertion_failures.extend(
                                         script_result
@@ -518,6 +527,7 @@ pub async fn run_requests(
                         error,
                         assertions,
                         assertion_failures,
+                        script_tests,
                     }
                 }
                 Err(error) => RunnerItemResult {
@@ -531,6 +541,7 @@ pub async fn run_requests(
                     passed: false,
                     assertions,
                     assertion_failures,
+                    script_tests,
                 },
             };
             iteration_context = request_context;
@@ -877,6 +888,10 @@ mod tests {
         assert_eq!(summary.assertions, 2);
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.results[0].assertions, 2);
+        assert_eq!(summary.results[0].script_tests.len(), 2);
+        assert_eq!(summary.results[0].script_tests[0].name, "status is 200");
+        assert!(summary.results[0].script_tests[0].passed);
+        assert!(summary.results[0].script_tests[0].duration_ms < 2_000);
     }
 
     #[tokio::test]

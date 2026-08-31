@@ -6043,6 +6043,11 @@ impl PostlyApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(if test.passed { "✓" } else { "✗" });
                         ui.label(&test.name);
+                        ui.label(
+                            RichText::new(format!("{} ms", test.duration_ms))
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
                         if let Some(error) = &test.error {
                             ui.label(
                                 RichText::new(error)
