@@ -290,8 +290,8 @@ absolute HTTP references. The OpenAPI export slice is covered by a native JSON/Y
 and a real CLI smoke run from a temporary workspace; operation paths, server
 variables, security metadata and request/response examples were inspected.
 
-On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 7
-checked-in fixtures; its separate request-mapping signal was 17/21 (80.95%),
+On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 8
+checked-in fixtures; its separate request-mapping signal was 18/22 (81.82%),
 with file bodies, scripts and other review-worthy cases retained as explicit manual review. The latest local
 `cargo xtask bench` run on macOS arm64 reported a CLI `--help` startup median
 of 11.760 ms and peak RSS of 12,768 KiB, 48.941 ms for the Postman variant
@@ -305,7 +305,11 @@ targets (`curl_command`, `variables` and `postman_import`) each completed 256
 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`4e424090d7a331e33e3c40fbdefd5e0020603768865d98b73a9d933cd62660d1`.
+`28136157983a0415a05216235db244751335c1c3e28deb05b347eca064542bc8`.
+
+The same release build includes the local Digest CLI flags and the packaged
+CLI help smoke confirms their presence; the Digest HTTP challenge/vector tests
+remain covered in the workspace suite.
 
 ## Next highest-value work
 
