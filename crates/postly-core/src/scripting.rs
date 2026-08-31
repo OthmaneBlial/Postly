@@ -452,7 +452,7 @@ function authParameterValue(parameters, names) {
 
 function nativeAuthToPostman(nativeAuth) {
   const source = nativeAuth && typeof nativeAuth === "object" ? nativeAuth : { type: "none" };
-  let authType = "noauth";
+  let authType = source.type === "none" ? "noauth" : text(source.type).toLowerCase();
   const parameters = [];
   const add = (key, value) => parameters.push({ key, value: text(value), type: "string", enabled: true });
   switch (source.type) {
@@ -1605,6 +1605,40 @@ mod tests {
                 value: "new-key".to_owned(),
                 location: crate::model::ApiKeyLocation::Query,
             }
+        );
+
+        let mut aws_request = Request::new("AWS auth facade", "GET", "https://api.example.test");
+        aws_request.auth = crate::model::Auth::AwsSignatureV4 {
+            access_key_id: "AKIDEXAMPLE".to_owned(),
+            secret_access_key: "{{awsSecret}}".to_owned(),
+            region: "us-east-1".to_owned(),
+            service: "execute-api".to_owned(),
+            session_token: None,
+        };
+        let aws_result = run_script(
+            "pm.test('unsupported auth is preserved', function () { pm.expect(pm.request.auth.type).to.eql('aws_signature_v4'); });",
+            &aws_request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("AWS auth facade");
+        aws_result
+            .apply(&mut aws_request, &mut VariableContext::default())
+            .expect("apply AWS auth facade");
+        assert_eq!(
+            aws_request.auth,
+            crate::model::Auth::AwsSignatureV4 {
+                access_key_id: "AKIDEXAMPLE".to_owned(),
+                secret_access_key: "{{awsSecret}}".to_owned(),
+                region: "us-east-1".to_owned(),
+                service: "execute-api".to_owned(),
+                session_token: None,
+            }
+        );
+        assert!(
+            aws_result.tests[0].passed,
+            "{:?}",
+            aws_result.tests[0].error
         );
     }
 
