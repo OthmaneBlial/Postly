@@ -188,6 +188,10 @@ Implemented:
 - `postly docs` generates deterministic local Markdown for collections while
   omitting header/auth values and response bodies by default; example bodies
   require an explicit opt-in.
+- Dedicated environment, debugging and security guides now document the real
+  variable precedence, credential-store boundary, script limitations, local
+  diagnostics and safe reproduction workflow; the root `SECURITY.md` points to
+  the same policy.
 - The dependency-free `website/` showcase has responsive navigation, SEO
   metadata, JSON-LD and source-backed documentation links; local browser QA
   covers 390px and 1440px layouts, mobile menu state and response-tab switching.

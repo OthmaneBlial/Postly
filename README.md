@@ -389,6 +389,7 @@ guarantees as a substitute for product evidence.
 - [Development and local validation](docs/development.md)
 - [CLI reference](docs/cli.md)
 - [Collections and environments](docs/collections.md)
+- [Environment and variable guide](docs/environments.md)
 - [Authentication](docs/authentication.md)
 - [Scripting and `pm.*`](docs/scripting.md)
 - [Developer console](docs/console.md)
@@ -407,6 +408,8 @@ guarantees as a substitute for product evidence.
 - [Local mock server](docs/mock-server.md)
 - [Postman migration](docs/migration-from-postman.md)
 - [Privacy](docs/privacy.md)
+- [Security model](docs/security.md)
+- [Debugging](docs/debugging.md)
 - [Compatibility status](docs/compatibility.md)
 - [Project progress](docs/progress.md)
 
