@@ -5265,7 +5265,7 @@ impl PostlyApp {
             )
             .changed();
         ui.label(
-            RichText::new("SOCKS URLs are supported for HTTP/SSE. WebSocket and gRPC proxying use HTTP CONNECT; environment proxy variables are used when no explicit proxy is set for HTTP/SSE.")
+            RichText::new("SOCKS URLs are supported for HTTP/SSE/WebSocket. gRPC proxying uses HTTP CONNECT; environment proxy variables are used when no explicit proxy is set for HTTP/SSE.")
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );
@@ -6432,6 +6432,144 @@ fn resolve_websocket_value(input: &str, context: &VariableContext) -> Result<Str
     }
 }
 
+async fn connect_socks5_socket(
+    proxy: &url::Url,
+    target_host: &str,
+    target_port: u16,
+) -> Result<tokio::net::TcpStream, String> {
+    let proxy_host = proxy
+        .host_str()
+        .ok_or_else(|| "WebSocket SOCKS proxy URL has no hostname".to_owned())?;
+    let proxy_port = proxy
+        .port_or_known_default()
+        .ok_or_else(|| "WebSocket SOCKS proxy URL has no port".to_owned())?;
+    let mut socket = tokio::net::TcpStream::connect((proxy_host, proxy_port))
+        .await
+        .map_err(|error| format!("could not connect to WebSocket SOCKS proxy: {error}"))?;
+
+    let username = proxy.username().as_bytes();
+    let password = proxy.password().unwrap_or_default().as_bytes();
+    let has_credentials = !username.is_empty();
+    if has_credentials && (username.len() > u8::MAX as usize || password.len() > u8::MAX as usize) {
+        return Err("WebSocket SOCKS proxy credentials exceed 255 bytes".to_owned());
+    }
+    let methods = if has_credentials {
+        [0x00, 0x02]
+    } else {
+        [0x00, 0xFF]
+    };
+    socket
+        .write_all(&[0x05, 0x02, methods[0], methods[1]])
+        .await
+        .map_err(|error| format!("could not write WebSocket SOCKS greeting: {error}"))?;
+    let mut greeting = [0_u8; 2];
+    socket
+        .read_exact(&mut greeting)
+        .await
+        .map_err(|error| format!("could not read WebSocket SOCKS greeting: {error}"))?;
+    if greeting[0] != 0x05 {
+        return Err("WebSocket SOCKS proxy returned an invalid version".to_owned());
+    }
+    match greeting[1] {
+        0x00 => {}
+        0x02 if has_credentials => {
+            let mut credentials = Vec::with_capacity(3 + username.len() + password.len());
+            credentials.extend_from_slice(&[0x01, username.len() as u8]);
+            credentials.extend_from_slice(username);
+            credentials.push(password.len() as u8);
+            credentials.extend_from_slice(password);
+            socket
+                .write_all(&credentials)
+                .await
+                .map_err(|error| format!("could not write WebSocket SOCKS credentials: {error}"))?;
+            let mut authentication = [0_u8; 2];
+            socket
+                .read_exact(&mut authentication)
+                .await
+                .map_err(|error| {
+                    format!("could not read WebSocket SOCKS credentials response: {error}")
+                })?;
+            if authentication != [0x01, 0x00] {
+                return Err("WebSocket SOCKS proxy rejected credentials".to_owned());
+            }
+        }
+        0xFF => return Err("WebSocket SOCKS proxy rejected all authentication methods".to_owned()),
+        _ => return Err("WebSocket SOCKS proxy selected unsupported authentication".to_owned()),
+    }
+
+    let mut connect_request = vec![0x05, 0x01, 0x00];
+    match target_host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(address)) => {
+            connect_request.push(0x01);
+            connect_request.extend_from_slice(&address.octets());
+        }
+        Ok(std::net::IpAddr::V6(address)) => {
+            connect_request.push(0x04);
+            connect_request.extend_from_slice(&address.octets());
+        }
+        Err(_) => {
+            let host = target_host.as_bytes();
+            if host.is_empty() || host.len() > u8::MAX as usize {
+                return Err("WebSocket SOCKS target hostname exceeds 255 bytes".to_owned());
+            }
+            connect_request.push(0x03);
+            connect_request.push(host.len() as u8);
+            connect_request.extend_from_slice(host);
+        }
+    }
+    connect_request.extend_from_slice(&target_port.to_be_bytes());
+    socket
+        .write_all(&connect_request)
+        .await
+        .map_err(|error| format!("could not write WebSocket SOCKS connect request: {error}"))?;
+
+    let mut response = [0_u8; 4];
+    socket
+        .read_exact(&mut response)
+        .await
+        .map_err(|error| format!("could not read WebSocket SOCKS connect response: {error}"))?;
+    if response[0] != 0x05 {
+        return Err("WebSocket SOCKS proxy returned an invalid connect version".to_owned());
+    }
+    if response[1] != 0x00 {
+        return Err(format!(
+            "WebSocket SOCKS proxy connect failed with code 0x{:02x}",
+            response[1]
+        ));
+    }
+    match response[3] {
+        0x01 => {
+            let mut address = [0_u8; 4];
+            socket.read_exact(&mut address).await.map_err(|error| {
+                format!("could not read WebSocket SOCKS IPv4 response: {error}")
+            })?;
+        }
+        0x03 => {
+            let mut length = [0_u8; 1];
+            socket.read_exact(&mut length).await.map_err(|error| {
+                format!("could not read WebSocket SOCKS hostname response: {error}")
+            })?;
+            let mut address = vec![0_u8; length[0] as usize];
+            socket.read_exact(&mut address).await.map_err(|error| {
+                format!("could not read WebSocket SOCKS hostname response: {error}")
+            })?;
+        }
+        0x04 => {
+            let mut address = [0_u8; 16];
+            socket.read_exact(&mut address).await.map_err(|error| {
+                format!("could not read WebSocket SOCKS IPv6 response: {error}")
+            })?;
+        }
+        _ => return Err("WebSocket SOCKS proxy returned an invalid address type".to_owned()),
+    }
+    let mut port = [0_u8; 2];
+    socket
+        .read_exact(&mut port)
+        .await
+        .map_err(|error| format!("could not read WebSocket SOCKS port response: {error}"))?;
+    Ok(socket)
+}
+
 async fn connect_websocket(
     request: tokio_tungstenite::tungstenite::http::Request<()>,
     proxy_url: Option<&str>,
@@ -6468,9 +6606,15 @@ async fn connect_websocket(
 
     let proxy = url::Url::parse(proxy_url)
         .map_err(|error| format!("invalid WebSocket proxy URL: {error}"))?;
+    if matches!(proxy.scheme(), "socks5" | "socks5h") {
+        let socket = connect_socks5_socket(&proxy, target_host, target_port).await?;
+        return client_async_tls_with_config(request, socket, None, None)
+            .await
+            .map_err(|error| format!("WebSocket handshake failed: {error}"));
+    }
     if proxy.scheme() != "http" {
         return Err(format!(
-            "WebSocket proxy routing currently supports http:// proxies; {} is not supported",
+            "WebSocket proxy routing supports http://, socks5:// and socks5h:// proxies; {} is not supported",
             proxy.scheme()
         ));
     }
@@ -9063,6 +9207,93 @@ mod tests {
             443,
             "api.example.test:8443"
         ));
+    }
+
+    #[tokio::test]
+    async fn websocket_connects_through_a_socks5_proxy() {
+        let target_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("target listener");
+        let target_address = target_listener.local_addr().expect("target address");
+        let target_server = tokio::spawn(async move {
+            let (stream, _) = target_listener.accept().await.expect("target connection");
+            let mut websocket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("target handshake");
+            if let Some(Ok(Message::Text(text))) = websocket.next().await {
+                websocket
+                    .send(Message::Text(format!("proxy:{text}").into()))
+                    .await
+                    .expect("target response");
+                websocket.close(None).await.expect("target close");
+            }
+        });
+        let proxy_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("proxy listener");
+        let proxy_address = proxy_listener.local_addr().expect("proxy address");
+        let proxy_server = tokio::spawn(async move {
+            let (mut client, _) = proxy_listener.accept().await.expect("proxy connection");
+            let mut greeting = [0_u8; 4];
+            client.read_exact(&mut greeting).await.expect("greeting");
+            assert_eq!(greeting, [0x05, 0x02, 0x00, 0xFF]);
+            client
+                .write_all(&[0x05, 0x00])
+                .await
+                .expect("greeting reply");
+
+            let mut connect_header = [0_u8; 4];
+            client
+                .read_exact(&mut connect_header)
+                .await
+                .expect("connect header");
+            assert_eq!(connect_header, [0x05, 0x01, 0x00, 0x01]);
+            let mut target_ip = [0_u8; 4];
+            client.read_exact(&mut target_ip).await.expect("target ip");
+            let mut target_port = [0_u8; 2];
+            client
+                .read_exact(&mut target_port)
+                .await
+                .expect("target port");
+            assert_eq!(target_ip, [127, 0, 0, 1]);
+            assert_eq!(u16::from_be_bytes(target_port), target_address.port());
+
+            let mut target = tokio::net::TcpStream::connect(target_address)
+                .await
+                .expect("target relay connection");
+            let mut reply = vec![0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1];
+            reply.extend_from_slice(&target_address.port().to_be_bytes());
+            client.write_all(&reply).await.expect("connect reply");
+            let _ = tokio::io::copy_bidirectional(&mut client, &mut target).await;
+        });
+
+        let request = Request::new(
+            "SOCKS WebSocket",
+            "GET",
+            format!("ws://{target_address}/socket"),
+        );
+        let websocket_request = build_websocket_request(&request, &VariableContext::default())
+            .expect("WebSocket request");
+        let proxy_url = format!("socks5://{proxy_address}");
+        let (mut websocket, _) = connect_websocket(websocket_request, Some(&proxy_url), None)
+            .await
+            .expect("SOCKS WebSocket connection");
+        websocket
+            .send(Message::Text("hello".to_owned().into()))
+            .await
+            .expect("send through proxy");
+        assert_eq!(
+            websocket
+                .next()
+                .await
+                .expect("proxy response")
+                .expect("message"),
+            Message::Text("proxy:hello".to_owned().into())
+        );
+        websocket.close(None).await.expect("close through proxy");
+        drop(websocket);
+        proxy_server.await.expect("proxy server");
+        target_server.await.expect("target server");
     }
 
     #[test]

@@ -28,3 +28,7 @@ GUI exposes bounded `WS retries` (0–10) and reconnects after a peer close or
 recoverable handshake/read failure, while preserving the message history and
 surfacing each retry in the console. Saved message presets remain a future
 slice.
+
+The CLI and GUI accept HTTP CONNECT and `socks5://`/`socks5h://` proxy URLs for
+WebSocket connections. SOCKS5 username/password authentication is supported;
+`no_proxy` bypass rules are applied before proxy routing.

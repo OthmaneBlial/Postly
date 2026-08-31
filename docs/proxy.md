@@ -38,8 +38,9 @@ use `--no-proxy` to retain selected direct destinations.
 The native GUI exposes the proxy URL in the request workspace's `Transport`
 tab, plus a comma-separated bypass list. Both are persisted under the ignored
 `.postly/gui-settings.json` file and apply to HTTP requests, SSE streams,
-WebSocket connections and gRPC channels. The CLI and GUI WebSocket clients and
-the CLI/GUI gRPC clients support explicit `http://` proxy CONNECT routing and
-the same bypass matching. SOCKS WebSocket and gRPC routing remain unsupported.
+WebSocket connections and gRPC channels. The CLI and GUI WebSocket clients
+support explicit `http://` proxy CONNECT and `socks5://`/`socks5h://` routing
+with the same bypass matching. The CLI/GUI gRPC clients support explicit HTTP
+CONNECT routing; SOCKS gRPC remains unsupported.
 A proxy can observe traffic and credentials; use one you trust and keep TLS
 verification enabled unless an explicit, documented local exception is required.
