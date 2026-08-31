@@ -3699,6 +3699,21 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
                         result.duration_ms,
                         result.assertions
                     );
+                    for failure in &result.assertion_failures {
+                        println!("  assertion: {failure}");
+                    }
+                    for test in &result.script_tests {
+                        let state = if test.passed { "PASS" } else { "FAIL" };
+                        println!(
+                            "  {state} script test: {} ({} ms){}",
+                            test.name,
+                            test.duration_ms,
+                            test.error
+                                .as_deref()
+                                .map(|error| format!(": {error}"))
+                                .unwrap_or_default()
+                        );
+                    }
                 } else {
                     eprintln!(
                         "FAIL {}: {}",
@@ -3828,7 +3843,35 @@ fn render_junit(summaries: &[postly_core::RunnerSummary]) -> String {
                 .as_deref()
                 .or_else(|| result.status.map(|_status| "HTTP status failure"))
                 .unwrap_or("request failed");
-            output.push_str(&format!("<failure message=\"{}\"/>", xml_escape(message)));
+            let details = result.assertion_failures.join("\n");
+            output.push_str(&format!(
+                "<failure message=\"{}\">{}</failure>",
+                xml_escape(message),
+                xml_escape(&details)
+            ));
+        }
+        if !result.script_tests.is_empty() {
+            let details = result
+                .script_tests
+                .iter()
+                .map(|test| {
+                    format!(
+                        "{} {} ({} ms){}",
+                        if test.passed { "PASS" } else { "FAIL" },
+                        test.name,
+                        test.duration_ms,
+                        test.error
+                            .as_deref()
+                            .map(|error| format!(": {error}"))
+                            .unwrap_or_default()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            output.push_str(&format!(
+                "<system-out>{}</system-out>",
+                xml_escape(&details)
+            ));
         }
         output.push_str("</testcase>");
     }
@@ -5567,6 +5610,40 @@ paths:
             "api.example.test:8443"
         ));
         assert!(no_proxy_matches("anything.example.test", 443, "*"));
+    }
+
+    #[test]
+    fn junit_report_includes_script_test_details_and_escapes_errors() {
+        let summary = postly_core::RunnerSummary {
+            requests: 1,
+            passed: 0,
+            failed: 1,
+            results: vec![postly_core::RunnerItemResult {
+                path: PathBuf::from("requests/health.postly.toml"),
+                iteration: 1,
+                name: "Health".to_owned(),
+                method: "GET".to_owned(),
+                status: Some(500),
+                duration_ms: 42,
+                error: Some("1 assertion failed".to_owned()),
+                passed: false,
+                assertions: 1,
+                assertion_failures: vec!["status: expected 200".to_owned()],
+                script_tests: vec![ScriptTestResult {
+                    name: "response body".to_owned(),
+                    passed: false,
+                    duration_ms: 7,
+                    error: Some("expected <ok>".to_owned()),
+                }],
+            }],
+            ..postly_core::RunnerSummary::default()
+        };
+
+        let report = render_junit(&[summary]);
+        assert!(report
+            .contains("<system-out>FAIL response body (7 ms): expected &lt;ok&gt;</system-out>"));
+        assert!(report
+            .contains("<failure message=\"1 assertion failed\">status: expected 200</failure>"));
     }
 
     #[tokio::test]

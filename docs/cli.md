@@ -143,6 +143,11 @@ Exit status is non-zero when a request, explicit assertion, script test or
 runner operation fails. JSON and JUnit reporters are intended for local
 automation and self-hosted CI systems.
 
+The pretty reporter prints each request first, then its native assertion failures
+and individual script tests with pass/fail state, duration and bounded errors.
+JUnit keeps request-level counts and includes the same script-test detail in
+`system-out`, with failure messages and assertion details XML-escaped.
+
 ## Environments and transport
 
 ~~~bash
