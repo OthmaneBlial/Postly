@@ -411,6 +411,7 @@ fn validate_json_schema(
             }
 
             validate_json_schema_composition(value, schema, path)?;
+            validate_json_schema_conditionals(value, schema, path)?;
             validate_json_schema_object(value, schema, path)?;
             validate_json_schema_array(value, schema, path)?;
             validate_json_schema_string(value, schema, path)?;
@@ -475,6 +476,68 @@ fn validate_json_schema_composition(
     if let Some(not) = schema.get("not") {
         if validate_json_schema(value, not, path).is_ok() {
             return Err(format!("not schema unexpectedly matched value at {path:?}"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_json_schema_conditionals(
+    value: &serde_json::Value,
+    schema: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+) -> Result<(), String> {
+    if let Some(dependent_required) = schema
+        .get("dependentRequired")
+        .and_then(serde_json::Value::as_object)
+    {
+        if let Some(object) = value.as_object() {
+            for (property, dependencies) in dependent_required {
+                let Some(dependencies) = dependencies.as_array() else {
+                    return Err(format!(
+                        "JSON Schema dependentRequired entry {property:?} must be an array at {path:?}"
+                    ));
+                };
+                if object.contains_key(property) {
+                    for dependency in dependencies {
+                        let Some(dependency) = dependency.as_str() else {
+                            return Err(format!(
+                                "JSON Schema dependentRequired entry {property:?} contains a non-string dependency at {path:?}"
+                            ));
+                        };
+                        if !object.contains_key(dependency) {
+                            return Err(format!(
+                                "dependent JSON Schema property {dependency:?} is required when {property:?} is present at {path:?}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(dependent_schemas) = schema
+        .get("dependentSchemas")
+        .and_then(serde_json::Value::as_object)
+    {
+        if let Some(object) = value.as_object() {
+            for (property, dependent_schema) in dependent_schemas {
+                if object.contains_key(property) {
+                    validate_json_schema(value, dependent_schema, path).map_err(|error| {
+                        format!("dependent JSON Schema for property {property:?}: {error}")
+                    })?;
+                }
+            }
+        }
+    }
+
+    if let Some(if_schema) = schema.get("if") {
+        let branch = if validate_json_schema(value, if_schema, path).is_ok() {
+            schema.get("then")
+        } else {
+            schema.get("else")
+        };
+        if let Some(branch) = branch {
+            validate_json_schema(value, branch, path)?;
         }
     }
     Ok(())
@@ -1562,6 +1625,63 @@ mod tests {
                 .expect_err("invalid regex should be reported")
                 .contains("invalid JSON Schema pattern")
         );
+
+        let conditional = serde_json::json!({
+            "type": "object",
+            "dependentRequired": {
+                "token": ["expiresAt"]
+            },
+            "dependentSchemas": {
+                "admin": {
+                    "required": ["permissions"],
+                    "properties": {
+                        "permissions": { "type": "array", "minItems": 1 }
+                    }
+                }
+            },
+            "if": {
+                "required": ["status"],
+                "properties": { "status": { "const": "active" } }
+            },
+            "then": {
+                "required": ["activatedAt"]
+            },
+            "else": {
+                "properties": { "activatedAt": { "type": "null" } }
+            }
+        });
+        assert!(validate_json_schema(
+            &serde_json::json!({
+                "token": "secret",
+                "expiresAt": "tomorrow",
+                "admin": true,
+                "permissions": ["read"],
+                "status": "active",
+                "activatedAt": "today"
+            }),
+            &conditional,
+            ""
+        )
+        .is_ok());
+        assert!(
+            validate_json_schema(&serde_json::json!({ "token": "secret" }), &conditional, "")
+                .is_err()
+        );
+        assert!(
+            validate_json_schema(&serde_json::json!({ "admin": true }), &conditional, "").is_err()
+        );
+        assert!(validate_json_schema(
+            &serde_json::json!({ "status": "inactive", "activatedAt": "today" }),
+            &conditional,
+            ""
+        )
+        .is_err());
+        assert!(validate_json_schema(
+            &serde_json::json!({ "status": "inactive", "activatedAt": null }),
+            &conditional,
+            ""
+        )
+        .is_ok());
 
         let tuple = serde_json::json!({
             "type": "array",

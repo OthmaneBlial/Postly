@@ -150,7 +150,8 @@ Implemented:
   boolean/object `additionalProperties`, array/string/object bounds, unique items and
   tuple/`prefixItems` items, `contains` with `minContains`/`maxContains`,
   string `pattern`, `patternProperties` and `propertyNames`,
-  allOf/anyOf/oneOf/not composition, exclusive numeric bounds,
+  `dependentRequired`/`dependentSchemas` and `if`/`then`/`else` conditional
+  rules, allOf/anyOf/oneOf/not composition, exclusive numeric bounds,
   `multipleOf` and common string formats (`date`, `date-time`, `uuid`, `uri`,
   `email`, `hostname`, `ipv4`, `ipv6`) are covered by runner and GUI tests.
   Unknown formats remain annotation-only.
@@ -352,7 +353,7 @@ checked-in targets (`curl_command`, `variables` and `postman_import`) each
 completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`34ed0a4f6b26e8d60ae98bc75bbc67b8d90fb58fcec4cda9c7b72c6766cbe404`.
+`7fe65fbb4e020bae2545979e421a9e92167d4f5348b7589962d29ad48d0da412`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
@@ -376,6 +377,10 @@ It also validates safe Rust-regex `pattern` expressions, applies overlapping
 `patternProperties` schemas, validates `propertyNames`, and keeps matching
 pattern properties outside `additionalProperties: false` rejection. Invalid
 patterns are reported as schema errors rather than silently ignored.
+
+Conditional JSON Schema rules now enforce property dependencies and apply
+bounded `if`/`then`/`else` branches to response objects, with runner coverage
+for both dependent-required and dependent-schema failures.
 
 ## Next highest-value work
 
