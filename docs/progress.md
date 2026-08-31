@@ -209,10 +209,10 @@ Implemented:
   the same policy.
 - The dependency-free `website/` showcase has responsive navigation, SEO
   metadata, JSON-LD, crawlable `robots.txt`/`sitemap.xml`/`llms.txt` assets and
-  source-backed documentation links; local browser QA covers 390px and 1440px
-  layouts, mobile menu state and response-tab switching. The isolated `Postly/`
-  folder is published at `https://othmaneblial.github.io/Postly/` and its home,
-  docs, logo and crawl assets were rechecked over HTTPS after propagation.
+  source-backed documentation links; static asset and live HTTP checks cover
+  the isolated `Postly/` Pages folder, whose home, docs, logo and crawl assets
+  were rechecked over HTTPS after propagation. Manual visual browser QA at
+  mobile and desktop widths remains open.
 - Ignored shallow research corpus for Bruno, Yaak and Posting.
 
 Not yet implemented:
