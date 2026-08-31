@@ -597,8 +597,238 @@ impl HttpResponse {
                 }
             }
         }
+        let trimmed = text.trim_start();
+        let looks_like_html = self
+            .content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("html"))
+            || trimmed.starts_with("<!doctype html")
+            || trimmed.starts_with("<html");
+        if looks_like_html {
+            if let Some(formatted) = format_html(&text) {
+                return formatted;
+            }
+        }
+        let looks_like_javascript = self
+            .content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("javascript") || value.contains("ecmascript"))
+            || trimmed.starts_with("function ")
+            || trimmed.starts_with("const ")
+            || trimmed.starts_with("let ")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("export ");
+        if looks_like_javascript {
+            if let Some(formatted) = format_javascript(&text) {
+                return formatted;
+            }
+        }
         text
     }
+}
+
+fn append_preview_line(output: &mut String, indent: usize, text: &str) {
+    let text = text.trim();
+    if text.is_empty() {
+        return;
+    }
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    output.push_str(&"  ".repeat(indent));
+    output.push_str(text);
+}
+
+fn format_html(text: &str) -> Option<String> {
+    let mut output = String::new();
+    let mut indent = 0_usize;
+    let mut cursor = 0_usize;
+    while cursor < text.len() {
+        let remainder = &text[cursor..];
+        let Some(relative_open) = remainder.find('<') else {
+            append_preview_line(&mut output, indent, remainder);
+            break;
+        };
+        let open = cursor + relative_open;
+        append_preview_line(&mut output, indent, &text[cursor..open]);
+
+        let remainder = &text[open..];
+        let tag_end = if remainder.starts_with("<!--") {
+            remainder.find("-->").map(|end| open + end + 2)
+        } else {
+            find_markup_end(text, open + 1)
+        }?;
+        let tag = text[open..=tag_end].trim();
+        if tag.starts_with("</") {
+            indent = indent.saturating_sub(1);
+        }
+        append_preview_line(&mut output, indent, tag);
+        let is_closing = tag.starts_with("</");
+        let is_self_closing = tag.ends_with("/>")
+            || tag.starts_with("<!")
+            || tag.starts_with("<?")
+            || html_void_element(tag);
+        if !is_closing && !is_self_closing {
+            indent = indent.saturating_add(1);
+        }
+        cursor = tag_end + 1;
+    }
+    let formatted = output.trim_end().to_owned();
+    (!formatted.is_empty()).then_some(formatted)
+}
+
+fn find_markup_end(text: &str, start: usize) -> Option<usize> {
+    let mut quote = None;
+    for (offset, character) in text[start..].char_indices() {
+        match (quote, character) {
+            (Some(expected), character) if character == expected => quote = None,
+            (None, '\'' | '"') => quote = Some(character),
+            (None, '>') => return Some(start + offset),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn html_void_element(tag: &str) -> bool {
+    let name = tag
+        .trim_start_matches('<')
+        .trim_start_matches('/')
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('>')
+        .to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+fn format_javascript(text: &str) -> Option<String> {
+    let mut output = String::new();
+    let mut line = String::new();
+    let mut indent = 0_usize;
+    let mut parentheses = 0_usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+    let mut block_stack = Vec::new();
+    let mut characters = text.chars().peekable();
+
+    while let Some(character) = characters.next() {
+        if line_comment {
+            if character == '\n' {
+                append_preview_line(&mut output, indent, &line);
+                line.clear();
+                line_comment = false;
+            } else {
+                line.push(character);
+            }
+            continue;
+        }
+        if block_comment {
+            line.push(character);
+            if character == '*' && characters.peek() == Some(&'/') {
+                line.push(characters.next().expect("peeked slash"));
+                block_comment = false;
+            } else if character == '\n' {
+                append_preview_line(&mut output, indent, &line);
+                line.clear();
+            }
+            continue;
+        }
+        if let Some(expected_quote) = quote {
+            line.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == expected_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match character {
+            '\'' | '"' | '`' => {
+                quote = Some(character);
+                line.push(character);
+            }
+            '/' if characters.peek() == Some(&'/') => {
+                line.push(character);
+                line.push(characters.next().expect("peeked slash"));
+                line_comment = true;
+            }
+            '/' if characters.peek() == Some(&'*') => {
+                line.push(character);
+                line.push(characters.next().expect("peeked star"));
+                block_comment = true;
+            }
+            '(' => {
+                parentheses = parentheses.saturating_add(1);
+                line.push(character);
+            }
+            ')' => {
+                parentheses = parentheses.saturating_sub(1);
+                line.push(character);
+            }
+            '{' => {
+                let previous = line.trim_end();
+                let block = previous.ends_with(')')
+                    || previous.ends_with('>')
+                    || (!previous.ends_with('=')
+                        && !previous.ends_with(':')
+                        && !previous.ends_with('[')
+                        && !previous.ends_with(','));
+                line.push(character);
+                block_stack.push(block);
+                if block {
+                    append_preview_line(&mut output, indent, &line);
+                    line.clear();
+                    indent = indent.saturating_add(1);
+                }
+            }
+            '}' => {
+                let block = block_stack.pop().unwrap_or(true);
+                if block {
+                    append_preview_line(&mut output, indent, &line);
+                    line.clear();
+                    indent = indent.saturating_sub(1);
+                    line.push(character);
+                } else {
+                    line.push(character);
+                }
+            }
+            ';' if parentheses == 0 => {
+                line.push(character);
+                append_preview_line(&mut output, indent, &line);
+                line.clear();
+            }
+            '\n' => {
+                append_preview_line(&mut output, indent, &line);
+                line.clear();
+            }
+            _ => line.push(character),
+        }
+    }
+    append_preview_line(&mut output, indent, &line);
+    let formatted = output.trim_end().to_owned();
+    (!formatted.is_empty()).then_some(formatted)
 }
 
 fn format_xml(text: &str) -> Option<String> {
@@ -3422,6 +3652,43 @@ mod tests {
         assert_eq!(
             response.formatted_body(ResponseView::Pretty),
             "service: postly\nfeatures:\n- local\n- private"
+        );
+    }
+
+    #[test]
+    fn formats_html_and_javascript_in_pretty_view() {
+        let html = HttpResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: Vec::new(),
+            cookies: Vec::new(),
+            body: b"<main><h1>Postly</h1><br/><p>Local first</p></main>".to_vec(),
+            response_size: 52,
+            content_type: Some("text/html".to_owned()),
+            protocol: "HTTP/1.1".to_owned(),
+            url: "http://example.test".to_owned(),
+            duration_ms: 1,
+        };
+        assert_eq!(
+            html.formatted_body(ResponseView::Pretty),
+            "<main>\n  <h1>\n    Postly\n  </h1>\n  <br/>\n  <p>\n    Local first\n  </p>\n</main>"
+        );
+
+        let javascript = HttpResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: Vec::new(),
+            cookies: Vec::new(),
+            body: b"const answer = {ok: true}; function run() { return answer; }".to_vec(),
+            response_size: 59,
+            content_type: Some("text/javascript".to_owned()),
+            protocol: "HTTP/1.1".to_owned(),
+            url: "http://example.test".to_owned(),
+            duration_ms: 1,
+        };
+        assert_eq!(
+            javascript.formatted_body(ResponseView::Pretty),
+            "const answer = {ok: true};\nfunction run() {\n  return answer;\n}"
         );
     }
 
