@@ -271,6 +271,7 @@ pub fn parse_curl_command(command: &str) -> Result<(Request, Vec<String>), CurlP
     let mut cookies = None;
     let mut warnings = Vec::new();
     let mut get_mode = false;
+    let mut digest_mode = false;
     let mut index = 1;
 
     while index < tokens.len() {
@@ -284,6 +285,11 @@ pub fn parse_curl_command(command: &str) -> Result<(Request, Vec<String>), CurlP
         }
         if token == "-G" || token == "--get" {
             get_mode = true;
+            index += 1;
+            continue;
+        }
+        if token == "--digest" {
+            digest_mode = true;
             index += 1;
             continue;
         }
@@ -396,6 +402,11 @@ pub fn parse_curl_command(command: &str) -> Result<(Request, Vec<String>), CurlP
     }
 
     let url = url.ok_or(CurlParseError::MissingUrl)?;
+    if digest_mode {
+        if let Auth::Basic { username, password } = auth {
+            auth = Auth::Digest { username, password };
+        }
+    }
     let mut request = Request::new(
         "Imported cURL request",
         method.unwrap_or_else(|| {
@@ -547,6 +558,23 @@ mod tests {
         assert_eq!(request.method, "GET");
         assert_eq!(request.url, "https://api.example.test/search?q=postly");
         assert!(matches!(request.body, RequestBody::None));
+    }
+
+    #[test]
+    fn imports_curl_digest_mode_without_downgrading_to_basic() {
+        let (request, warnings) = parse_curl_command(
+            "curl --digest --user 'Mufasa:Circle Of Life' https://api.example.test/users",
+        )
+        .expect("curl");
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            request.auth,
+            Auth::Digest {
+                username: "Mufasa".to_owned(),
+                password: "Circle Of Life".to_owned(),
+            }
+        );
     }
 
     #[test]
