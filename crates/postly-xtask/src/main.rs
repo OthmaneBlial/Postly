@@ -541,6 +541,23 @@ struct BenchmarkResult {
 }
 
 fn collect_benchmarks() -> Result<Vec<BenchmarkResult>, String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let cli_binary = resolve_cli_binary(&root)?;
+    let cli_startup = measure("cli_startup_help", || {
+        let output = Command::new(&cli_binary)
+            .arg("--help")
+            .output()
+            .map_err(|error| format!("could not start {}: {error}", cli_binary.display()))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{} --help exited with {}",
+                cli_binary.display(),
+                output.status
+            ));
+        }
+        Ok(())
+    })?;
+
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../compat/postman-import/variants-v2.1.json");
     if !fixture.is_file() {
@@ -611,7 +628,23 @@ fn collect_benchmarks() -> Result<Vec<BenchmarkResult>, String> {
         }
         Ok(())
     })?;
-    Ok(vec![import, load, search])
+    Ok(vec![cli_startup, import, load, search])
+}
+
+fn resolve_cli_binary(root: &Path) -> Result<std::path::PathBuf, String> {
+    for profile in ["debug", "release"] {
+        let candidate = root
+            .join("target")
+            .join(profile)
+            .join(format!("postly{}", env::consts::EXE_SUFFIX));
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Err(format!(
+        "postly CLI binary not found under {}; run `cargo build -p postly` first",
+        root.join("target").display()
+    ))
 }
 
 fn measure<F>(name: &str, mut operation: F) -> Result<BenchmarkResult, String>
