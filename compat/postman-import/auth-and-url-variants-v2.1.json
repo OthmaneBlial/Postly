@@ -1,0 +1,49 @@
+{
+  "info": {
+    "name": "Postly authentication and URL variants fixture",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Sanitized coverage for inherited Digest auth, explicit no-auth and structured URL values."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://api.example.test" },
+    { "key": "userId", "value": "42" }
+  ],
+  "auth": {
+    "type": "digest",
+    "digest": [
+      { "key": "username", "value": "fixture-user" },
+      { "key": "password", "value": "fixture-password" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Inherited Digest JSON",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/digest?scope=read",
+          "query": [{ "key": "scope", "value": "read" }]
+        },
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"action\":\"inspect\"}",
+          "options": { "raw": { "language": "json" } }
+        }
+      }
+    },
+    {
+      "name": "Explicit no-auth path",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/users/{{userId}}",
+          "host": ["api", "example", "test"],
+          "path": ["users", "{{userId}}"]
+        },
+        "auth": { "type": "noauth" },
+        "header": [{ "key": "X-Trace", "value": "fixture" }]
+      }
+    }
+  ]
+}

@@ -1235,6 +1235,37 @@ mod tests {
     }
 
     #[test]
+    fn imports_inherited_digest_and_explicit_no_auth_fixture() {
+        let output = tempfile::tempdir().expect("output");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../compat/postman-import/auth-and-url-variants-v2.1.json");
+
+        let report = import_postman_collection(&fixture, output.path()).expect("import");
+        assert_eq!(report.imported_requests, 2);
+        assert_eq!(report.fully_supported_requests, 2);
+        assert_eq!(report.manual_review_requests, 0);
+
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let collection = workspace.collections().expect("collections").remove(0);
+        assert!(matches!(collection.collection.auth, Auth::Digest { .. }));
+        let requests = workspace.requests(&collection).expect("requests");
+        let digest = requests
+            .iter()
+            .find(|(_, request)| request.name == "Inherited Digest JSON")
+            .expect("digest request");
+        assert_eq!(digest.1.query, vec![KeyValue::enabled("scope", "read")]);
+        assert!(matches!(digest.1.auth, Auth::Digest { .. }));
+        assert!(matches!(digest.1.body, RequestBody::Json { .. }));
+
+        let no_auth = requests
+            .iter()
+            .find(|(_, request)| request.name == "Explicit no-auth path")
+            .expect("no-auth request");
+        assert_eq!(no_auth.1.auth, Auth::None);
+        assert_eq!(no_auth.1.url, "{{baseUrl}}/users/{{userId}}");
+    }
+
+    #[test]
     fn imports_postman_digest_auth() {
         let mut report = ImportReport::default();
         let value = serde_json::json!({
