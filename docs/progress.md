@@ -92,8 +92,9 @@ Implemented:
   strings and comments.
 - Common response assertions now cover headers, cookies, status health/categories, numeric/type/regex and negated expectations.
 - The Node bridge now tests a broader explicit expectation subset including
-  stable deep equality, keys, length, oneOf, empty and numeric range matchers;
-  broad Chai/Postman parity remains intentionally partial.
+  stable deep equality, keys, length, oneOf, empty, numeric range matchers,
+  equality aliases and chainable property/type checks; broad Chai/Postman parity
+  remains intentionally partial.
 - Script reports now preserve individual post-response test names, pass/fail
   state, callback duration and bounded error details in runner JSON; the native
   GUI and CLI show the same per-test timing.

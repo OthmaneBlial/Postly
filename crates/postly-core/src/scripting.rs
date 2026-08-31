@@ -1156,8 +1156,13 @@ function expect(value) {
         "expected " + JSON.stringify(value) + " to" + prefix + " have any of keys " + JSON.stringify(expectedKeys)
       );
     };
+    const typeCheck = (type) => check(
+      typeMatches(value, type),
+      "expected value to" + prefix + " be a " + type
+    );
     const to = {
       equal: (expected) => check(value === expected, "expected " + JSON.stringify(value) + " to" + prefix + " equal " + JSON.stringify(expected)),
+      equals: (expected) => check(value === expected, "expected " + JSON.stringify(value) + " to" + prefix + " equal " + JSON.stringify(expected)),
       eql: (expected) => check(deepEqual(value, expected), "expected " + JSON.stringify(value) + " to" + prefix + " deeply equal " + JSON.stringify(expected)),
       include: (expected) => {
         const included = typeof value === "string"
@@ -1177,6 +1182,8 @@ function expect(value) {
           const present = value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, name);
           check(present, "expected property " + name);
           if (arguments.length > 1 && present) check(deepEqual(value[name], expected), "expected property " + name + " to" + prefix + " equal " + JSON.stringify(expected));
+          const chained = expect(present ? value[name] : undefined).to;
+          return chained;
         },
         nested: {
           property: function (name, expected) {
@@ -1191,6 +1198,12 @@ function expect(value) {
         any: { keys: anyKeys }
       }
     };
+    Object.defineProperties(to, {
+      that: { get: () => to },
+      is: { get: () => to },
+      a: { value: typeCheck },
+      an: { value: typeCheck }
+    });
     Object.defineProperty(to, "deep", {
       get: () => ({
         equal: (expected) => check(deepEqual(value, expected), "expected " + JSON.stringify(value) + " to" + prefix + " deeply equal " + JSON.stringify(expected))
@@ -1222,8 +1235,8 @@ function expect(value) {
           check(empty, "expected " + JSON.stringify(value) + " to" + prefix + " be empty");
           return true;
         },
-        a: (type) => check(typeMatches(value, type), "expected value to" + prefix + " be a " + type),
-        an: (type) => check(typeMatches(value, type), "expected value to" + prefix + " be an " + type)
+        a: typeCheck,
+        an: typeCheck
       }
     });
     Object.defineProperty(to, "not", { get: () => expectation(!negated) });
@@ -1773,6 +1786,9 @@ mod tests {
                     pm.expect([]).to.be.empty;
                     pm.expect({}).to.be.empty;
                     pm.expect([]).to.be.an("array");
+                    pm.expect({ name: "Ada" }).to.have.property("name").that.is.a("string");
+                    pm.expect({ count: 3 }).to.have.property("count").that.equals(3);
+                    pm.expect({ ready: true }).to.not.have.property("missing");
                 });
             "#,
             &request,
@@ -1781,7 +1797,7 @@ mod tests {
         )
         .expect("script");
         assert_eq!(result.tests.len(), 1);
-        assert!(result.tests[0].passed);
+        assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
     }
 
     #[test]
