@@ -57,7 +57,7 @@ The supported compatibility slice includes:
 - `console.log`, `console.warn` and `console.error` capture
 
 The tested expectation subset also includes deep equality with stable object-key
-comparison, primitive/array/object inclusion, array `members`/`include.members`, lengthOf, exact/all/any keys, oneOf, empty,
+comparison, primitive/array/object inclusion, `include.keys`, array `members`/`include.members`, direct/nested/deep properties, lengthOf, exact/all/any keys, oneOf, empty,
 null/undefined/exist, numeric at.least/at.most/within/greaterThan/lessThan, contain,
 direct and nested property equality, chainable `that`/`is` properties, the
 `equal`/`equals` aliases and the a/an type aliases. This remains a compatibility
