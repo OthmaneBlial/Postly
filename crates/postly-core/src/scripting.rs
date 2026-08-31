@@ -983,6 +983,15 @@ function deepEqual(left, right) {
     && leftKeys.every((key) => deepEqual(left[key], right[key]));
 }
 
+function deepIncludes(actual, expected) {
+  if (deepEqual(actual, expected)) return true;
+  if (Array.isArray(actual)) return actual.some((item) => deepIncludes(item, expected));
+  if (actual === null || expected === null || typeof actual !== "object" || typeof expected !== "object") return false;
+  return Object.keys(expected).every((key) =>
+    Object.prototype.hasOwnProperty.call(actual, key) && deepIncludes(actual[key], expected[key])
+  );
+}
+
 function typeMatches(value, type) {
   const expected = text(type).toLowerCase();
   if (expected === "array") return Array.isArray(value);
@@ -1027,15 +1036,15 @@ function expect(value) {
       equal: (expected) => check(value === expected, "expected " + JSON.stringify(value) + " to" + prefix + " equal " + JSON.stringify(expected)),
       eql: (expected) => check(deepEqual(value, expected), "expected " + JSON.stringify(value) + " to" + prefix + " deeply equal " + JSON.stringify(expected)),
       include: (expected) => {
-        const included = typeof value === "string" || Array.isArray(value)
+        const included = typeof value === "string"
           ? value.includes(expected)
-          : value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, expected);
+          : deepIncludes(value, expected);
         check(included, "expected " + JSON.stringify(value) + " to" + prefix + " include " + JSON.stringify(expected));
       },
       contain: (expected) => {
-        const included = typeof value === "string" || Array.isArray(value)
+        const included = typeof value === "string"
           ? value.includes(expected)
-          : value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, expected);
+          : deepIncludes(value, expected);
         check(included, "expected " + JSON.stringify(value) + " to" + prefix + " contain " + JSON.stringify(expected));
       },
       match: (pattern) => check(typeof value === "string" && pattern.test(value), "expected " + JSON.stringify(value) + " to" + prefix + " match the pattern"),
@@ -1576,6 +1585,8 @@ mod tests {
                     pm.expect({ ready: true, pending: false }).to.have.all.keys("ready", "pending");
                     pm.expect({ ready: true }).to.have.any.keys("missing", "ready");
                     pm.expect("ready").to.contain("ead");
+                    pm.expect({ ready: true, meta: { id: 7 } }).to.include({ ready: true });
+                    pm.expect([{ ready: true }]).to.contain({ ready: true });
                     pm.expect("ready").to.be.oneOf(["ready", "done"]);
                     pm.expect(3).to.be.at.least(2);
                     pm.expect(3).to.be.at.most(4);
