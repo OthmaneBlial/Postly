@@ -10,6 +10,7 @@ references only when a request runs. Current HTTP authentication includes:
 - OAuth 2.0 Client Credentials
 - OAuth 2.0 Authorization Code + PKCE (explicit/manual code exchange)
 - OAuth 2.0 Refresh Token
+- OAuth 2.0 Device Authorization Grant (RFC 8628)
 
 ## OAuth 2.0 Client Credentials
 
@@ -84,10 +85,32 @@ window. The cache is not written to the workspace, history or logs. Client
 secrets should normally be supplied through ignored environment files or
 variable references; Postly does not claim OS keychain storage yet.
 
+## OAuth 2.0 Device Authorization Grant
+
+Device Code authentication is intended for providers where the user approves
+the client on a separate device or browser. Configure the device authorization
+endpoint, token endpoint and client ID; a client secret and scope are optional:
+
+```toml
+[auth]
+type = "oauth2_device_code"
+device_authorization_url = "https://auth.example.test/oauth/device"
+token_url = "https://auth.example.test/oauth/token"
+client_id = "postly-local"
+scope = "read:users"
+```
+
+At runtime Postly displays the verification URL and user code, then polls the
+token endpoint locally. The polling honors `authorization_pending` and
+`slow_down`, is bounded by the provider's `expires_in` (maximum 24 hours), and
+keeps the device code/access token in memory only. The CLI prints the
+verification instructions to stderr; the GUI shows clickable verification
+links in the response panel. The device code itself is never displayed or
+written to the workspace.
+
 Token endpoint errors are reported without echoing the token response body or
 secret values. Responses are bounded before parsing, and missing or malformed
 `access_token` fields fail the request clearly.
 
 OAuth token orchestration currently applies to HTTP requests. WebSocket,
-SSE-specific token orchestration, Device Code and AWS Signature V4 remain
-planned.
+SSE-specific token orchestration and AWS Signature V4 remain planned.

@@ -128,6 +128,7 @@ pub struct HttpEngine {
 struct OAuthTokenKey {
     grant_type: String,
     token_url: String,
+    device_authorization_url: Option<String>,
     client_id: String,
     scope: Option<String>,
     client_secret_fingerprint: u64,
@@ -141,6 +142,17 @@ struct CachedOAuthToken {
     access_token: String,
     token_type: String,
     expires_at: Instant,
+}
+
+/// User-facing instructions returned by an OAuth 2.0 Device Authorization
+/// endpoint. The device code itself is intentionally never exposed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthDeviceCodePrompt {
+    pub user_code: String,
+    pub verification_uri: String,
+    pub verification_uri_complete: Option<String>,
+    pub expires_in: Duration,
+    pub interval: Duration,
 }
 
 const OAUTH_CACHE_SKEW: Duration = Duration::from_secs(30);
@@ -485,7 +497,24 @@ impl HttpEngine {
         request: &Request,
         context: &VariableContext,
     ) -> Result<HttpResponse, HttpError> {
-        let builder = self.prepare_builder(request, context).await?;
+        self.execute_with_device_code_prompt(request, context, |_| {})
+            .await
+    }
+
+    /// Execute a request and surface OAuth Device Authorization instructions
+    /// before the bounded polling loop starts.
+    pub async fn execute_with_device_code_prompt<F>(
+        &self,
+        request: &Request,
+        context: &VariableContext,
+        on_device_code: F,
+    ) -> Result<HttpResponse, HttpError>
+    where
+        F: Fn(&OAuthDeviceCodePrompt) + Send + Sync,
+    {
+        let builder = self
+            .prepare_builder_with_device_code_prompt(request, context, &on_device_code)
+            .await?;
         let started = std::time::Instant::now();
         let response = builder.send().await.map_err(HttpError::Request)?;
         let status = response.status();
@@ -531,7 +560,9 @@ impl HttpEngine {
         request: &Request,
         context: &VariableContext,
     ) -> Result<HttpStreamResponse, HttpError> {
-        let builder = self.prepare_builder(request, context).await?;
+        let builder = self
+            .prepare_builder_with_device_code_prompt(request, context, &|_| {})
+            .await?;
         let response = builder.send().await.map_err(HttpError::Request)?;
         let status = response.status();
         let protocol = format!("{:?}", response.version());
@@ -564,6 +595,7 @@ impl HttpEngine {
         &self,
         auth: &Auth,
         context: &VariableContext,
+        on_device_code: &dyn Fn(&OAuthDeviceCodePrompt),
     ) -> Result<Option<CachedOAuthToken>, HttpError> {
         let (
             grant_type,
@@ -625,7 +657,31 @@ impl HttpEngine {
                 None,
                 None,
             ),
+            Auth::OAuth2DeviceCode {
+                device_authorization_url: _,
+                token_url,
+                client_id,
+                client_secret,
+                scope,
+            } => (
+                "urn:ietf:params:oauth:grant-type:device_code",
+                token_url,
+                client_id,
+                client_secret.as_ref(),
+                scope.as_ref(),
+                None,
+                None,
+                None,
+            ),
             _ => return Ok(None),
+        };
+
+        let device_authorization_url = match auth {
+            Auth::OAuth2DeviceCode {
+                device_authorization_url,
+                ..
+            } => Some(context.resolve(device_authorization_url).value),
+            _ => None,
         };
 
         let token_url = context.resolve(token_url).value;
@@ -676,6 +732,7 @@ impl HttpEngine {
         let key = OAuthTokenKey {
             grant_type: grant_type.to_owned(),
             token_url: token_url.clone(),
+            device_authorization_url: device_authorization_url.clone(),
             client_id: client_id.clone(),
             scope: scope.clone(),
             client_secret_fingerprint: secret_fingerprint(
@@ -708,6 +765,175 @@ impl HttpEngine {
         let token_url = Url::parse(&token_url).map_err(|error| {
             HttpError::OAuthToken(format!("invalid token endpoint URL: {error}"))
         })?;
+
+        if grant_type == "urn:ietf:params:oauth:grant-type:device_code" {
+            let device_authorization_url = device_authorization_url
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    HttpError::OAuthToken(
+                        "OAuth device authorization URL cannot be empty".to_owned(),
+                    )
+                })?;
+            let device_authorization_url =
+                Url::parse(device_authorization_url).map_err(|error| {
+                    HttpError::OAuthToken(format!("invalid device authorization URL: {error}"))
+                })?;
+            let mut device_form = vec![("client_id", client_id.clone())];
+            if let Some(scope) = scope.clone() {
+                device_form.push(("scope", scope));
+            }
+            if let Some(client_secret) = client_secret.clone() {
+                device_form.push(("client_secret", client_secret));
+            }
+            let response = self
+                .client
+                .post(device_authorization_url)
+                .form(&device_form)
+                .send()
+                .await
+                .map_err(|error| {
+                    HttpError::OAuthToken(format!(
+                        "could not reach device authorization endpoint: {error}"
+                    ))
+                })?;
+            let status = response.status();
+            let body = read_bounded_oauth_body(response).await?;
+            if !status.is_success() {
+                return Err(HttpError::OAuthToken(format!(
+                    "device authorization endpoint returned HTTP {}",
+                    status.as_u16()
+                )));
+            }
+            let payload: serde_json::Value = serde_json::from_slice(&body).map_err(|error| {
+                HttpError::OAuthToken(format!(
+                    "device authorization response is not valid JSON: {error}"
+                ))
+            })?;
+            let device_code = oauth_string(&payload, "device_code", "device authorization")?;
+            let user_code = oauth_string(&payload, "user_code", "device authorization")?;
+            let verification_uri = payload
+                .get("verification_uri")
+                .or_else(|| payload.get("verification_url"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    HttpError::OAuthToken(
+                        "device authorization response has no verification_uri".to_owned(),
+                    )
+                })?
+                .to_owned();
+            let verification_uri_complete = payload
+                .get("verification_uri_complete")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(ToOwned::to_owned);
+            let expires_in = payload
+                .get("expires_in")
+                .and_then(serde_json::Value::as_u64)
+                .filter(|seconds| (1..=86_400).contains(seconds))
+                .ok_or_else(|| {
+                    HttpError::OAuthToken(
+                        "device authorization response has invalid expires_in".to_owned(),
+                    )
+                })?;
+            let interval = payload
+                .get("interval")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(5)
+                .clamp(1, 60);
+            let prompt = OAuthDeviceCodePrompt {
+                user_code,
+                verification_uri,
+                verification_uri_complete,
+                expires_in: Duration::from_secs(expires_in),
+                interval: Duration::from_secs(interval),
+            };
+            on_device_code(&prompt);
+
+            let deadline = Instant::now() + prompt.expires_in;
+            let mut poll_interval = prompt.interval;
+            loop {
+                if Instant::now() >= deadline {
+                    return Err(HttpError::OAuthToken(
+                        "OAuth device authorization expired before approval".to_owned(),
+                    ));
+                }
+                tokio::time::sleep(poll_interval).await;
+                let mut poll_form = vec![
+                    ("grant_type", grant_type.to_owned()),
+                    ("device_code", device_code.clone()),
+                    ("client_id", client_id.clone()),
+                ];
+                if let Some(client_secret) = client_secret.clone() {
+                    poll_form.push(("client_secret", client_secret));
+                }
+                let response = self
+                    .client
+                    .post(token_url.clone())
+                    .form(&poll_form)
+                    .send()
+                    .await
+                    .map_err(|error| {
+                        HttpError::OAuthToken(format!("could not reach token endpoint: {error}"))
+                    })?;
+                let status = response.status();
+                let body = read_bounded_oauth_body(response).await?;
+                let payload: serde_json::Value =
+                    serde_json::from_slice(&body).map_err(|error| {
+                        HttpError::OAuthToken(format!("token response is not valid JSON: {error}"))
+                    })?;
+                if status.is_success() {
+                    let access_token = oauth_string(&payload, "access_token", "token")?;
+                    let token_type = payload
+                        .get("token_type")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or("Bearer")
+                        .to_owned();
+                    let expires_in = payload
+                        .get("expires_in")
+                        .and_then(serde_json::Value::as_u64)
+                        .filter(|seconds| *seconds > OAUTH_CACHE_SKEW.as_secs());
+                    let cached = CachedOAuthToken {
+                        access_token,
+                        token_type,
+                        expires_at: Instant::now() + Duration::from_secs(expires_in.unwrap_or(0)),
+                    };
+                    if expires_in.is_some() {
+                        let mut token_cache = self
+                            .oauth_tokens
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if token_cache.len() >= MAX_OAUTH_CACHED_TOKENS {
+                            if let Some(oldest) = token_cache.keys().next().cloned() {
+                                token_cache.remove(&oldest);
+                            }
+                        }
+                        token_cache.insert(key, cached.clone());
+                    }
+                    return Ok(Some(cached));
+                }
+                match payload.get("error").and_then(serde_json::Value::as_str) {
+                    Some("authorization_pending") => {}
+                    Some("slow_down") => {
+                        poll_interval =
+                            (poll_interval + Duration::from_secs(5)).min(Duration::from_secs(60));
+                    }
+                    Some(error) => {
+                        return Err(HttpError::OAuthToken(format!(
+                            "device authorization failed: {error}"
+                        )));
+                    }
+                    None => {
+                        return Err(HttpError::OAuthToken(format!(
+                            "token endpoint returned HTTP {}",
+                            status.as_u16()
+                        )));
+                    }
+                }
+            }
+        }
         let mut form = vec![
             ("grant_type", grant_type.to_owned()),
             ("client_id", client_id),
@@ -808,10 +1034,11 @@ impl HttpEngine {
         Ok(Some(cached))
     }
 
-    async fn prepare_builder(
+    async fn prepare_builder_with_device_code_prompt(
         &self,
         request: &Request,
         context: &VariableContext,
+        on_device_code: &dyn Fn(&OAuthDeviceCodePrompt),
     ) -> Result<reqwest::RequestBuilder, HttpError> {
         if request.grpc.is_some() {
             return Err(HttpError::UnsupportedGrpcRequest);
@@ -884,7 +1111,9 @@ impl HttpEngine {
         }
 
         builder = apply_body(builder, &request.body, context).await?;
-        let oauth_token = self.oauth_access_token(&request.auth, context).await?;
+        let oauth_token = self
+            .oauth_access_token(&request.auth, context, on_device_code)
+            .await?;
         builder = apply_auth(builder, &request.auth, context, oauth_token.as_ref())?;
 
         Ok(builder)
@@ -895,6 +1124,36 @@ fn secret_fingerprint(secret: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     secret.hash(&mut hasher);
     hasher.finish()
+}
+
+async fn read_bounded_oauth_body(mut response: reqwest::Response) -> Result<Vec<u8>, HttpError> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| HttpError::OAuthToken(format!("could not read OAuth response: {error}")))?
+    {
+        if body.len().saturating_add(chunk.len()) > MAX_OAUTH_RESPONSE_BYTES {
+            return Err(HttpError::OAuthToken(format!(
+                "OAuth response exceeds {MAX_OAUTH_RESPONSE_BYTES} bytes"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+fn oauth_string(
+    payload: &serde_json::Value,
+    field: &str,
+    response_kind: &str,
+) -> Result<String, HttpError> {
+    payload
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| HttpError::OAuthToken(format!("{response_kind} response has no {field}")))
 }
 
 fn parse_set_cookie(value: &HeaderValue) -> Option<ResponseCookie> {
@@ -1006,6 +1265,14 @@ fn apply_auth(
             );
         }
         Auth::OAuth2RefreshToken { .. } => {
+            let token = oauth_token
+                .ok_or_else(|| HttpError::OAuthToken("access token was not acquired".to_owned()))?;
+            builder = builder.header(
+                "authorization",
+                format!("{} {}", token.token_type, token.access_token),
+            );
+        }
+        Auth::OAuth2DeviceCode { .. } => {
             let token = oauth_token
                 .ok_or_else(|| HttpError::OAuthToken("access token was not acquired".to_owned()))?;
             builder = builder.header(
@@ -1172,6 +1439,23 @@ fn resolve_auth(diagnostics: &mut Vec<VariableDiagnostic>, auth: &Auth, context:
             diagnostics.extend(context.resolve(token_url).diagnostics);
             diagnostics.extend(context.resolve(client_id).diagnostics);
             diagnostics.extend(context.resolve(refresh_token).diagnostics);
+            if let Some(client_secret) = client_secret {
+                diagnostics.extend(context.resolve(client_secret).diagnostics);
+            }
+            if let Some(scope) = scope {
+                diagnostics.extend(context.resolve(scope).diagnostics);
+            }
+        }
+        Auth::OAuth2DeviceCode {
+            device_authorization_url,
+            token_url,
+            client_id,
+            client_secret,
+            scope,
+        } => {
+            diagnostics.extend(context.resolve(device_authorization_url).diagnostics);
+            diagnostics.extend(context.resolve(token_url).diagnostics);
+            diagnostics.extend(context.resolve(client_id).diagnostics);
             if let Some(client_secret) = client_secret {
                 diagnostics.extend(context.resolve(client_secret).diagnostics);
             }
@@ -1658,6 +1942,114 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.body_text(), "account");
         server.await.expect("refresh server");
+    }
+
+    #[tokio::test]
+    async fn exchanges_oauth_device_code_after_user_approval() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut device_socket, _) = listener.accept().await.expect("device connection");
+            let device_request = read_request_headers(&mut device_socket).await;
+            assert!(device_request.contains("POST /oauth/device HTTP/1.1"));
+            assert!(device_request.contains("client_id=postly-device"));
+            assert!(device_request.contains("scope=read%3Ausers"));
+            let device_body = br#"{"device_code":"device-secret","user_code":"ABCD-EFGH","verification_uri":"https://auth.example.test/device","verification_uri_complete":"https://auth.example.test/device?user_code=ABCD-EFGH","expires_in":10,"interval":1}"#;
+            let device_response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                device_body.len(),
+                String::from_utf8_lossy(device_body)
+            );
+            device_socket
+                .write_all(device_response.as_bytes())
+                .await
+                .expect("device response");
+
+            let (mut pending_socket, _) = listener.accept().await.expect("pending connection");
+            let pending_request = read_request_headers(&mut pending_socket).await;
+            assert!(pending_request
+                .contains("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code"));
+            assert!(pending_request.contains("device_code=device-secret"));
+            let pending_body = br#"{"error":"authorization_pending"}"#;
+            let pending_response = format!(
+                "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                pending_body.len(),
+                String::from_utf8_lossy(pending_body)
+            );
+            pending_socket
+                .write_all(pending_response.as_bytes())
+                .await
+                .expect("pending response");
+
+            let (mut token_socket, _) = listener.accept().await.expect("token connection");
+            let token_request = read_request_headers(&mut token_socket).await;
+            assert!(token_request.contains("device_code=device-secret"));
+            let token_body =
+                br#"{"access_token":"device-access","token_type":"Bearer","expires_in":3600}"#;
+            let token_response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                token_body.len(),
+                String::from_utf8_lossy(token_body)
+            );
+            token_socket
+                .write_all(token_response.as_bytes())
+                .await
+                .expect("token response");
+
+            let (mut api_socket, _) = listener.accept().await.expect("API connection");
+            let api_request = read_request_headers(&mut api_socket).await;
+            assert!(api_request.contains("GET /device-protected HTTP/1.1"));
+            assert!(api_request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer device-access"));
+            api_socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nconnection: close\r\n\r\ndevice-ok",
+                )
+                .await
+                .expect("API response");
+        });
+
+        let auth = Auth::OAuth2DeviceCode {
+            device_authorization_url: format!("http://{address}/oauth/device"),
+            token_url: format!("http://{address}/oauth/token"),
+            client_id: "postly-device".to_owned(),
+            client_secret: None,
+            scope: Some("read:users".to_owned()),
+        };
+        let mut request = Request::new(
+            "Device request",
+            "GET",
+            format!("http://{address}/device-protected"),
+        );
+        request.auth = auth;
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let observed_prompts = Arc::clone(&prompts);
+        let response = engine
+            .execute_with_device_code_prompt(&request, &VariableContext::default(), move |prompt| {
+                observed_prompts
+                    .lock()
+                    .expect("prompt lock")
+                    .push(prompt.clone())
+            })
+            .await
+            .expect("device-code response");
+
+        server.await.expect("device-code server");
+        assert_eq!(response.body_text(), "device-ok");
+        assert_eq!(
+            prompts.lock().expect("prompt lock").as_slice(),
+            &[OAuthDeviceCodePrompt {
+                user_code: "ABCD-EFGH".to_owned(),
+                verification_uri: "https://auth.example.test/device".to_owned(),
+                verification_uri_complete: Some(
+                    "https://auth.example.test/device?user_code=ABCD-EFGH".to_owned(),
+                ),
+                expires_in: Duration::from_secs(10),
+                interval: Duration::from_secs(1),
+            }]
+        );
     }
 
     #[tokio::test]

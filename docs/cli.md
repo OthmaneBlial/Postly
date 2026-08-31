@@ -65,6 +65,13 @@ postly request https://api.example.com/private/users \
   --oauth-scope read:users \
   --output-json
 
+postly request https://api.example.com/device-users \
+  --oauth-token-url https://auth.example.com/oauth/token \
+  --oauth-device-authorization-url https://auth.example.com/oauth/device \
+  --oauth-client-id postly-local \
+  --oauth-scope read:users \
+  --output-json
+
 postly send ./my-api/collections/my-api/requests/smoke/health.postly.toml \
   --environment Local \
   --output-json
@@ -189,7 +196,10 @@ cloud service. `postly request` and `postly new request` also accept
 add `--oauth-authorization-url`, `--oauth-redirect-uri`, `--oauth-code` and
 `--oauth-code-verifier`; complete the provider login in the browser first.
 For an already-issued refresh token, use `--oauth-refresh-token` instead of
-the PKCE options. Saved requests can then be run normally:
+the PKCE options. For Device Authorization Grant, use
+`--oauth-device-authorization-url` with the token URL and client ID; Postly
+prints the verification URL/code and polls until the user approves or the
+provider's expiry is reached. Saved requests can then be run normally:
 
 ~~~bash
 postly send ./my-api/collections/my-api/requests/private/users.postly.toml \

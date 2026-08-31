@@ -464,6 +464,23 @@ fn postman_auth(auth: &Auth) -> Option<Value> {
                 { "key": "scope", "value": scope.clone().unwrap_or_default(), "type": "string" },
             ],
         }),
+        Auth::OAuth2DeviceCode {
+            device_authorization_url,
+            token_url,
+            client_id,
+            client_secret,
+            scope,
+        } => json!({
+            "type": "oauth2",
+            "oauth2": [
+                { "key": "grant_type", "value": "urn:ietf:params:oauth:grant-type:device_code", "type": "string" },
+                { "key": "deviceAuthorizationUrl", "value": device_authorization_url, "type": "string" },
+                { "key": "accessTokenUrl", "value": token_url, "type": "string" },
+                { "key": "clientId", "value": client_id, "type": "string" },
+                { "key": "clientSecret", "value": client_secret.clone().unwrap_or_default(), "type": "string" },
+                { "key": "scope", "value": scope.clone().unwrap_or_default(), "type": "string" },
+            ],
+        }),
     };
     Some(value)
 }

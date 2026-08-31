@@ -130,6 +130,10 @@ fn snippet_parts(request: &Request) -> SnippetParts {
             "OAuth 2.0 refresh-token auth is not materialized; fetch a token before running the snippet."
                 .to_owned(),
         ),
+        Auth::OAuth2DeviceCode { .. } => warnings.push(
+            "OAuth 2.0 device-code auth is not materialized; complete device authorization in Postly before running the snippet."
+                .to_owned(),
+        ),
     }
 
     if !cookies.is_empty() && !has_header(&headers, "cookie") {

@@ -364,6 +364,19 @@ pub enum Auth {
         #[serde(default)]
         scope: Option<String>,
     },
+    /// OAuth 2.0 Device Authorization Grant (RFC 8628).
+    ///
+    /// The user verification step is surfaced by the caller at runtime. The
+    /// device and access tokens are never persisted in the request file.
+    OAuth2DeviceCode {
+        device_authorization_url: String,
+        token_url: String,
+        client_id: String,
+        #[serde(default)]
+        client_secret: Option<String>,
+        #[serde(default)]
+        scope: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

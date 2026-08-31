@@ -21,9 +21,9 @@ use postly_core::{
     parse_graphql_response, parse_graphql_schema, run_script, schema_introspection_query,
     ApiKeyLocation, Assertion, Auth, CancellationToken, CollectionFiles, EngineOptions,
     Environment, EnvironmentVariable, GraphqlSchema, GrpcRequest, GrpcSchema, HeaderEntry,
-    HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, MultipartPart, Request,
-    RequestBody, RequestSearchResult, ResponseExample, ResponseView, ScriptResult, SecretStore,
-    SseEvent, SseParser, VariableContext, Workspace,
+    HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue, MultipartPart,
+    OAuthDeviceCodePrompt, Request, RequestBody, RequestSearchResult, ResponseExample,
+    ResponseView, ScriptResult, SecretStore, SseEvent, SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -303,6 +303,7 @@ enum AuthKind {
     OAuth2ClientCredentials,
     OAuth2AuthorizationCodePkce,
     OAuth2RefreshToken,
+    OAuth2DeviceCode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -356,6 +357,7 @@ impl AuthKind {
             Self::OAuth2ClientCredentials => "OAuth 2.0 client credentials",
             Self::OAuth2AuthorizationCodePkce => "OAuth 2.0 authorization code + PKCE",
             Self::OAuth2RefreshToken => "OAuth 2.0 refresh token",
+            Self::OAuth2DeviceCode => "OAuth 2.0 device code",
         }
     }
 }
@@ -602,6 +604,8 @@ pub struct PostlyApp {
     response_error: Option<String>,
     response_wrap: bool,
     pending: Option<Receiver<Result<HttpExecutionResult, String>>>,
+    pending_device_code: Option<Receiver<OAuthDeviceCodePrompt>>,
+    device_code_prompt: Option<OAuthDeviceCodePrompt>,
     pending_request: Option<Request>,
     pending_graphql_schema: bool,
     pending_grpc: bool,
@@ -727,6 +731,8 @@ impl PostlyApp {
             response_error: None,
             response_wrap: false,
             pending: None,
+            pending_device_code: None,
+            device_code_prompt: None,
             pending_request: None,
             pending_graphql_schema: false,
             pending_grpc: false,
@@ -1539,6 +1545,23 @@ impl PostlyApp {
                 self.auth_seventh.clear();
                 self.api_key_location = ApiKeyLocation::Header;
             }
+            Auth::OAuth2DeviceCode {
+                device_authorization_url,
+                token_url,
+                client_id,
+                client_secret,
+                scope,
+            } => {
+                self.auth_kind = AuthKind::OAuth2DeviceCode;
+                self.auth_primary.clone_from(device_authorization_url);
+                self.auth_secondary.clone_from(token_url);
+                self.auth_tertiary.clone_from(client_id);
+                self.auth_quaternary = client_secret.clone().unwrap_or_default();
+                self.auth_fifth = scope.clone().unwrap_or_default();
+                self.auth_sixth.clear();
+                self.auth_seventh.clear();
+                self.api_key_location = ApiKeyLocation::Header;
+            }
         }
     }
 
@@ -1552,6 +1575,8 @@ impl PostlyApp {
         self.response_search.clear();
         self.response_tab = ResponseTab::Pretty;
         self.pending = None;
+        self.pending_device_code = None;
+        self.device_code_prompt = None;
         self.pending_request = None;
         self.pending_graphql_schema = false;
         self.pending_grpc = false;
@@ -1943,6 +1968,25 @@ impl PostlyApp {
                     values.push(scope.clone());
                 }
             }
+            Auth::OAuth2DeviceCode {
+                device_authorization_url,
+                token_url,
+                client_id,
+                client_secret,
+                scope,
+            } => {
+                values.extend([
+                    device_authorization_url.clone(),
+                    token_url.clone(),
+                    client_id.clone(),
+                ]);
+                if let Some(client_secret) = client_secret {
+                    values.push(client_secret.clone());
+                }
+                if let Some(scope) = scope {
+                    values.push(scope.clone());
+                }
+            }
         }
         if let Ok(body) = serde_json::to_string(&request.body) {
             values.push(body);
@@ -2171,6 +2215,14 @@ impl PostlyApp {
                 scope: (!self.auth_quaternary.trim().is_empty())
                     .then(|| self.auth_quaternary.clone()),
             },
+            AuthKind::OAuth2DeviceCode => Auth::OAuth2DeviceCode {
+                device_authorization_url: self.auth_primary.clone(),
+                token_url: self.auth_secondary.clone(),
+                client_id: self.auth_tertiary.clone(),
+                client_secret: (!self.auth_quaternary.trim().is_empty())
+                    .then(|| self.auth_quaternary.clone()),
+                scope: (!self.auth_fifth.trim().is_empty()).then(|| self.auth_fifth.clone()),
+            },
         };
         if request.grpc.is_some() {
             let reflection_host = self.grpc_reflection_host.trim();
@@ -2344,6 +2396,7 @@ impl PostlyApp {
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
         let (sender, receiver) = mpsc::channel();
+        let (device_code_sender, device_code_receiver) = mpsc::channel();
         let worker_request = request.clone();
         thread::spawn(move || {
             let result = (|| {
@@ -2376,7 +2429,11 @@ impl PostlyApp {
                         }
                     }
                     let response = tokio::select! {
-                        result = engine.execute(&request_for_send, &request_context) => {
+                        result = engine.execute_with_device_code_prompt(
+                            &request_for_send,
+                            &request_context,
+                            |prompt| { let _ = device_code_sender.send(prompt.clone()); },
+                        ) => {
                             result.map_err(|error| error.to_string())?
                         }
                         _ = worker_cancellation.cancelled() => {
@@ -2411,6 +2468,8 @@ impl PostlyApp {
         });
         self.clear_response();
         self.pending = Some(receiver);
+        self.pending_device_code = Some(device_code_receiver);
+        self.device_code_prompt = None;
         self.pending_request = Some(request);
         self.pending_cancellation = Some(cancellation);
         self.script_error = None;
@@ -2970,10 +3029,45 @@ impl PostlyApp {
 
     fn poll_pending(&mut self) -> bool {
         let script_pending = self.poll_script_pending();
+        let device_code_pending = self.poll_device_code_prompt();
         let http_pending = self.poll_http_pending();
         let sse_pending = self.poll_sse_pending();
         let websocket_pending = self.poll_websocket_pending();
-        script_pending || http_pending || sse_pending || websocket_pending
+        script_pending || http_pending || sse_pending || websocket_pending || device_code_pending
+    }
+
+    fn poll_device_code_prompt(&mut self) -> bool {
+        let Some(receiver) = self.pending_device_code.take() else {
+            return false;
+        };
+        let mut keep_receiver = true;
+        loop {
+            match receiver.try_recv() {
+                Ok(prompt) => {
+                    self.status_message = format!(
+                        "OAuth approval needed · enter {} at {}",
+                        prompt.user_code, prompt.verification_uri
+                    );
+                    self.push_console(
+                        ConsoleLevel::Info,
+                        format!(
+                            "OAuth device code received; verification code {}",
+                            prompt.user_code
+                        ),
+                    );
+                    self.device_code_prompt = Some(prompt);
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    keep_receiver = false;
+                    break;
+                }
+            }
+        }
+        if keep_receiver {
+            self.pending_device_code = Some(receiver);
+        }
+        keep_receiver
     }
 
     fn poll_http_pending(&mut self) -> bool {
@@ -2995,6 +3089,7 @@ impl PostlyApp {
         let schema_pending = self.pending_graphql_schema;
         let grpc_pending = self.pending_grpc;
         self.pending = None;
+        self.pending_device_code = None;
         self.pending_graphql_schema = false;
         self.pending_grpc = false;
         self.pending_cancellation = None;
@@ -4644,6 +4739,7 @@ impl PostlyApp {
                     AuthKind::OAuth2ClientCredentials,
                     AuthKind::OAuth2AuthorizationCodePkce,
                     AuthKind::OAuth2RefreshToken,
+                    AuthKind::OAuth2DeviceCode,
                 ] {
                     ui.selectable_value(&mut self.auth_kind, kind, kind.label());
                 }
@@ -4842,6 +4938,47 @@ impl PostlyApp {
                     .add(TextEdit::singleline(&mut self.auth_quaternary))
                     .changed()
                 {
+                    self.dirty = true;
+                }
+            }
+            AuthKind::OAuth2DeviceCode => {
+                ui.label(
+                    RichText::new(
+                        "Device Code opens a verification step and polls locally until approval; tokens stay in memory.",
+                    )
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+                );
+                ui.label("Device authorization URL");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_primary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Token URL");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_secondary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Client ID");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_tertiary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Client secret (optional)");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_quaternary).password(true))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Scope (optional)");
+                if ui.add(TextEdit::singleline(&mut self.auth_fifth)).changed() {
                     self.dirty = true;
                 }
             }
@@ -5298,6 +5435,25 @@ impl PostlyApp {
             .frame(egui::Frame::default().fill(ui.visuals().panel_fill))
             .show(ui, |ui| {
                 ui.add_space(8.0);
+                if let Some(prompt) = &self.device_code_prompt {
+                    ui.group(|ui| {
+                        ui.label(
+                            RichText::new("OAuth device authorization")
+                                .strong()
+                                .color(ui.visuals().text_color()),
+                        );
+                        ui.label(format!(
+                            "Enter {} to approve this request (expires in {}s).",
+                            prompt.user_code,
+                            prompt.expires_in.as_secs()
+                        ));
+                        ui.hyperlink_to("Open verification page", &prompt.verification_uri);
+                        if let Some(url) = prompt.verification_uri_complete.as_deref() {
+                            ui.hyperlink_to("Open direct verification URL", url);
+                        }
+                    });
+                    ui.add_space(6.0);
+                }
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new("RESPONSE")
@@ -6365,6 +6521,12 @@ fn build_websocket_request(
                     .to_owned(),
             );
         }
+        Auth::OAuth2DeviceCode { .. } => {
+            return Err(
+                "OAuth 2.0 device-code auth is currently supported for HTTP requests, not WebSockets"
+                    .to_owned(),
+            );
+        }
     }
     Ok(websocket_request)
 }
@@ -6452,6 +6614,11 @@ fn apply_grpc_metadata<T>(
             return Err(
                 "OAuth 2.0 refresh-token auth is not yet supported for native gRPC calls"
                     .to_owned(),
+            );
+        }
+        Auth::OAuth2DeviceCode { .. } => {
+            return Err(
+                "OAuth 2.0 device-code auth is not yet supported for native gRPC calls".to_owned(),
             );
         }
     }
@@ -7595,6 +7762,36 @@ mod tests {
         reopened.load_request_editors();
         assert_eq!(reopened.auth_kind, AuthKind::OAuth2RefreshToken);
         assert_eq!(reopened.auth_tertiary, "refresh-secret");
+    }
+
+    #[test]
+    fn oauth_device_code_editor_round_trips_authentication() {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.auth_kind = AuthKind::OAuth2DeviceCode;
+        app.auth_primary = "https://auth.example.test/device".to_owned();
+        app.auth_secondary = "https://auth.example.test/token".to_owned();
+        app.auth_tertiary = "postly".to_owned();
+        app.auth_quaternary = "client-secret".to_owned();
+        app.auth_fifth = "read:users".to_owned();
+
+        let request = app.edited_request().expect("device-code editor state");
+        assert_eq!(
+            request.auth,
+            Auth::OAuth2DeviceCode {
+                device_authorization_url: "https://auth.example.test/device".to_owned(),
+                token_url: "https://auth.example.test/token".to_owned(),
+                client_id: "postly".to_owned(),
+                client_secret: Some("client-secret".to_owned()),
+                scope: Some("read:users".to_owned()),
+            }
+        );
+        let mut reopened = app;
+        reopened.request.auth = request.auth;
+        reopened.load_request_editors();
+        assert_eq!(reopened.auth_kind, AuthKind::OAuth2DeviceCode);
+        assert_eq!(reopened.auth_primary, "https://auth.example.test/device");
+        assert_eq!(reopened.auth_quaternary, "client-secret");
     }
 
     #[test]

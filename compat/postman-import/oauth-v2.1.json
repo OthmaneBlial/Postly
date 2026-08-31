@@ -40,6 +40,23 @@
           ]
         }
       }
+    },
+    {
+      "name": "Device Authorization",
+      "request": {
+        "method": "GET",
+        "url": "https://api.example.test/device-profile",
+        "auth": {
+          "type": "oauth2",
+          "oauth2": [
+            { "key": "grant_type", "value": "urn:ietf:params:oauth:grant-type:device_code" },
+            { "key": "deviceAuthorizationUrl", "value": "https://auth.example.test/device" },
+            { "key": "accessTokenUrl", "value": "https://auth.example.test/token" },
+            { "key": "clientId", "value": "postly-public" },
+            { "key": "scope", "value": "profile" }
+          ]
+        }
+      }
     }
   ]
 }

@@ -132,6 +132,12 @@ pub fn export_curl_command(request: &Request) -> CurlExportResult {
                     .to_owned(),
             );
         }
+        Auth::OAuth2DeviceCode { .. } => {
+            warnings.push(
+                "OAuth 2.0 device-code auth was not materialized; complete device authorization in Postly before running the copied command."
+                    .to_owned(),
+            );
+        }
     }
 
     match &request.body {

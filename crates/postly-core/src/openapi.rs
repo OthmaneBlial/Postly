@@ -695,6 +695,13 @@ fn security_scheme_for_auth(
             );
             ("bearerAuth", json!({ "type": "http", "scheme": "bearer" }))
         }
+        Auth::OAuth2DeviceCode { .. } => {
+            warnings.push(
+                "Device-code authentication is approximated as bearer security; details are kept in x-postly-auth."
+                    .to_owned(),
+            );
+            ("bearerAuth", json!({ "type": "http", "scheme": "bearer" }))
+        }
     };
     schemes.entry(name.to_owned()).or_insert(scheme);
     Some(name.to_owned())
@@ -727,6 +734,19 @@ fn auth_extension(auth: &Auth) -> Option<Value> {
             ..
         } => Some(json!({
             "type": "oauth2_refresh_token",
+            "tokenUrl": token_url,
+            "clientId": client_id,
+            "scope": scope,
+        })),
+        Auth::OAuth2DeviceCode {
+            device_authorization_url,
+            token_url,
+            client_id,
+            scope,
+            ..
+        } => Some(json!({
+            "type": "oauth2_device_code",
+            "deviceAuthorizationUrl": device_authorization_url,
             "tokenUrl": token_url,
             "clientId": client_id,
             "scope": scope,

@@ -63,6 +63,7 @@ struct ImmediateRequestOptions {
     oauth_client_secret: Option<String>,
     oauth_scope: Option<String>,
     oauth_authorization_url: Option<String>,
+    oauth_device_authorization_url: Option<String>,
     oauth_redirect_uri: Option<String>,
     oauth_code: Option<String>,
     oauth_code_verifier: Option<String>,
@@ -532,6 +533,7 @@ struct NewRequestOptions {
     oauth_client_secret: Option<String>,
     oauth_scope: Option<String>,
     oauth_authorization_url: Option<String>,
+    oauth_device_authorization_url: Option<String>,
     oauth_redirect_uri: Option<String>,
     oauth_code: Option<String>,
     oauth_code_verifier: Option<String>,
@@ -554,6 +556,12 @@ struct OAuthCliArgs {
         help = "OAuth 2.0 authorization endpoint for PKCE"
     )]
     oauth_authorization_url: Option<String>,
+    #[arg(
+        long,
+        value_name = "URL",
+        help = "OAuth 2.0 device authorization endpoint"
+    )]
+    oauth_device_authorization_url: Option<String>,
     #[arg(long, value_name = "URI", help = "OAuth 2.0 redirect URI for PKCE")]
     oauth_redirect_uri: Option<String>,
     #[arg(
@@ -1277,6 +1285,7 @@ async fn main() -> Result<()> {
                 oauth_client_secret: oauth.oauth_client_secret,
                 oauth_scope: oauth.oauth_scope,
                 oauth_authorization_url: oauth.oauth_authorization_url,
+                oauth_device_authorization_url: oauth.oauth_device_authorization_url,
                 oauth_redirect_uri: oauth.oauth_redirect_uri,
                 oauth_code: oauth.oauth_code,
                 oauth_code_verifier: oauth.oauth_code_verifier,
@@ -1317,6 +1326,7 @@ async fn main() -> Result<()> {
                 oauth_client_secret: oauth.oauth_client_secret,
                 oauth_scope: oauth.oauth_scope,
                 oauth_authorization_url: oauth.oauth_authorization_url,
+                oauth_device_authorization_url: oauth.oauth_device_authorization_url,
                 oauth_redirect_uri: oauth.oauth_redirect_uri,
                 oauth_code: oauth.oauth_code,
                 oauth_code_verifier: oauth.oauth_code_verifier,
@@ -1947,6 +1957,7 @@ fn create_request(options: NewRequestOptions) -> Result<()> {
             oauth_client_secret: options.oauth_client_secret,
             oauth_scope: options.oauth_scope,
             oauth_authorization_url: options.oauth_authorization_url,
+            oauth_device_authorization_url: options.oauth_device_authorization_url,
             oauth_redirect_uri: options.oauth_redirect_uri,
             oauth_code: options.oauth_code,
             oauth_code_verifier: options.oauth_code_verifier,
@@ -1973,6 +1984,7 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
             oauth_client_secret: options.oauth_client_secret,
             oauth_scope: options.oauth_scope,
             oauth_authorization_url: options.oauth_authorization_url,
+            oauth_device_authorization_url: options.oauth_device_authorization_url,
             oauth_redirect_uri: options.oauth_redirect_uri,
             oauth_code: options.oauth_code,
             oauth_code_verifier: options.oauth_code_verifier,
@@ -2796,6 +2808,9 @@ fn build_websocket_request(
         Auth::OAuth2RefreshToken { .. } => {
             unreachable!("CLI auth flags do not create OAuth 2.0 credentials")
         }
+        Auth::OAuth2DeviceCode { .. } => {
+            unreachable!("CLI auth flags do not create OAuth 2.0 credentials")
+        }
     }
     Ok(websocket_request)
 }
@@ -3574,7 +3589,20 @@ async fn execute(
         cookie_jar: options.cookie_jar.map(Path::to_path_buf),
         ..EngineOptions::default()
     })?;
-    Ok(engine.execute(request, &context).await?)
+    Ok(engine
+        .execute_with_device_code_prompt(request, &context, |prompt| {
+            eprintln!(
+                "OAuth device authorization required: visit {} and enter {} (expires in {}s).",
+                prompt.verification_uri,
+                prompt.user_code,
+                prompt.expires_in.as_secs()
+            );
+            if let Some(url) = prompt.verification_uri_complete.as_deref() {
+                eprintln!("Direct verification URL: {url}");
+            }
+            eprintln!("Waiting for authorization approval…");
+        })
+        .await?)
 }
 
 async fn run_script_async(
@@ -3678,6 +3706,7 @@ fn parse_auth_flags_with_oauth(
         oauth_client_secret,
         oauth_scope,
         oauth_authorization_url,
+        oauth_device_authorization_url,
         oauth_redirect_uri,
         oauth_code,
         oauth_code_verifier,
@@ -3688,6 +3717,7 @@ fn parse_auth_flags_with_oauth(
         || oauth_client_secret.is_some()
         || oauth_scope.is_some()
         || oauth_authorization_url.is_some()
+        || oauth_device_authorization_url.is_some()
         || oauth_redirect_uri.is_some()
         || oauth_code.is_some()
         || oauth_code_verifier.is_some()
@@ -3698,6 +3728,23 @@ fn parse_auth_flags_with_oauth(
         }
         let token_url = oauth_token_url.context("--oauth-token-url is required for OAuth 2.0")?;
         let client_id = oauth_client_id.context("--oauth-client-id is required for OAuth 2.0")?;
+        if let Some(device_authorization_url) = oauth_device_authorization_url {
+            if oauth_authorization_url.is_some()
+                || oauth_redirect_uri.is_some()
+                || oauth_code.is_some()
+                || oauth_code_verifier.is_some()
+                || oauth_refresh_token.is_some()
+            {
+                bail!("choose either OAuth 2.0 device code, PKCE or a refresh token");
+            }
+            return Ok(Auth::OAuth2DeviceCode {
+                device_authorization_url,
+                token_url,
+                client_id,
+                client_secret: oauth_client_secret,
+                scope: oauth_scope,
+            });
+        }
         let is_pkce = oauth_authorization_url.is_some()
             || oauth_redirect_uri.is_some()
             || oauth_code.is_some()
@@ -3955,6 +4002,33 @@ mod tests {
                 token_url: "https://auth.example.test/token".to_owned(),
                 client_id: "postly".to_owned(),
                 refresh_token: "refresh-123".to_owned(),
+                client_secret: None,
+                scope: Some("read:users".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_oauth_device_code_cli_flags() {
+        let auth = parse_auth_flags_with_oauth(
+            None,
+            None,
+            None,
+            OAuthCliArgs {
+                oauth_token_url: Some("https://auth.example.test/token".to_owned()),
+                oauth_device_authorization_url: Some("https://auth.example.test/device".to_owned()),
+                oauth_client_id: Some("postly".to_owned()),
+                oauth_scope: Some("read:users".to_owned()),
+                ..OAuthCliArgs::default()
+            },
+        )
+        .expect("device-code flags");
+        assert_eq!(
+            auth,
+            Auth::OAuth2DeviceCode {
+                device_authorization_url: "https://auth.example.test/device".to_owned(),
+                token_url: "https://auth.example.test/token".to_owned(),
+                client_id: "postly".to_owned(),
                 client_secret: None,
                 scope: Some("read:users".to_owned()),
             }
