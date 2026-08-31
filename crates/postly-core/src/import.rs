@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::{
     model::{
         ApiKeyLocation, Auth, Collection, Environment, EnvironmentVariable, HeaderEntry, KeyValue,
-        MultipartPart, Request, RequestBody, ResponseExample,
+        MultipartPart, Request, RequestBody, ResponseExample, ResponseExampleCookie,
     },
     secrets::{SecretStore, SecretStoreError},
     storage::{CollectionFiles, Workspace, WorkspaceError, WorkspaceTransaction},
@@ -1241,6 +1241,65 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExampl
                         .and_then(Value::as_array)
                         .map(|headers| headers.iter().filter_map(parse_header_entry).collect())
                         .unwrap_or_default();
+                    let cookies = example
+                        .get("cookie")
+                        .or_else(|| example.get("cookies"))
+                        .and_then(Value::as_array)
+                        .map(|cookies| {
+                            cookies
+                                .iter()
+                                .filter_map(|cookie| {
+                                    let cookie_name = cookie
+                                        .get("name")
+                                        .or_else(|| cookie.get("key"))
+                                        .and_then(Value::as_str)
+                                        .filter(|name| !name.is_empty())
+                                        .map(ToOwned::to_owned);
+                                    let Some(name) = cookie_name else {
+                                        report.warn(format!(
+                                            "Response example {name} contains a cookie without a usable name; it was skipped."
+                                        ));
+                                        return None;
+                                    };
+                                    Some(ResponseExampleCookie {
+                                        name,
+                                        value: string_value(cookie.get("value")).unwrap_or_default(),
+                                        domain: cookie
+                                            .get("domain")
+                                            .and_then(|value| string_value(Some(value))),
+                                        path: cookie
+                                            .get("path")
+                                            .and_then(|value| string_value(Some(value))),
+                                        secure: cookie
+                                            .get("secure")
+                                            .and_then(Value::as_bool)
+                                            .unwrap_or(false),
+                                        http_only: cookie
+                                            .get("httpOnly")
+                                            .or_else(|| cookie.get("http_only"))
+                                            .and_then(Value::as_bool)
+                                            .unwrap_or(false),
+                                        same_site: cookie
+                                            .get("sameSite")
+                                            .or_else(|| cookie.get("same_site"))
+                                            .and_then(|value| string_value(Some(value))),
+                                        expires: cookie
+                                            .get("expires")
+                                            .and_then(|value| string_value(Some(value))),
+                                        max_age_seconds: cookie
+                                            .get("maxAge")
+                                            .or_else(|| cookie.get("max_age"))
+                                            .or_else(|| cookie.get("max_age_seconds"))
+                                            .and_then(|value| match value {
+                                                Value::Number(value) => value.as_i64(),
+                                                Value::String(value) => value.parse().ok(),
+                                                _ => None,
+                                            }),
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     let delay_ms = example
                         .get("x-postly-delay-ms")
                         .and_then(Value::as_u64)
@@ -1249,6 +1308,7 @@ fn parse_examples(item: &Value, report: &mut ImportReport) -> Vec<ResponseExampl
                         name,
                         status,
                         headers,
+                        cookies,
                         body,
                         delay_ms,
                     }
@@ -1633,6 +1693,13 @@ TOKEN='last value'
             }
         ));
         assert!(matches!(&search.1.body, RequestBody::FormUrlEncoded { .. }));
+        assert_eq!(search.1.examples.len(), 1);
+        assert_eq!(search.1.examples[0].cookies.len(), 1);
+        assert_eq!(search.1.examples[0].cookies[0].name, "session");
+        assert_eq!(search.1.examples[0].cookies[0].value, "fixture-session");
+        assert!(search.1.examples[0].cookies[0].http_only);
+        assert_eq!(search.1.examples[0].cookies[0].path.as_deref(), Some("/"));
+        assert_eq!(search.1.examples[0].cookies[0].max_age_seconds, Some(120));
 
         let upload = requests
             .iter()

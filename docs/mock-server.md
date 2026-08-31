@@ -30,8 +30,12 @@ postly mock ./my-api --port 3002 --once
 ```
 
 The response uses the saved status (default `200`), enabled headers and body.
-If no content type is saved, Postly sends `text/plain; charset=utf-8`. A saved
-`delay_ms` makes the mock wait before responding. Header names and values that
+Saved response-example cookies are emitted as `Set-Cookie` headers, including
+their supported `Domain`, `Path`, `SameSite`, `Expires`, `Max-Age`, `Secure` and
+`HttpOnly` attributes. Cookie names/values and attributes containing unsafe
+line breaks are skipped rather than written to the response. If no content
+type is saved, Postly sends `text/plain; charset=utf-8`. A saved `delay_ms`
+makes the mock wait before responding. Header names and values that
 contain CR/LF are skipped to avoid response-header injection. Unknown routes
 return a generic `404` JSON response and do not echo the requested URL.
 Without `--environment`, collection variables are still used and unresolved

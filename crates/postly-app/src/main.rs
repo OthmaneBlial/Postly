@@ -23,8 +23,8 @@ use postly_core::{
     CancellationToken, CollectionFiles, EngineOptions, Environment, EnvironmentVariable,
     GraphqlSchema, GrpcRequest, GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine,
     HttpResponse, JsonValueType, KeyValue, MultipartPart, OAuthDeviceCodePrompt, Request,
-    RequestBody, RequestSearchResult, ResponseExample, ResponseView, ScriptResult, SecretStore,
-    SseEvent, SseParser, VariableContext, WebSocketMessage, Workspace,
+    RequestBody, RequestSearchResult, ResponseExample, ResponseExampleCookie, ResponseView,
+    ScriptResult, SecretStore, SseEvent, SseParser, VariableContext, WebSocketMessage, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -2523,6 +2523,21 @@ impl PostlyApp {
             name: name.clone(),
             status: Some(response.status),
             headers: response.headers.clone(),
+            cookies: response
+                .cookies
+                .iter()
+                .map(|cookie| ResponseExampleCookie {
+                    name: cookie.name.clone(),
+                    value: cookie.value.clone(),
+                    domain: cookie.domain.clone(),
+                    path: cookie.path.clone(),
+                    secure: cookie.secure,
+                    http_only: cookie.http_only,
+                    same_site: cookie.same_site.clone(),
+                    expires: cookie.expires.clone(),
+                    max_age_seconds: cookie.max_age_seconds,
+                })
+                .collect(),
             body: Some(body),
             delay_ms: 0,
         };

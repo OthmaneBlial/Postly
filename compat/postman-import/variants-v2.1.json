@@ -48,6 +48,16 @@
               "name": "No content",
               "code": 204,
               "header": [{ "key": "X-Result", "value": "empty" }],
+              "cookie": [
+                {
+                  "name": "session",
+                  "value": "fixture-session",
+                  "path": "/",
+                  "httpOnly": true,
+                  "sameSite": "Lax",
+                  "maxAge": 120
+                }
+              ],
               "body": ""
             }
           ]

@@ -314,6 +314,7 @@ mod tests {
             name: "Created".to_owned(),
             status: Some(201),
             headers: Vec::new(),
+            cookies: Vec::new(),
             body: Some("{\"id\":\"pay_123\"}".to_owned()),
             delay_ms: 0,
         }];

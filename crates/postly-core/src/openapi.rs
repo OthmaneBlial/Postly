@@ -2130,6 +2130,7 @@ fn apply_response_examples(
             name,
             status,
             headers,
+            cookies: Vec::new(),
             body,
             delay_ms,
         });
@@ -2981,6 +2982,7 @@ paths:
             name: "Created".to_owned(),
             status: Some(201),
             headers: vec![HeaderEntry::enabled("content-type", "application/json")],
+            cookies: Vec::new(),
             body: Some(r#"{"id":1}"#.to_owned()),
             delay_ms: 0,
         });

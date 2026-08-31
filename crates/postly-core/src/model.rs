@@ -505,9 +505,35 @@ pub struct ResponseExample {
     #[serde(default)]
     pub headers: Vec<HeaderEntry>,
     #[serde(default)]
+    pub cookies: Vec<ResponseExampleCookie>,
+    #[serde(default)]
     pub body: Option<String>,
     /// Optional local mock delay. Postly-native data only; Postman exports
     /// preserve it under the `x-postly-delay-ms` extension.
     #[serde(default)]
     pub delay_ms: u64,
+}
+
+/// Cookie metadata captured with a saved response example.
+///
+/// This is intentionally separate from the live HTTP response type so
+/// canonical request files do not depend on transport internals.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResponseExampleCookie {
+    pub name: String,
+    pub value: String,
+    #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub secure: bool,
+    #[serde(default)]
+    pub http_only: bool,
+    #[serde(default)]
+    pub same_site: Option<String>,
+    #[serde(default)]
+    pub expires: Option<String>,
+    #[serde(default)]
+    pub max_age_seconds: Option<i64>,
 }

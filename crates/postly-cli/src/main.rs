@@ -21,8 +21,8 @@ use postly_core::{
     parse_graphql_schema, parse_variables_json, run_requests, schema_introspection_query, Auth,
     CancellationToken, Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest,
     GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request,
-    RequestBody, ResponseExample, RunnerOptions, ScriptResult, ScriptTestResult, SecretStore,
-    SnippetLanguage, SseParser, VariableContext, Workspace,
+    RequestBody, ResponseExample, ResponseExampleCookie, RunnerOptions, ScriptResult,
+    ScriptTestResult, SecretStore, SnippetLanguage, SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -2149,6 +2149,20 @@ fn resolve_mock_example(
     if let Some(body) = &mut example.body {
         *body = context.resolve(body).value;
     }
+    for cookie in &mut example.cookies {
+        cookie.value = context.resolve(&cookie.value).value;
+        for value in [
+            &mut cookie.domain,
+            &mut cookie.path,
+            &mut cookie.same_site,
+            &mut cookie.expires,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *value = context.resolve(value).value;
+        }
+    }
     example
 }
 
@@ -2212,6 +2226,13 @@ fn mock_response_for(routes: &[MockRoute], method: &str, target: &str) -> MockRe
             "text/plain; charset=utf-8".to_owned(),
         ));
     }
+    headers.extend(
+        example
+            .cookies
+            .iter()
+            .filter_map(mock_set_cookie_header)
+            .map(|value| ("set-cookie".to_owned(), value)),
+    );
     MockResponse {
         status: example.status.unwrap_or(200),
         status_text: status_text(example.status.unwrap_or(200)).to_owned(),
@@ -2219,6 +2240,52 @@ fn mock_response_for(routes: &[MockRoute], method: &str, target: &str) -> MockRe
         body: example.body.clone().unwrap_or_default().into_bytes(),
         delay_ms: example.delay_ms,
     }
+}
+
+fn mock_set_cookie_header(cookie: &ResponseExampleCookie) -> Option<String> {
+    let safe_name = !cookie.name.is_empty()
+        && !cookie
+            .name
+            .chars()
+            .any(|character| matches!(character, '\r' | '\n' | ';' | '=' | ','));
+    if !safe_name
+        || cookie
+            .value
+            .chars()
+            .any(|character| matches!(character, '\r' | '\n'))
+    {
+        return None;
+    }
+    let mut output = format!("{}={}", cookie.name, cookie.value);
+    for (name, value) in [
+        ("Domain", cookie.domain.as_deref()),
+        ("Path", cookie.path.as_deref()),
+        ("SameSite", cookie.same_site.as_deref()),
+        ("Expires", cookie.expires.as_deref()),
+    ] {
+        if let Some(value) = value.filter(|value| {
+            !value.is_empty()
+                && !value
+                    .chars()
+                    .any(|character| matches!(character, '\r' | '\n' | ';'))
+        }) {
+            output.push_str("; ");
+            output.push_str(name);
+            output.push('=');
+            output.push_str(value);
+        }
+    }
+    if let Some(max_age_seconds) = cookie.max_age_seconds {
+        output.push_str("; Max-Age=");
+        output.push_str(&max_age_seconds.to_string());
+    }
+    if cookie.secure {
+        output.push_str("; Secure");
+    }
+    if cookie.http_only {
+        output.push_str("; HttpOnly");
+    }
+    Some(output)
 }
 
 fn status_text(status: u16) -> &'static str {
@@ -5406,6 +5473,17 @@ mod tests {
                 name: "Healthy".to_owned(),
                 status: Some(201),
                 headers: vec![HeaderEntry::enabled("content-type", "application/json")],
+                cookies: vec![ResponseExampleCookie {
+                    name: "sid".to_owned(),
+                    value: "{{token}}".to_owned(),
+                    domain: None,
+                    path: Some("/".to_owned()),
+                    secure: false,
+                    http_only: true,
+                    same_site: Some("Lax".to_owned()),
+                    expires: None,
+                    max_age_seconds: Some(60),
+                }],
                 body: Some(r#"{"ok":true}"#.to_owned()),
                 delay_ms: 7,
             },
@@ -5417,7 +5495,11 @@ mod tests {
         assert_eq!(response.status_text, "Created");
         assert_eq!(response.body, br#"{"ok":true}"#);
         assert_eq!(response.delay_ms, 7);
-        assert_eq!(response.headers.len(), 1);
+        assert_eq!(response.headers.len(), 2);
+        assert!(response.headers.iter().any(|(key, value)| {
+            key == "set-cookie"
+                && value == "sid={{token}}; Path=/; SameSite=Lax; Max-Age=60; HttpOnly"
+        }));
     }
 
     #[test]
@@ -5435,6 +5517,17 @@ mod tests {
                 name: "Greeting".to_owned(),
                 status: Some(200),
                 headers: vec![HeaderEntry::enabled("x-api-token", "{{apiToken}}")],
+                cookies: vec![ResponseExampleCookie {
+                    name: "sid".to_owned(),
+                    value: "{{apiToken}}".to_owned(),
+                    domain: None,
+                    path: None,
+                    secure: false,
+                    http_only: false,
+                    same_site: None,
+                    expires: None,
+                    max_age_seconds: None,
+                }],
                 body: Some(r#"{"hello":"{{name}}"}"#.to_owned()),
                 delay_ms: 0,
             },
@@ -5443,6 +5536,7 @@ mod tests {
 
         assert_eq!(resolved.headers[0].value, "local-token");
         assert_eq!(resolved.body.as_deref(), Some(r#"{"hello":"Ada"}"#));
+        assert_eq!(resolved.cookies[0].value, "local-token");
     }
 
     #[test]

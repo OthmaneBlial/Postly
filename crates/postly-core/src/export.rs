@@ -8,7 +8,10 @@ use serde_json::{json, Map, Value};
 use thiserror::Error;
 
 use crate::{
-    model::{ApiKeyLocation, Auth, Collection, Environment, MultipartPart, Request, RequestBody},
+    model::{
+        ApiKeyLocation, Auth, Collection, Environment, MultipartPart, Request, RequestBody,
+        ResponseExampleCookie,
+    },
     secrets::{SecretStore, SecretStoreError},
     storage::{CollectionFiles, Workspace, WorkspaceError},
 };
@@ -240,6 +243,11 @@ fn postman_item(request: &Request) -> Result<Value, ExportError> {
                         "name": example.name,
                         "code": example.status,
                         "header": headers(&example.headers),
+                        "cookie": example
+                            .cookies
+                            .iter()
+                            .map(postman_response_cookie)
+                            .collect::<Vec<_>>(),
                         "body": example.body,
                         "x-postly-delay-ms": example.delay_ms,
                     })
@@ -290,6 +298,34 @@ fn headers(headers: &[crate::model::HeaderEntry]) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+fn postman_response_cookie(cookie: &ResponseExampleCookie) -> Value {
+    let mut value = Map::new();
+    value.insert("name".to_owned(), json!(cookie.name));
+    value.insert("value".to_owned(), json!(cookie.value));
+    if let Some(domain) = &cookie.domain {
+        value.insert("domain".to_owned(), json!(domain));
+    }
+    if let Some(path) = &cookie.path {
+        value.insert("path".to_owned(), json!(path));
+    }
+    if cookie.secure {
+        value.insert("secure".to_owned(), json!(true));
+    }
+    if cookie.http_only {
+        value.insert("httpOnly".to_owned(), json!(true));
+    }
+    if let Some(same_site) = &cookie.same_site {
+        value.insert("sameSite".to_owned(), json!(same_site));
+    }
+    if let Some(expires) = &cookie.expires {
+        value.insert("expires".to_owned(), json!(expires));
+    }
+    if let Some(max_age_seconds) = cookie.max_age_seconds {
+        value.insert("maxAge".to_owned(), json!(max_age_seconds));
+    }
+    Value::Object(value)
 }
 
 fn body_value(body: &RequestBody) -> Result<Option<Value>, ExportError> {
@@ -548,7 +584,7 @@ mod tests {
     use super::*;
     use crate::{
         import_postman_collection,
-        model::{HeaderEntry, KeyValue, ResponseExample},
+        model::{HeaderEntry, KeyValue, ResponseExample, ResponseExampleCookie},
         Auth, Collection, EnvironmentVariable, SecretStore,
     };
 
@@ -588,6 +624,17 @@ mod tests {
             name: "Created".to_owned(),
             status: Some(201),
             headers: vec![HeaderEntry::enabled("content-type", "application/json")],
+            cookies: vec![ResponseExampleCookie {
+                name: "session".to_owned(),
+                value: "created".to_owned(),
+                domain: Some("example.test".to_owned()),
+                path: Some("/".to_owned()),
+                secure: true,
+                http_only: true,
+                same_site: Some("Strict".to_owned()),
+                expires: None,
+                max_age_seconds: Some(300),
+            }],
             body: Some("{\"id\":1}".to_owned()),
             delay_ms: 0,
         });
@@ -616,6 +663,14 @@ mod tests {
             document["item"][0]["item"][0]["item"][0]["request"]["cookie"][0]["key"],
             "session"
         );
+        assert_eq!(
+            document["item"][0]["item"][0]["item"][0]["response"][0]["cookie"][0]["name"],
+            "session"
+        );
+        assert_eq!(
+            document["item"][0]["item"][0]["item"][0]["response"][0]["cookie"][0]["maxAge"],
+            300
+        );
 
         let imported_directory = directory.path().join("round-trip");
         let import_report = import_postman_collection(&export_path, &imported_directory)
@@ -637,6 +692,11 @@ mod tests {
         ));
         assert!(matches!(imported_requests[0].1.auth, Auth::Bearer { .. }));
         assert_eq!(imported_requests[0].1.cookies[0].key, "session");
+        assert_eq!(
+            imported_requests[0].1.examples[0].cookies[0].name,
+            "session"
+        );
+        assert!(imported_requests[0].1.examples[0].cookies[0].secure);
     }
 
     #[test]
