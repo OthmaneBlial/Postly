@@ -4701,6 +4701,75 @@ mod tests {
         .expect("gRPC proxy command");
         proxy.await.expect("proxy task");
 
+        let socks_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("SOCKS proxy listener");
+        let socks_address = socks_listener.local_addr().expect("SOCKS proxy address");
+        let socks_proxy = tokio::spawn(async move {
+            let (mut client, _) = socks_listener.accept().await.expect("SOCKS connection");
+            let mut greeting = [0_u8; 3];
+            client
+                .read_exact(&mut greeting)
+                .await
+                .expect("SOCKS greeting");
+            assert_eq!(greeting, [0x05, 0x01, 0x00]);
+            client
+                .write_all(&[0x05, 0x00])
+                .await
+                .expect("SOCKS greeting reply");
+
+            let mut connect_header = [0_u8; 4];
+            client
+                .read_exact(&mut connect_header)
+                .await
+                .expect("SOCKS connect header");
+            assert_eq!(connect_header, [0x05, 0x01, 0x00, 0x01]);
+            let mut target_ip = [0_u8; 4];
+            client
+                .read_exact(&mut target_ip)
+                .await
+                .expect("SOCKS target IP");
+            let mut target_port = [0_u8; 2];
+            client
+                .read_exact(&mut target_port)
+                .await
+                .expect("SOCKS target port");
+            assert_eq!(target_ip, [127, 0, 0, 1]);
+            assert_eq!(u16::from_be_bytes(target_port), address.port());
+
+            let mut target = tokio::net::TcpStream::connect(address)
+                .await
+                .expect("SOCKS target");
+            let mut reply = vec![0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1];
+            reply.extend_from_slice(&address.port().to_be_bytes());
+            client.write_all(&reply).await.expect("SOCKS connect reply");
+            tokio::io::copy_bidirectional(&mut client, &mut target)
+                .await
+                .expect("SOCKS relay");
+        });
+
+        call_grpc(GrpcCallOptions {
+            endpoint: format!("http://{address}"),
+            proto: directory.path().join("echo.proto"),
+            includes: Vec::new(),
+            method: "/demo.Echo/Echo".to_owned(),
+            message: Some(r#"{"message":"through-socks"}"#.to_owned()),
+            message_file: None,
+            metadata: vec!["x-test=local".to_owned()],
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            proxy: Some(format!("socks5://{socks_address}")),
+            no_proxy: None,
+            ca_cert: None,
+            client_identity: None,
+            output_json: true,
+        })
+        .await
+        .expect("gRPC SOCKS proxy command");
+        socks_proxy.await.expect("SOCKS proxy task");
+
         shutdown_tx.send(()).expect("shutdown");
         server.await.expect("server task");
     }
