@@ -49,12 +49,17 @@ Script output is kept local. CLI output reports assertions but deliberately
 does not print captured console logs, because a script can log a secret. The
 bridge rejects source larger than 512 KiB, caps the serialized input payload at
 4 MiB, and starts Node with a minimal child environment containing only the
-current `PATH`. The Rust worker enforces a three-second process deadline and
-caps each stdout/stderr pipe at 8 MiB; captured output is also capped at 200 log
-entries of 4 KiB each and 1,000 test results. These limits are resource guards,
-not a security boundary for hostile code. Filesystem, network and process
-permissions still require a future embedded-runtime or isolated-worker
-decision.
+current `PATH`. When the installed Node version exposes both `--permission` and
+`--allow-net`, Postly enables them: the harness keeps network access for the
+bounded `pm.sendRequest` feature while filesystem, child-process, worker and
+native-addon permissions remain disabled by default. Older Node versions use
+the same resource guards without this optional defense-in-depth layer. The Rust
+worker enforces a three-second process deadline and caps each stdout/stderr pipe
+at 8 MiB; captured output is also capped at 200 log entries of 4 KiB each and
+1,000 test results. These controls are not a security boundary for hostile
+code; the VM remains unsuitable for untrusted JavaScript. An embedded-runtime
+or isolated-worker decision is still required before broad compatibility is
+enabled by default.
 `pm.sendRequest` is intentionally a partial compatibility slice: it permits up
 to eight HTTP(S) callback requests per script, caps each response at 1 MiB and
 uses a two-second request timeout. Those subrequests use Node's native fetch,

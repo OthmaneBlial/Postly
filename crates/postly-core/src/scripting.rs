@@ -209,9 +209,11 @@ pub fn run_script(
         });
     }
     let mut command = Command::new("node");
-    command
-        .env_clear()
-        .args(["--input-type=commonjs", "-e", NODE_HARNESS]);
+    command.env_clear().args(node_permission_flags()).args([
+        "--input-type=commonjs",
+        "-e",
+        NODE_HARNESS,
+    ]);
     if let Some(path) = std::env::var_os("PATH") {
         command.env("PATH", path);
     }
@@ -264,6 +266,29 @@ const MAX_LOG_ENTRIES: usize = 200;
 const MAX_LOG_MESSAGE_BYTES: usize = 4096;
 #[cfg(test)]
 const MAX_TEST_ENTRIES: usize = 1000;
+
+fn node_permission_flags() -> Vec<&'static str> {
+    let Ok(output) = Command::new("node").arg("--help").output() else {
+        return Vec::new();
+    };
+    node_permission_flags_from_help(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn node_permission_flags_from_help(help: &str) -> Vec<&'static str> {
+    let has_permission = help.lines().any(|line| {
+        let line = line.trim_start();
+        line == "--permission" || line.starts_with("--permission ")
+    });
+    let has_network_permission = help.lines().any(|line| {
+        let line = line.trim_start();
+        line == "--allow-net" || line.starts_with("--allow-net ")
+    });
+    if has_permission && has_network_permission {
+        vec!["--permission", "--allow-net"]
+    } else {
+        Vec::new()
+    }
+}
 
 fn wait_for_child(mut child: Child) -> Result<Output, ScriptError> {
     let stdout = child.stdout.take().ok_or_else(|| {
@@ -1142,6 +1167,18 @@ main().catch((error) => {
 mod tests {
     use super::*;
     use crate::model::Request;
+
+    #[test]
+    fn enables_node_permissions_only_when_network_access_can_be_retained() {
+        assert_eq!(
+            node_permission_flags_from_help(
+                "  --permission  enable permissions\n  --allow-net  allow network"
+            ),
+            vec!["--permission", "--allow-net"]
+        );
+        assert!(node_permission_flags_from_help("  --permission  enable permissions").is_empty());
+        assert!(node_permission_flags_from_help("  --permission-audit  audit only").is_empty());
+    }
 
     #[test]
     fn executes_basic_pm_variables_and_assertions() {

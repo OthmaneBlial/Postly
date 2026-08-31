@@ -32,16 +32,22 @@ console methods. Source larger than 512 KiB is rejected before spawning Node;
 updates and unsets are applied to the current execution session and are not
 silently written back to environment files. The Rust worker also enforces a
 three-second process deadline, while the harness caps captured logs at 200
-entries of 4 KiB each and test results at 1,000 entries.
+entries of 4 KiB each and test results at 1,000 entries. On Node versions that
+expose both `--permission` and `--allow-net`, Postly enables those flags so the
+bounded `pm.sendRequest` network path remains available while filesystem,
+child-process, worker and native-addon permissions are disabled by default.
+Older Node versions retain the resource guards but do not get this optional
+defense-in-depth layer.
 
 ## Security boundary
 
 Node's VM is not a security boundary for hostile JavaScript. The runtime is
 therefore suitable only for source the user intentionally runs locally. The
-CLI does not print captured console logs because scripts may log secrets.
-Filesystem, network, process and cancellation permissions must be solved by a
-future embedded engine or isolated worker before scripts are enabled by
-default.
+CLI does not print captured console logs because scripts may log secrets. The
+Node permission model, when available, reduces accidental filesystem and
+process access but does not turn the VM into a hostile-code sandbox. A future
+embedded engine or isolated worker is still required before scripts are
+enabled by default.
 
 ## Consequences
 
