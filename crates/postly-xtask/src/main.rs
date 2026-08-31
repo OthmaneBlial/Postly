@@ -75,16 +75,15 @@ fn main() -> ExitCode {
 }
 
 fn run_benchmarks(json_output: bool) -> bool {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let context = benchmark_context(&root);
     match collect_benchmarks() {
         Ok(results) => {
             if json_output {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&json!({
-                        "platform": {
-                            "os": std::env::consts::OS,
-                            "arch": std::env::consts::ARCH,
-                        },
+                        "context": context,
                         "iterations": BENCHMARK_ITERATIONS,
                         "results": results,
                     }))
@@ -97,6 +96,20 @@ fn run_benchmarks(json_output: bool) -> bool {
                     std::env::consts::OS,
                     std::env::consts::ARCH
                 );
+                println!(
+                    "revision: {}",
+                    context.revision.as_deref().unwrap_or("unknown")
+                );
+                println!(
+                    "hardware: {}",
+                    context.hardware.as_deref().unwrap_or("unknown")
+                );
+                println!(
+                    "os version: {}",
+                    context.os_version.as_deref().unwrap_or("unknown")
+                );
+                println!("rustc: {}", context.rustc.as_deref().unwrap_or("unknown"));
+                println!("profile: {}", context.profile);
                 println!();
                 println!(
                     "{:<46} {:>12} {:>12} {:>12} {:>16}",
@@ -123,6 +136,57 @@ fn run_benchmarks(json_output: bool) -> bool {
             false
         }
     }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct BenchmarkContext {
+    os: &'static str,
+    arch: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hardware: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    os_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rustc: Option<String>,
+    profile: &'static str,
+}
+
+fn benchmark_context(root: &Path) -> BenchmarkContext {
+    let profile = if root.join("target/debug/postly").is_file() {
+        "debug"
+    } else if root.join("target/release/postly").is_file() {
+        "release"
+    } else {
+        "unknown"
+    };
+    BenchmarkContext {
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
+        revision: command_output(root, "git", &["rev-parse", "--short", "HEAD"]),
+        hardware: (cfg!(target_os = "macos"))
+            .then(|| command_output(root, "sysctl", &["-n", "hw.model"]))
+            .flatten(),
+        os_version: (cfg!(target_os = "macos"))
+            .then(|| command_output(root, "sw_vers", &["-productVersion"]))
+            .flatten(),
+        rustc: command_output(root, "rustc", &["--version"]),
+        profile,
+    }
+}
+
+fn command_output(root: &Path, program: &str, arguments: &[&str]) -> Option<String> {
+    let output = Command::new(program)
+        .current_dir(root)
+        .args(arguments)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!value.is_empty()).then_some(value)
 }
 
 fn run_fuzz_smoke() -> bool {

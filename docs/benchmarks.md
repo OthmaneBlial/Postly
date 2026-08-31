@@ -20,10 +20,11 @@ launches the already-built local CLI; it does not include a build.
 Temporary benchmark workspaces are created outside the repository; only the
 ignored `bench-generated/` destination may contain output.
 
-Results are meaningful only with their context: commit, OS, hardware, Rust
-toolchain, build mode and filesystem. The output intentionally does not compare
-Postly to Postman, Bruno or any other client. Add a controlled competitor
-version and methodology before publishing a comparison.
+Results are meaningful only with their context: the JSON/text output records the
+current commit, OS, architecture, hardware when available, OS version, Rust
+toolchain and detected build profile. The output intentionally does not compare
+Postly to Postman, Bruno or any other client. Add a controlled competitor version
+and methodology before publishing a comparison.
 
 The benchmark suite is still a foundation. Idle memory, large response
 rendering, larger runner-throughput matrices and cross-platform runs remain

@@ -116,7 +116,8 @@ Implemented:
   and warning when credentials or unsupported body semantics need review.
 - A local `cargo xtask bench` harness measures real Postman import, generated
   1,000- and 10,000-request workspace open/search operations, a deterministic
-  100-request loopback runner workload and macOS CLI startup peak RSS without
+  100-request loopback runner workload and macOS CLI startup peak RSS, while
+  recording revision, OS, hardware, Rust toolchain and build profile without
   publishing invented competitor comparisons.
 - `cargo xtask compat` executes checked-in Postman collection/environment and
   OpenAPI fixtures, reporting fixture execution separately from manual-review
