@@ -69,7 +69,7 @@ Implemented:
 - HTML responses now also expose a bounded safe `Preview` tab that renders only
   decoded text and block structure; scripts, styles, comments and active links
   are omitted, and oversized documents remain on Pretty/Raw.
-- OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, same-source-directory external refs and bounded remote HTTP(S) refs, parameters, JSON bodies, response examples and auth placeholders.
+- OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, same-source-directory external refs and bounded remote HTTP(S) refs, parameters, JSON/URL-encoded/multipart/binary/text bodies, response examples and auth placeholders.
 - OpenAPI import accepts local files or explicit HTTP(S) URLs with bounded root/reference downloads and a source-preserving report; remote references are cached per import and cycles remain visible as warnings.
 - Native collections export to OpenAPI 3.0 JSON/YAML with operation paths,
   parameters, request bodies, common security schemes, response examples,
@@ -351,10 +351,13 @@ variables plus Postly `{{name}}` placeholders. The OpenAPI export slice is cover
 by native JSON/YAML
 serialization tests and a real CLI smoke run from a temporary workspace;
 operation paths, server variables, security metadata, request/response examples
-and nested inferred schemas were inspected.
+and nested inferred schemas were inspected. OpenAPI request-body import now also
+maps URL-encoded forms, multipart fields and binary file selections from examples
+or schema properties, while preserving text media types and encoding content
+types.
 
-On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 9
-checked-in fixtures; its separate request-mapping signal was 23/27 (85.2%),
+On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 10
+checked-in fixtures; its separate request-mapping signal was 27/31 (87.1%),
 with file bodies, scripts and other review-worthy cases retained as explicit manual review. The latest local
 `cargo xtask bench --json` run on macOS arm64 at revision `a101021` reported a
 CLI `--help` startup median of 11.407 ms and peak RSS of 12,944 KiB, 85.959 ms
@@ -370,7 +373,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`6351fd72afc20628f0aaad1b96d94549486338542fd808e278ef29f1b622137b`.
+`96650d3a0f364d9d300cbe4036aa4976251688142481f61bea304e067b4bff15`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
@@ -398,6 +401,11 @@ patterns are reported as schema errors rather than silently ignored.
 Conditional JSON Schema rules now enforce property dependencies and apply
 bounded `if`/`then`/`else` branches to response objects, with runner coverage
 for both dependent-required and dependent-schema failures.
+
+The latest `cargo xtask check` passed format, clippy and all workspace targets:
+37 CLI tests, 59 native GUI tests, 148 core tests and 1 xtask test (245 tests
+total). The OpenAPI compatibility fixture and non-JSON body regression are
+included in that local result.
 
 ## Next highest-value work
 

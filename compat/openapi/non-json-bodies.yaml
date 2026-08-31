@@ -1,0 +1,68 @@
+openapi: 3.0.3
+info:
+  title: Postly OpenAPI non-JSON body fixture
+  version: 1.0.0
+servers:
+  - url: https://api.example.test
+paths:
+  /login:
+    post:
+      operationId: login
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  example: Ada
+                remember:
+                  type: boolean
+                  default: true
+      responses:
+        '204':
+          description: Logged in
+  /upload:
+    post:
+      operationId: upload
+      requestBody:
+        content:
+          multipart/form-data:
+            example:
+              avatar: ./fixtures/avatar.png
+              caption: Ada
+            schema:
+              type: object
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+                caption:
+                  type: string
+            encoding:
+              avatar:
+                contentType: image/png
+      responses:
+        '201':
+          description: Uploaded
+  /archive:
+    put:
+      operationId: archive
+      requestBody:
+        content:
+          application/octet-stream:
+            example: ./fixtures/archive.bin
+      responses:
+        '202':
+          description: Accepted
+  /text:
+    post:
+      operationId: text
+      requestBody:
+        content:
+          text/plain:
+            example: hello from OpenAPI
+      responses:
+        '200':
+          description: Echoed

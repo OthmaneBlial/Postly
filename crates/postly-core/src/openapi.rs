@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
 };
@@ -10,7 +10,10 @@ use thiserror::Error;
 use url::Url;
 
 use crate::{
-    model::{ApiKeyLocation, Auth, Collection, HeaderEntry, KeyValue, Request, RequestBody},
+    model::{
+        ApiKeyLocation, Auth, Collection, HeaderEntry, KeyValue, MultipartPart, Request,
+        RequestBody,
+    },
     storage::{CollectionFiles, Workspace, WorkspaceError},
 };
 
@@ -1825,15 +1828,22 @@ fn apply_request_body(
         ));
         return;
     };
-    let media_type = if content.contains_key("application/json") {
-        "application/json"
-    } else {
-        content.keys().min().map(String::as_str).unwrap_or_default()
-    };
-    let Some(media) = content.get(media_type).and_then(Value::as_object) else {
+    let media_type = content
+        .keys()
+        .find(|media_type| media_type.eq_ignore_ascii_case("application/json"))
+        .cloned()
+        .or_else(|| content.keys().min().cloned())
+        .unwrap_or_default();
+    let Some(media) = content.get(&media_type).and_then(Value::as_object) else {
         return;
     };
-    if media_type == "application/json" || media_type.ends_with("+json") {
+    let normalized_media_type = media_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if normalized_media_type == "application/json" || normalized_media_type.ends_with("+json") {
         let value = media
             .get("example")
             .cloned()
@@ -1854,20 +1864,170 @@ fn apply_request_body(
                 Value::Object(Map::new())
             });
         request.body = RequestBody::Json { value };
-    } else if media_type.starts_with("text/") {
+    } else if normalized_media_type == "application/x-www-form-urlencoded" {
+        let fields = openapi_form_fields(media);
+        if fields.is_empty() {
+            warnings.push(format!(
+                "{} {} form body has no example or schema properties; imported an empty form body.",
+                request.method, request.url
+            ));
+        }
+        request.body = RequestBody::FormUrlEncoded { fields };
+    } else if normalized_media_type == "multipart/form-data" {
+        let parts = openapi_multipart_parts(media, warnings, request);
+        if parts.is_empty() {
+            warnings.push(format!(
+                "{} {} multipart body has no example or schema properties; imported an empty multipart body.",
+                request.method, request.url
+            ));
+        }
+        request.body = RequestBody::Multipart { parts };
+    } else if normalized_media_type.starts_with("text/") {
+        let text = example_value(media)
+            .and_then(|value| value_to_text(&value))
+            .unwrap_or_default();
+        if text.is_empty() {
+            warnings.push(format!(
+                "{} {} text body has no example; imported an empty text body.",
+                request.method, request.url
+            ));
+        }
         request.body = RequestBody::Raw {
-            text: media
-                .get("example")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            content_type: Some(media_type.to_owned()),
+            text,
+            content_type: Some(media_type.clone()),
+        };
+    } else if openapi_media_is_binary(&normalized_media_type, media) {
+        let path = example_value(media)
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+            .unwrap_or_default();
+        if path.is_empty() {
+            warnings.push(format!(
+                "{} {} binary body has no example path; choose a local file before sending.",
+                request.method, request.url
+            ));
+        }
+        request.body = RequestBody::BinaryFile {
+            path,
+            content_type: Some(media_type.clone()),
         };
     } else {
         warnings.push(format!(
             "{media_type} request body was not mapped; it needs manual review."
         ));
     }
+}
+
+fn openapi_form_fields(media: &Map<String, Value>) -> Vec<KeyValue> {
+    let mut values = BTreeMap::new();
+    if let Some(example) = example_value(media) {
+        match example {
+            Value::Object(object) => {
+                for (name, value) in object {
+                    if let Some(value) = value_to_text(&value) {
+                        values.insert(name, value);
+                    }
+                }
+            }
+            Value::String(serialized) => {
+                for (name, value) in url::form_urlencoded::parse(serialized.as_bytes()) {
+                    values.insert(name.into_owned(), value.into_owned());
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(properties) = openapi_schema_properties(media) {
+        for (name, schema) in properties {
+            values.entry(name.clone()).or_insert_with(|| {
+                sample_from_schema(schema)
+                    .and_then(|value| value_to_text(&value))
+                    .unwrap_or_default()
+            });
+        }
+    }
+    values
+        .into_iter()
+        .map(|(key, value)| KeyValue::enabled(key, value))
+        .collect()
+}
+
+fn openapi_multipart_parts(
+    media: &Map<String, Value>,
+    warnings: &mut Vec<String>,
+    request: &Request,
+) -> Vec<MultipartPart> {
+    let mut values = BTreeMap::new();
+    if let Some(Value::Object(object)) = example_value(media) {
+        values.extend(object);
+    }
+    let properties = openapi_schema_properties(media);
+    let mut names = values.keys().cloned().collect::<BTreeSet<_>>();
+    if let Some(properties) = properties {
+        names.extend(properties.keys().cloned());
+    }
+    let encoding = media.get("encoding").and_then(Value::as_object);
+    names
+        .into_iter()
+        .map(|name| {
+            let schema = properties.and_then(|properties| properties.get(&name));
+            let binary = schema.is_some_and(openapi_schema_is_binary);
+            let value = values
+                .get(&name)
+                .and_then(value_to_text)
+                .or_else(|| {
+                    schema
+                        .and_then(sample_from_schema)
+                        .and_then(|value| value_to_text(&value))
+                })
+                .unwrap_or_default();
+            let file_path = binary.then(|| value.clone());
+            if binary && value.is_empty() {
+                warnings.push(format!(
+                    "{} {} multipart binary field {name} has no example path; choose a local file before sending.",
+                    request.method, request.url
+                ));
+            }
+            let content_type = encoding
+                .and_then(|encoding| encoding.get(&name))
+                .and_then(Value::as_object)
+                .and_then(|encoding| encoding.get("contentType"))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            MultipartPart {
+                name,
+                value,
+                file_path,
+                content_type,
+                enabled: true,
+            }
+        })
+        .collect()
+}
+
+fn openapi_schema_properties(media: &Map<String, Value>) -> Option<&Map<String, Value>> {
+    media
+        .get("schema")
+        .and_then(Value::as_object)
+        .and_then(|schema| schema.get("properties"))
+        .and_then(Value::as_object)
+}
+
+fn openapi_schema_is_binary(schema: &Value) -> bool {
+    let Some(schema) = schema.as_object() else {
+        return false;
+    };
+    schema
+        .get("format")
+        .and_then(Value::as_str)
+        .is_some_and(|format| format.eq_ignore_ascii_case("binary"))
+}
+
+fn openapi_media_is_binary(media_type: &str, media: &Map<String, Value>) -> bool {
+    media_type == "application/octet-stream"
+        || media_type.starts_with("image/")
+        || media_type.starts_with("audio/")
+        || media_type.starts_with("video/")
+        || media.get("schema").is_some_and(openapi_schema_is_binary)
 }
 
 fn apply_response_examples(
@@ -2362,6 +2522,135 @@ paths:
         assert_eq!(examples[1].body.as_deref(), Some("not found"));
         assert_eq!(examples[2].status, None);
         assert_eq!(examples[2].name, "Unexpected response");
+    }
+
+    #[test]
+    fn imports_openapi_non_json_request_bodies_into_native_models() {
+        let output = tempfile::tempdir().expect("output");
+        let input = output.path().join("bodies.openapi.yaml");
+        fs::write(
+            &input,
+            r#"openapi: 3.0.3
+info:
+  title: Body API
+servers:
+  - url: https://api.example.test
+paths:
+  /login:
+    post:
+      operationId: login
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  example: Ada
+                remember:
+                  type: boolean
+                  default: true
+  /upload:
+    post:
+      operationId: upload
+      requestBody:
+        content:
+          multipart/form-data:
+            example:
+              avatar: ./fixtures/avatar.png
+              caption: Ada
+            schema:
+              type: object
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+                caption:
+                  type: string
+            encoding:
+              avatar:
+                contentType: image/png
+  /archive:
+    put:
+      operationId: archive
+      requestBody:
+        content:
+          application/octet-stream:
+            example: ./fixtures/archive.bin
+  /text:
+    post:
+      operationId: text
+      requestBody:
+        content:
+          text/plain:
+            example: hello from OpenAPI
+"#,
+        )
+        .expect("OpenAPI fixture");
+
+        let report = import_openapi(&input, output.path()).expect("import");
+        assert_eq!(report.imported_operations, 4);
+        assert!(!report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("body was not mapped")));
+
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let collections = workspace.collections().expect("collections");
+        let requests = workspace.requests(&collections[0]).expect("requests");
+
+        let login = requests
+            .iter()
+            .find(|(_, request)| request.name == "login")
+            .expect("login request");
+        assert!(matches!(
+            &login.1.body,
+            RequestBody::FormUrlEncoded { fields }
+                if fields == &vec![
+                    KeyValue::enabled("remember", "true"),
+                    KeyValue::enabled("username", "Ada")
+                ]
+        ));
+
+        let upload = requests
+            .iter()
+            .find(|(_, request)| request.name == "upload")
+            .expect("upload request");
+        match &upload.1.body {
+            RequestBody::Multipart { parts } => {
+                assert_eq!(parts.len(), 2);
+                assert_eq!(parts[0].name, "avatar");
+                assert_eq!(parts[0].file_path.as_deref(), Some("./fixtures/avatar.png"));
+                assert_eq!(parts[0].content_type.as_deref(), Some("image/png"));
+                assert_eq!(parts[1].name, "caption");
+                assert_eq!(parts[1].value, "Ada");
+                assert!(parts[1].file_path.is_none());
+            }
+            other => panic!("expected multipart body, got {other:?}"),
+        }
+
+        let archive = requests
+            .iter()
+            .find(|(_, request)| request.name == "archive")
+            .expect("archive request");
+        assert!(matches!(
+            &archive.1.body,
+            RequestBody::BinaryFile { path, content_type }
+                if path == "./fixtures/archive.bin"
+                    && content_type.as_deref() == Some("application/octet-stream")
+        ));
+
+        let text = requests
+            .iter()
+            .find(|(_, request)| request.name == "text")
+            .expect("text request");
+        assert!(matches!(
+            &text.1.body,
+            RequestBody::Raw { text, content_type }
+                if text == "hello from OpenAPI"
+                    && content_type.as_deref() == Some("text/plain")
+        ));
     }
 
     #[test]

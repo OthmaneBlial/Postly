@@ -23,20 +23,23 @@ dependency.
 
 The importer creates one request per local HTTP operation, using the first
 server, operation IDs, tags as folders, path/query/header/cookie parameters,
-JSON or text request-body examples, response examples, local `$ref` components, and common
-HTTP/API-key security schemes. JSON Schema examples/defaults, composed schemas
+JSON, URL-encoded form, multipart, binary-file and text request-body examples,
+response examples, local `$ref` components, and common HTTP/API-key security
+schemes. JSON Schema examples/defaults, composed schemas
 (`allOf`/`oneOf`/`anyOf`), format-aware scalar values and array item samples
 are used to create useful sample bodies. Server defaults become
 collection variables. Parameters without an
 example/default remain explicit `{{variable}}` placeholders and are reported
-as warnings rather than silently invented.
+as warnings rather than silently invented. Multipart binary fields and binary
+media types preserve an example path as a local file selection; if no example
+path exists, Postly keeps an empty file selection and reports that the user
+must choose a file before sending.
 
 The JSON report is part of the migration artifact. Cyclic graphs are detected
 and left unresolved with a warning. Local relative references cannot escape
 the source directory, and remote references accept only HTTP(S) URLs within
-the bounded fetch policy. OAuth coordination, binary/multipart body
-generation and OpenAPI 2/Swagger documents still require manual review or a
-future milestone.
+the bounded fetch policy. OAuth coordination and OpenAPI 2/Swagger documents
+still require manual review or a future milestone.
 
 ## Export a native collection
 
