@@ -13,7 +13,7 @@ cargo xtask bench --json > bench-generated/local.json
 
 The suite measures five samples each for:
 
-- importing the checked-in seven-request Postman variant fixture;
+- importing the checked-in eight-request Postman variant fixture;
 - opening a generated workspace containing 1,000 request files;
 - searching that 1,000-request workspace for metadata matches.
 
