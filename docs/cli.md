@@ -171,6 +171,7 @@ postly env migrate --workspace ./my-api --name Local --all
 
 postly run ./my-api --environment Local \
   --proxy http://127.0.0.1:8080 \
+  --max-redirects 5 \
   --ca-cert ./certs/company-ca.pem \
   --client-identity ./certs/client-identity.pem
 ~~~
@@ -192,6 +193,9 @@ HTTP(S)/SOCKS proxy, `--no-proxy` bypass and certificate flags where the
 transport applies. WebSocket and gRPC support HTTP CONNECT and SOCKS5/SOCKS5H
 routing with the same bypass rules. When `--proxy` is omitted, platform
 and standard proxy environment variables are handled by the HTTP client.
+These HTTP-based commands also accept `--max-redirects N`; the default is 10,
+and `--max-redirects 0` keeps the initial 3xx response without following it.
+The limit is applied per request, including saved sends and collection runs.
 
 Import a conventional `.env` file explicitly. Values stay literal—there is no
 variable expansion or command execution—and only keys named with `--secret`

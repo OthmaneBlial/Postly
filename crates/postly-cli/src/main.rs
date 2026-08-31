@@ -87,6 +87,7 @@ struct ImmediateRequestOptions {
     aws_service: Option<String>,
     aws_session_token: Option<String>,
     timeout: u64,
+    max_redirects: usize,
     proxy: Option<String>,
     no_proxy: Option<String>,
     ca_cert: Option<PathBuf>,
@@ -107,6 +108,7 @@ struct GraphqlOptions {
     basic_user: Option<String>,
     basic_password: Option<String>,
     timeout: u64,
+    max_redirects: usize,
     proxy: Option<String>,
     no_proxy: Option<String>,
     ca_cert: Option<PathBuf>,
@@ -506,6 +508,7 @@ struct SseOptions {
     basic_user: Option<String>,
     basic_password: Option<String>,
     timeout: u64,
+    max_redirects: usize,
     reconnect: u32,
     proxy: Option<String>,
     no_proxy: Option<String>,
@@ -537,6 +540,7 @@ struct RunOptions<'a> {
     scripts: bool,
     concurrency: usize,
     timeout: u64,
+    max_redirects: usize,
     proxy: Option<&'a str>,
     no_proxy: Option<&'a str>,
     ca_cert: Option<&'a Path>,
@@ -550,6 +554,7 @@ struct SendOptions<'a> {
     environment_name: Option<&'a str>,
     scripts: bool,
     timeout: u64,
+    max_redirects: usize,
     proxy: Option<&'a str>,
     no_proxy: Option<&'a str>,
     ca_cert: Option<&'a Path>,
@@ -561,6 +566,7 @@ struct SendOptions<'a> {
 
 struct ExecuteOptions<'a> {
     timeout: u64,
+    max_redirects: usize,
     proxy: Option<&'a str>,
     no_proxy: Option<&'a str>,
     ca_cert: Option<&'a Path>,
@@ -737,6 +743,12 @@ enum Command {
         timeout: u64,
         #[arg(
             long,
+            default_value_t = 10,
+            help = "Maximum number of HTTP redirects to follow (0 disables redirects)"
+        )]
+        max_redirects: usize,
+        #[arg(
+            long,
             value_name = "URL",
             help = "Route the request through an HTTP(S) or SOCKS proxy"
         )]
@@ -792,6 +804,12 @@ enum Command {
         timeout: u64,
         #[arg(
             long,
+            default_value_t = 10,
+            help = "Maximum number of HTTP redirects to follow (0 disables redirects)"
+        )]
+        max_redirects: usize,
+        #[arg(
+            long,
             value_name = "URL",
             help = "Route the request through an HTTP(S) or SOCKS proxy"
         )]
@@ -838,6 +856,12 @@ enum Command {
         basic_password: Option<String>,
         #[arg(long, default_value_t = 300)]
         timeout: u64,
+        #[arg(
+            long,
+            default_value_t = 10,
+            help = "Maximum number of HTTP redirects to follow (0 disables redirects)"
+        )]
+        max_redirects: usize,
         #[arg(long, default_value_t = 0)]
         reconnect: u32,
         #[arg(
@@ -918,6 +942,12 @@ enum Command {
         output_json: bool,
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+        #[arg(
+            long,
+            default_value_t = 10,
+            help = "Maximum number of HTTP redirects to follow (0 disables redirects)"
+        )]
+        max_redirects: usize,
         #[arg(
             long,
             value_name = "URL",
@@ -1074,6 +1104,12 @@ enum Command {
         concurrency: usize,
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+        #[arg(
+            long,
+            default_value_t = 10,
+            help = "Maximum number of HTTP redirects to follow (0 disables redirects)"
+        )]
+        max_redirects: usize,
         #[arg(
             long,
             value_name = "URL",
@@ -1414,6 +1450,7 @@ async fn main() -> Result<()> {
             basic_password,
             oauth,
             timeout,
+            max_redirects,
             proxy,
             no_proxy,
             ca_cert,
@@ -1448,6 +1485,7 @@ async fn main() -> Result<()> {
                 aws_service: oauth.aws_service,
                 aws_session_token: oauth.aws_session_token,
                 timeout,
+                max_redirects,
                 proxy,
                 no_proxy,
                 ca_cert,
@@ -1470,6 +1508,7 @@ async fn main() -> Result<()> {
             basic_user,
             basic_password,
             timeout,
+            max_redirects,
             proxy,
             no_proxy,
             ca_cert,
@@ -1489,6 +1528,7 @@ async fn main() -> Result<()> {
                 basic_user,
                 basic_password,
                 timeout,
+                max_redirects,
                 proxy,
                 no_proxy,
                 ca_cert,
@@ -1555,6 +1595,7 @@ async fn main() -> Result<()> {
             basic_user,
             basic_password,
             timeout,
+            max_redirects,
             reconnect,
             proxy,
             no_proxy,
@@ -1570,6 +1611,7 @@ async fn main() -> Result<()> {
                 basic_user,
                 basic_password,
                 timeout,
+                max_redirects,
                 reconnect,
                 proxy,
                 no_proxy,
@@ -1614,6 +1656,7 @@ async fn main() -> Result<()> {
             scripts,
             output_json,
             timeout,
+            max_redirects,
             proxy,
             no_proxy,
             ca_cert,
@@ -1626,6 +1669,7 @@ async fn main() -> Result<()> {
                 environment_name: environment.as_deref(),
                 scripts,
                 timeout,
+                max_redirects,
                 proxy: proxy.as_deref(),
                 no_proxy: no_proxy.as_deref(),
                 ca_cert: ca_cert.as_deref(),
@@ -1716,6 +1760,7 @@ async fn main() -> Result<()> {
             scripts,
             concurrency,
             timeout,
+            max_redirects,
             proxy,
             no_proxy,
             ca_cert,
@@ -1732,6 +1777,7 @@ async fn main() -> Result<()> {
                 scripts,
                 concurrency,
                 timeout,
+                max_redirects,
                 proxy: proxy.as_deref(),
                 no_proxy: no_proxy.as_deref(),
                 ca_cert: ca_cert.as_deref(),
@@ -2217,6 +2263,7 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
         VariableContext::default(),
         ExecuteOptions {
             timeout: options.timeout,
+            max_redirects: options.max_redirects,
             proxy: options.proxy.as_deref(),
             no_proxy: options.no_proxy.as_deref(),
             ca_cert: options.ca_cert.as_deref(),
@@ -2255,6 +2302,7 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
         VariableContext::default(),
         ExecuteOptions {
             timeout: options.timeout,
+            max_redirects: options.max_redirects,
             proxy: options.proxy.as_deref(),
             no_proxy: options.no_proxy.as_deref(),
             ca_cert: options.ca_cert.as_deref(),
@@ -2314,6 +2362,7 @@ async fn introspect_graphql_schema(options: GraphqlOptions) -> Result<()> {
         VariableContext::default(),
         ExecuteOptions {
             timeout: options.timeout,
+            max_redirects: options.max_redirects,
             proxy: options.proxy.as_deref(),
             no_proxy: options.no_proxy.as_deref(),
             ca_cert: options.ca_cert.as_deref(),
@@ -2688,6 +2737,7 @@ async fn stream_sse(options: SseOptions) -> Result<()> {
 
     let engine = HttpEngine::new(&EngineOptions {
         timeout: Duration::from_secs(options.timeout),
+        max_redirects: options.max_redirects,
         accept_invalid_certs: options.insecure,
         proxy: options.proxy.clone(),
         no_proxy: options.no_proxy.clone(),
@@ -3148,6 +3198,7 @@ async fn send_saved_request(options: SendOptions<'_>) -> Result<()> {
         context.clone(),
         ExecuteOptions {
             timeout: options.timeout,
+            max_redirects: options.max_redirects,
             proxy: options.proxy,
             no_proxy: options.no_proxy,
             ca_cert: options.ca_cert,
@@ -3677,6 +3728,7 @@ async fn run_workspace_with_cancellation(
     }
     let engine = HttpEngine::new(&EngineOptions {
         timeout: Duration::from_secs(options.timeout),
+        max_redirects: options.max_redirects,
         proxy: options.proxy.map(ToOwned::to_owned),
         no_proxy: options.no_proxy.map(ToOwned::to_owned),
         ca_cert: options.ca_cert.map(Path::to_path_buf),
@@ -3932,6 +3984,7 @@ async fn execute(
 ) -> Result<postly_core::HttpResponse> {
     let engine = HttpEngine::new(&EngineOptions {
         timeout: Duration::from_secs(options.timeout),
+        max_redirects: options.max_redirects,
         accept_invalid_certs: options.insecure,
         proxy: options.proxy.map(ToOwned::to_owned),
         no_proxy: options.no_proxy.map(ToOwned::to_owned),
@@ -4444,6 +4497,23 @@ mod tests {
         assert!(
             Cli::try_parse_from(["postly", "run", "./workspace", "--concurrency", "65"]).is_err()
         );
+    }
+
+    #[test]
+    fn parses_http_redirect_limit_with_a_safe_default() {
+        let cli = Cli::try_parse_from(["postly", "request", "http://example.test"])
+            .expect("default redirect limit");
+        match cli.command {
+            Command::Request { max_redirects, .. } => assert_eq!(max_redirects, 10),
+            command => panic!("unexpected command: {command:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["postly", "run", "./workspace", "--max-redirects", "0"])
+            .expect("disabled redirect following");
+        match cli.command {
+            Command::Run { max_redirects, .. } => assert_eq!(max_redirects, 0),
+            command => panic!("unexpected command: {command:?}"),
+        }
     }
 
     #[test]
@@ -5205,6 +5275,7 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            max_redirects: 10,
             proxy: None,
             no_proxy: None,
             ca_cert: None,
@@ -5255,6 +5326,7 @@ mod tests {
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            max_redirects: 10,
             proxy: None,
             no_proxy: None,
             ca_cert: None,
@@ -5342,6 +5414,7 @@ paths:
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            max_redirects: 10,
             reconnect: 0,
             proxy: None,
             no_proxy: None,
@@ -5394,6 +5467,7 @@ paths:
             basic_user: None,
             basic_password: None,
             timeout: 10,
+            max_redirects: 10,
             reconnect: 1,
             proxy: None,
             no_proxy: None,
@@ -5733,6 +5807,7 @@ paths:
                 scripts: false,
                 concurrency: 1,
                 timeout: 10,
+                max_redirects: 10,
                 proxy: None,
                 no_proxy: None,
                 ca_cert: None,
@@ -5790,6 +5865,7 @@ paths:
             scripts: false,
             concurrency: 1,
             timeout: 10,
+            max_redirects: 10,
             proxy: None,
             no_proxy: None,
             ca_cert: None,

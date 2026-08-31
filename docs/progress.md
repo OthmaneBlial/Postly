@@ -16,6 +16,7 @@ Implemented:
 - Custom PEM CA bundles and combined PEM client identities in the shared HTTP engine and CLI workflows, with actionable file/format diagnostics and local HTTPS/mTLS integration tests.
 - Basic, Bearer, API-key, OAuth 2.0 Client Credentials, Authorization Code + PKCE (explicit exchange and loopback browser callback), Refresh Token, Device Authorization Grant and buffered AWS Signature V4 signing in the native model, GUI, CLI, Postman import/export and shared HTTP engine, with bounded approval polling, in-memory expiry-aware token caching and local token-exchange/browser-callback/SigV4 integration tests.
 - Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, plus CLI/GUI WebSocket and gRPC SOCKS5/HTTP CONNECT routing, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass/relay tests.
+- Configurable HTTP redirect limits across direct CLI requests, GraphQL, SSE, saved sends, collection runs and the native GUI Transport tab; the default remains 10 and zero explicitly disables redirect following, with local core and CLI coverage.
 - Response metadata and JSON pretty formatting, including locally measured
   total duration, TTFB and bounded-body download duration.
 - Postman Collection v2.1 and environment import reports.
@@ -75,7 +76,7 @@ Implemented:
   A session-only opt-in also runs those scripts in the HTTP send worker,
   applies pre-request mutations to that send, and keeps post-response failures
   visible while retaining the response.
-- native GUI Transport tab with persisted local timeout, HTTP(S)/SOCKS proxy, bypass hosts, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE/WebSocket/gRPC workflows; WebSocket and gRPC use HTTP CONNECT routing.
+- native GUI Transport tab with persisted local timeout, bounded redirect limit, HTTP(S)/SOCKS proxy, bypass hosts, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE/WebSocket/gRPC workflows; WebSocket and gRPC use HTTP CONNECT routing.
 - Native GUI Body tab editors for raw text, JSON, XML, HTML, JavaScript and GraphQL plus URL-encoded fields, multipart text/file parts and binary file uploads, with disabled entries and optional content types preserved.
 - Native GUI command palette with searchable request actions and keyboard shortcuts for new, save, send, cancel, response clearing and wrapping.
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs, combined PEM client identities and explicit HTTP CONNECT proxy routing; explicit insecure TLS remains pending.

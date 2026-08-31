@@ -871,7 +871,11 @@ impl HttpEngine {
         let mut builder = Client::builder()
             .timeout(options.timeout)
             .danger_accept_invalid_certs(options.accept_invalid_certs)
-            .redirect(reqwest::redirect::Policy::limited(options.max_redirects))
+            .redirect(if options.max_redirects == 0 {
+                reqwest::redirect::Policy::none()
+            } else {
+                reqwest::redirect::Policy::limited(options.max_redirects)
+            })
             .cookie_provider(Arc::clone(&cookie_jar));
         if uses_pkcs12_identity {
             builder = builder.use_native_tls();
@@ -3606,6 +3610,78 @@ mod tests {
         );
         assert!(response.ttfb_ms <= response.duration_ms);
         assert!(response.download_ms <= response.duration_ms);
+    }
+
+    #[tokio::test]
+    async fn honors_the_configured_http_redirect_limit() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.expect("initial connection");
+            assert!(read_request_headers(&mut first)
+                .await
+                .contains("GET /start HTTP/1.1"));
+            first
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nlocation: /final\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await
+                .expect("redirect response");
+
+            let (mut second, _) = listener.accept().await.expect("redirected connection");
+            assert!(read_request_headers(&mut second)
+                .await
+                .contains("GET /final HTTP/1.1"));
+            second
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 10\r\nconnection: close\r\n\r\nredirected",
+                )
+                .await
+                .expect("final response");
+        });
+
+        let request = Request::new("Redirect", "GET", format!("http://{address}/start"));
+        let engine = HttpEngine::new(&EngineOptions {
+            max_redirects: 1,
+            ..EngineOptions::default()
+        })
+        .expect("redirect engine");
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("redirected response");
+        server.await.expect("redirect server");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "redirected");
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("connection");
+            assert!(read_request_headers(&mut socket)
+                .await
+                .contains("GET /start HTTP/1.1"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nlocation: /final\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await
+                .expect("redirect response");
+        });
+        let engine = HttpEngine::new(&EngineOptions {
+            max_redirects: 0,
+            ..EngineOptions::default()
+        })
+        .expect("non-redirecting engine");
+        let response = engine
+            .execute(
+                &Request::new("No redirect", "GET", format!("http://{address}/start")),
+                &VariableContext::default(),
+            )
+            .await
+            .expect("stopped redirect response");
+        server.await.expect("non-redirecting server");
+        assert_eq!(response.status, 302);
     }
 
     #[test]
