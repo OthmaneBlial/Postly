@@ -232,8 +232,8 @@ The OpenAPI export slice is covered by a native JSON/YAML serialization test
 and a real CLI smoke run from a temporary workspace; operation paths, server
 variables, security metadata and request/response examples were inspected.
 
-On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 6
-checked-in fixtures; its separate request-mapping signal was 12/17 (70.59%),
+On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 7
+checked-in fixtures; its separate request-mapping signal was 16/21 (76.19%),
 with the remaining cases retained as explicit manual review. The latest local
 `cargo xtask bench --json` run on macOS arm64 reported a CLI `--help` startup
 median of 11.28 ms and median peak RSS of 12,192 KiB, 5.54 ms for the Postman
@@ -247,7 +247,7 @@ targets (`curl_command`, `variables` and `postman_import`) each completed 256
 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`6c95841fc0711a6923c5bc6033f5067542688393509a9282ae9eefb166b236dc`.
+`d46c8138c1f23a7b6d670a6f2697c34c576482738cb1fb57d7fa1469455df924`.
 
 ## Next highest-value work
 
