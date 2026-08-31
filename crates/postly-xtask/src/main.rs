@@ -92,13 +92,20 @@ fn run_benchmarks(json_output: bool) -> bool {
                 );
                 println!();
                 println!(
-                    "{:<46} {:>12} {:>12} {:>12}",
-                    "benchmark", "median ms", "min ms", "max ms"
+                    "{:<46} {:>12} {:>12} {:>12} {:>16}",
+                    "benchmark", "median ms", "min ms", "max ms", "peak rss KiB"
                 );
                 for result in results {
                     println!(
-                        "{:<46} {:>12.3} {:>12.3} {:>12.3}",
-                        result.name, result.median_ms, result.min_ms, result.max_ms
+                        "{:<46} {:>12.3} {:>12.3} {:>12.3} {:>16}",
+                        result.name,
+                        result.median_ms,
+                        result.min_ms,
+                        result.max_ms,
+                        result
+                            .peak_rss_kib
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "—".to_owned())
                     );
                 }
             }
@@ -586,25 +593,14 @@ struct BenchmarkResult {
     median_ms: f64,
     min_ms: f64,
     max_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peak_rss_kib: Option<u64>,
 }
 
 fn collect_benchmarks() -> Result<Vec<BenchmarkResult>, String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let cli_binary = resolve_cli_binary(&root)?;
-    let cli_startup = measure("cli_startup_help", || {
-        let output = Command::new(&cli_binary)
-            .arg("--help")
-            .output()
-            .map_err(|error| format!("could not start {}: {error}", cli_binary.display()))?;
-        if !output.status.success() {
-            return Err(format!(
-                "{} --help exited with {}",
-                cli_binary.display(),
-                output.status
-            ));
-        }
-        Ok(())
-    })?;
+    let cli_startup = measure_process("cli_startup_help", &cli_binary, &["--help"])?;
 
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../compat/postman-import/variants-v2.1.json");
@@ -713,7 +709,73 @@ where
         median_ms,
         min_ms: samples[0],
         max_ms: samples[samples.len() - 1],
+        peak_rss_kib: None,
     })
+}
+
+fn measure_process(name: &str, program: &Path, args: &[&str]) -> Result<BenchmarkResult, String> {
+    let mut durations = Vec::with_capacity(BENCHMARK_ITERATIONS);
+    let mut memory = Vec::with_capacity(BENCHMARK_ITERATIONS);
+    for _ in 0..BENCHMARK_ITERATIONS {
+        let started = Instant::now();
+        #[cfg(target_os = "macos")]
+        let output = Command::new("/usr/bin/time")
+            .args(["-l", program.to_string_lossy().as_ref()])
+            .args(args)
+            .output()
+            .map_err(|error| format!("could not measure {}: {error}", program.display()))?;
+        #[cfg(not(target_os = "macos"))]
+        let output = Command::new(program)
+            .args(args)
+            .output()
+            .map_err(|error| format!("could not start {}: {error}", program.display()))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{} {} exited with {}",
+                program.display(),
+                args.join(" "),
+                output.status
+            ));
+        }
+        durations.push(started.elapsed().as_secs_f64() * 1_000.0);
+        #[cfg(target_os = "macos")]
+        if let Some(rss_bytes) =
+            parse_macos_peak_rss(&output.stderr).or_else(|| parse_macos_peak_rss(&output.stdout))
+        {
+            memory.push((rss_bytes.saturating_add(1023)) / 1024);
+        }
+    }
+    durations.sort_by(f64::total_cmp);
+    memory.sort_unstable();
+    Ok(BenchmarkResult {
+        name: name.to_owned(),
+        iterations: BENCHMARK_ITERATIONS,
+        median_ms: durations[durations.len() / 2],
+        min_ms: durations[0],
+        max_ms: durations[durations.len() - 1],
+        peak_rss_kib: (!memory.is_empty()).then(|| memory[memory.len() / 2]),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn parse_macos_peak_rss(stderr: &[u8]) -> Option<u64> {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .find(|line| line.contains("maximum resident set size"))
+        .and_then(|line| line.split_whitespace().find_map(|value| value.parse().ok()))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::parse_macos_peak_rss;
+
+    #[test]
+    fn parses_macos_time_peak_rss() {
+        assert_eq!(
+            parse_macos_peak_rss(b"            12484608  maximum resident set size\n"),
+            Some(12_484_608)
+        );
+    }
 }
 
 fn run(program: &str, args: &[&str]) -> bool {
