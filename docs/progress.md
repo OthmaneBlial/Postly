@@ -83,6 +83,9 @@ Implemented:
   the child environment is reduced to `PATH`, serialized input and stdout/stderr
   pipes have explicit size caps, and the worker bounds process duration plus
   captured logs and test results.
+- GUI and collection-runner script cancellation now terminates the Node child
+  process, joins bounded output readers and reports a deterministic cancelled
+  state instead of waiting for the normal script timeout.
 - On Node versions exposing both `--permission` and `--allow-net`, the script
   bridge enables Node's permission model for defense in depth: bounded network
   callbacks remain available while filesystem, child-process, worker and addon

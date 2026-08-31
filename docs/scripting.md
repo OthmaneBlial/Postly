@@ -70,7 +70,10 @@ at 8 MiB; captured output is also capped at 200 log entries of 4 KiB each and
 1,000 test results. These controls are not a security boundary for hostile
 code; the VM remains unsuitable for untrusted JavaScript. An embedded-runtime
 or isolated-worker decision is still required before broad compatibility is
-enabled by default.
+enabled by default. GUI and collection-runner cancellation is wired through
+the child-process wait loop: cancelling a running script kills its Node
+process, joins its output readers and reports a deterministic cancellation
+state.
 `pm.sendRequest` is intentionally a partial compatibility slice: it permits up
 to eight HTTP(S) callback requests per script, caps each response at 1 MiB and
 uses a two-second request timeout. URL query parameters and common in-memory

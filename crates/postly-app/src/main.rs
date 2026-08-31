@@ -18,7 +18,7 @@ use futures_util::{SinkExt, StreamExt};
 use hyper_util::rt::TokioIo;
 use postly_core::{
     connect_socks5_stream, export_curl_command, message_from_json, message_to_json,
-    parse_curl_command, parse_graphql_response, parse_graphql_schema, run_script,
+    parse_curl_command, parse_graphql_response, parse_graphql_schema, run_script_with_cancellation,
     schema_introspection_query, ApiKeyLocation, Assertion, Auth, CancellationToken,
     CollectionFiles, EngineOptions, Environment, EnvironmentVariable, GraphqlSchema, GrpcRequest,
     GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue,
@@ -760,6 +760,7 @@ pub struct PostlyApp {
     pending_grpc: bool,
     pending_cancellation: Option<CancellationToken>,
     script_pending: Option<Receiver<Result<ScriptRunReport, String>>>,
+    script_cancellation: Option<CancellationToken>,
     script_report: Option<ScriptRunReport>,
     script_error: Option<String>,
     run_scripts_on_send: bool,
@@ -891,6 +892,7 @@ impl PostlyApp {
             pending_grpc: false,
             pending_cancellation: None,
             script_pending: None,
+            script_cancellation: None,
             script_report: None,
             script_error: None,
             run_scripts_on_send: false,
@@ -1845,6 +1847,7 @@ impl PostlyApp {
         self.pending_grpc = false;
         self.pending_cancellation = None;
         self.script_pending = None;
+        self.script_cancellation = None;
         self.script_report = None;
         self.script_error = None;
         self.sse_pending = None;
@@ -2134,6 +2137,10 @@ impl PostlyApp {
             cancelled = true;
         }
         if let Some(token) = &self.websocket_cancellation {
+            token.cancel();
+            cancelled = true;
+        }
+        if let Some(token) = &self.script_cancellation {
             token.cancel();
             cancelled = true;
         }
@@ -2703,11 +2710,15 @@ impl PostlyApp {
                     let mut script_reports = Vec::new();
                     if run_scripts_on_send {
                         if let Some(script) = pre_request_script {
-                            let script_result =
-                                run_script(&script, &request_for_send, None, &request_context)
-                                    .map_err(|error| {
-                                        format!("pre-request script failed: {error}")
-                                    })?;
+                            let script_cancellation = worker_cancellation.clone();
+                            let script_result = run_script_with_cancellation(
+                                &script,
+                                &request_for_send,
+                                None,
+                                &request_context,
+                                move || script_cancellation.is_cancelled(),
+                            )
+                            .map_err(|error| format!("pre-request script failed: {error}"))?;
                             script_result
                                 .apply(&mut request_for_send, &mut request_context)
                                 .map_err(|error| {
@@ -2755,11 +2766,13 @@ impl PostlyApp {
                     let mut script_error = None;
                     if run_scripts_on_send {
                         if let Some(script) = test_script {
-                            match run_script(
+                            let script_cancellation = worker_cancellation.clone();
+                            match run_script_with_cancellation(
                                 &script,
                                 &request_for_send,
                                 Some(&response),
                                 &request_context,
+                                move || script_cancellation.is_cancelled(),
                             ) {
                                 Ok(script_result) => script_reports.push(ScriptRunReport {
                                     kind: ScriptRunKind::Tests,
@@ -2862,14 +2875,23 @@ impl PostlyApp {
         let request = self.edited_request()?;
         let context = self.context()?;
         self.remember_sensitive_values(&request, &context);
+        let cancellation = CancellationToken::default();
+        let worker_cancellation = cancellation.clone();
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
-            let result = run_script(&script, &request, response.as_ref(), &context)
-                .map(|result| ScriptRunReport { kind, result })
-                .map_err(|error| error.to_string());
+            let result = run_script_with_cancellation(
+                &script,
+                &request,
+                response.as_ref(),
+                &context,
+                move || worker_cancellation.is_cancelled(),
+            )
+            .map(|result| ScriptRunReport { kind, result })
+            .map_err(|error| error.to_string());
             let _ = sender.send(result);
         });
         self.script_pending = Some(receiver);
+        self.script_cancellation = Some(cancellation);
         self.script_report = None;
         self.script_error = None;
         self.push_console(
@@ -3370,6 +3392,7 @@ impl PostlyApp {
             Err(TryRecvError::Disconnected) => Err("script worker stopped unexpectedly".to_owned()),
         };
         self.script_pending = None;
+        self.script_cancellation = None;
         match result {
             Ok(report) => {
                 for log in &report.result.logs {
@@ -3403,6 +3426,12 @@ impl PostlyApp {
                         format!("Script finished with {failed} failed test(s)"),
                     );
                 }
+            }
+            Err(error) if error == "script execution cancelled" => {
+                self.status_message = "Script cancelled".to_owned();
+                self.script_error = None;
+                self.script_report = None;
+                self.push_console(ConsoleLevel::Info, "Script cancelled");
             }
             Err(error) => {
                 self.status_message = "Script failed".to_owned();

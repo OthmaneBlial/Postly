@@ -15,7 +15,7 @@ use tokio::sync::Notify;
 use crate::{
     http::{HttpEngine, HttpResponse},
     model::{Assertion, Request, Variables},
-    scripting::{run_script, ScriptResult, ScriptTestResult},
+    scripting::{run_script_with_cancellation, ScriptResult, ScriptTestResult},
     variables::VariableContext,
 };
 
@@ -427,6 +427,7 @@ pub async fn run_requests(
                         request_to_run.clone(),
                         None,
                         request_context.clone(),
+                        options.cancellation.clone(),
                     )
                     .await
                     {
@@ -436,6 +437,10 @@ pub async fn run_requests(
                             {
                                 script_error = Some(error.to_string());
                             }
+                        }
+                        Err(_error) if options.cancellation.is_cancelled() => {
+                            summary.cancelled = true;
+                            break 'iterations;
                         }
                         Err(error) => script_error = Some(error),
                     }
@@ -479,6 +484,7 @@ pub async fn run_requests(
                                 request_to_run.clone(),
                                 Some(response.clone()),
                                 request_context.clone(),
+                                options.cancellation.clone(),
                             )
                             .await
                             {
@@ -509,6 +515,10 @@ pub async fn run_requests(
                                             assertion_failures.len()
                                         ));
                                     }
+                                }
+                                Err(_script_error) if options.cancellation.is_cancelled() => {
+                                    summary.cancelled = true;
+                                    break 'iterations;
                                 }
                                 Err(script_error) => error = Some(script_error),
                             }
@@ -567,10 +577,13 @@ async fn run_script_async(
     request: Request,
     response: Option<HttpResponse>,
     context: VariableContext,
+    cancellation: CancellationToken,
 ) -> Result<ScriptResult, String> {
     tokio::task::spawn_blocking(move || {
-        run_script(&script, &request, response.as_ref(), &context)
-            .map_err(|error| error.to_string())
+        run_script_with_cancellation(&script, &request, response.as_ref(), &context, || {
+            cancellation.is_cancelled()
+        })
+        .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("script worker failed: {error}"))?
@@ -603,6 +616,42 @@ mod tests {
         assert!(summary.cancelled);
         assert_eq!(summary.requests, 0);
         assert!(!summary.succeeded());
+    }
+
+    #[tokio::test]
+    async fn cancellation_terminates_a_running_script_before_network_work() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let cancellation = CancellationToken::default();
+        let trigger = cancellation.clone();
+        let trigger_thread = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            trigger.cancel();
+        });
+        let mut request = Request::new("Long script", "GET", "http://127.0.0.1:1/never");
+        request.pre_request_script = Some("while (true) {}".to_owned());
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let summary = run_requests(
+            &engine,
+            &[(PathBuf::from("long-script.postly.toml"), request)],
+            &VariableContext::default(),
+            &RunnerOptions {
+                scripts: true,
+                cancellation,
+                ..RunnerOptions::default()
+            },
+        )
+        .await;
+        trigger_thread.join().expect("cancellation trigger");
+
+        assert!(summary.cancelled);
+        assert_eq!(summary.requests, 0);
+        assert!(summary.results.is_empty());
     }
 
     #[tokio::test]

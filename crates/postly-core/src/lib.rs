@@ -55,7 +55,10 @@ pub use openapi::{
     OpenApiExportReport, OpenApiImportError, OpenApiImportReport,
 };
 pub use runner::{run_requests, CancellationToken, RunnerItemResult, RunnerOptions, RunnerSummary};
-pub use scripting::{run_script, ScriptError, ScriptLog, ScriptResult, ScriptTestResult};
+pub use scripting::{
+    run_script, run_script_with_cancellation, ScriptError, ScriptLog, ScriptResult,
+    ScriptTestResult,
+};
 pub use secrets::{SecretReference, SecretStore, SecretStoreError};
 pub use sse::{parse_sse, SseError, SseEvent, SseParser};
 pub use storage::{

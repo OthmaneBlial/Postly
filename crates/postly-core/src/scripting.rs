@@ -39,6 +39,8 @@ pub enum ScriptError {
     UnsupportedHostAccess { feature: String },
     #[error("script process exceeded the {timeout_seconds}-second execution limit")]
     Timeout { timeout_seconds: u64 },
+    #[error("script execution cancelled")]
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -192,6 +194,24 @@ pub fn run_script(
     response: Option<&HttpResponse>,
     context: &VariableContext,
 ) -> Result<ScriptResult, ScriptError> {
+    run_script_with_cancellation(script, request, response, context, || false)
+}
+
+/// Execute a script while allowing the caller to terminate its child process.
+///
+/// The closure is polled while the Node process is alive. This keeps the
+/// regular `run_script` API unchanged for callers that do not need cancellation
+/// while giving GUI and runner workers a real terminal cancellation path.
+pub fn run_script_with_cancellation(
+    script: &str,
+    request: &Request,
+    response: Option<&HttpResponse>,
+    context: &VariableContext,
+    is_cancelled: impl Fn() -> bool,
+) -> Result<ScriptResult, ScriptError> {
+    if is_cancelled() {
+        return Err(ScriptError::Cancelled);
+    }
     if script.len() > MAX_SCRIPT_BYTES {
         return Err(ScriptError::TooLarge {
             maximum_bytes: MAX_SCRIPT_BYTES,
@@ -239,7 +259,7 @@ pub fn run_script(
         .write_all(&payload)
         .map_err(ScriptError::NodeUnavailable)?;
     drop(stdin);
-    let output = wait_for_child(child)?;
+    let output = wait_for_child(child, is_cancelled)?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(ScriptError::Execution(if message.is_empty() {
@@ -378,7 +398,10 @@ fn node_permission_flags_from_help(help: &str) -> Vec<&'static str> {
     }
 }
 
-fn wait_for_child(mut child: Child) -> Result<Output, ScriptError> {
+fn wait_for_child(
+    mut child: Child,
+    is_cancelled: impl Fn() -> bool,
+) -> Result<Output, ScriptError> {
     let stdout = child.stdout.take().ok_or_else(|| {
         ScriptError::Execution("Node script process did not expose stdout.".to_owned())
     })?;
@@ -389,6 +412,13 @@ fn wait_for_child(mut child: Child) -> Result<Output, ScriptError> {
     let stderr_reader = thread::spawn(move || read_pipe(stderr));
     let deadline = Instant::now() + SCRIPT_TIMEOUT;
     loop {
+        if is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = join_pipe(stdout_reader);
+            let _ = join_pipe(stderr_reader);
+            return Err(ScriptError::Cancelled);
+        }
         match child.try_wait().map_err(ScriptError::NodeUnavailable)? {
             Some(status) => {
                 let stdout = join_pipe(stdout_reader)?;
@@ -2693,7 +2723,37 @@ mod tests {
             .stderr(Stdio::piped())
             .spawn()
             .expect("long-lived node process");
-        let error = wait_for_child(child).expect_err("long-lived child should be terminated");
+        let error =
+            wait_for_child(child, || false).expect_err("long-lived child should be terminated");
         assert!(matches!(error, ScriptError::Timeout { .. }));
+    }
+
+    #[test]
+    fn cancels_a_running_node_process() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let trigger = Arc::clone(&cancelled);
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            trigger.store(true, Ordering::Release);
+        });
+        let request = Request::new("Cancellable script", "GET", "https://example.test");
+        let error = run_script_with_cancellation(
+            "while (true) {}",
+            &request,
+            None,
+            &VariableContext::default(),
+            || cancelled.load(Ordering::Acquire),
+        )
+        .expect_err("cancelled script should terminate");
+        thread.join().expect("cancellation trigger");
+        assert!(matches!(error, ScriptError::Cancelled));
     }
 }
