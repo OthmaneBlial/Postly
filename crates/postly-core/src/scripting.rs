@@ -1054,6 +1054,13 @@ function expect(value) {
           check(present, "expected property " + name);
           if (arguments.length > 1 && present) check(deepEqual(value[name], expected), "expected property " + name + " to" + prefix + " equal " + JSON.stringify(expected));
         },
+        nested: {
+          property: function (name, expected) {
+            const result = readJsonPath(value, name);
+            check(result.found, "expected nested property " + name);
+            if (arguments.length > 1 && result.found) check(deepEqual(result.value, expected), "expected nested property " + name + " to" + prefix + " equal " + JSON.stringify(expected));
+          }
+        },
         lengthOf,
         keys,
         all: { keys },
@@ -1069,6 +1076,9 @@ function expect(value) {
       value: {
         get true() { check(value === true, "expected " + JSON.stringify(value) + " to" + prefix + " be true"); return true; },
         get false() { check(value === false, "expected " + JSON.stringify(value) + " to" + prefix + " be false"); return true; },
+        get null() { check(value === null, "expected " + JSON.stringify(value) + " to" + prefix + " be null"); return true; },
+        get undefined() { check(value === undefined, "expected " + JSON.stringify(value) + " to" + prefix + " be undefined"); return true; },
+        get exist() { check(value !== null && value !== undefined, "expected value to" + prefix + " exist"); return true; },
         get ok() { check(Boolean(value), "expected " + JSON.stringify(value) + " to" + prefix + " be truthy"); return true; },
         above: (expected) => check(value > expected, "expected " + JSON.stringify(value) + " to" + prefix + " be above " + expected),
         below: (expected) => check(value < expected, "expected " + JSON.stringify(value) + " to" + prefix + " be below " + expected),
@@ -1587,6 +1597,10 @@ mod tests {
                     pm.expect("ready").to.contain("ead");
                     pm.expect({ ready: true, meta: { id: 7 } }).to.include({ ready: true });
                     pm.expect([{ ready: true }]).to.contain({ ready: true });
+                    pm.expect({ user: { name: "Ada" } }).to.have.nested.property("user.name", "Ada");
+                    pm.expect(null).to.be.null;
+                    pm.expect(undefined).to.be.undefined;
+                    pm.expect("present").to.be.exist;
                     pm.expect("ready").to.be.oneOf(["ready", "done"]);
                     pm.expect(3).to.be.at.least(2);
                     pm.expect(3).to.be.at.most(4);

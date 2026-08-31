@@ -44,9 +44,9 @@ The supported compatibility slice includes:
 - `console.log`, `console.warn` and `console.error` capture
 
 The tested expectation subset also includes deep equality with stable object-key
-comparison, primitive/array/object inclusion, lengthOf, exact/all/any keys, oneOf, empty, numeric
-at.least/at.most/within/greaterThan/lessThan, contain, property deep equality
-and the a/an type aliases. This remains a compatibility slice rather than a
+comparison, primitive/array/object inclusion, lengthOf, exact/all/any keys, oneOf, empty,
+null/undefined/exist, numeric at.least/at.most/within/greaterThan/lessThan, contain,
+direct and nested property equality and the a/an type aliases. This remains a compatibility slice rather than a
 claim of complete Chai or Postman assertion parity.
 
 Script output is kept local. CLI output reports assertions but deliberately
