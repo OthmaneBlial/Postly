@@ -235,12 +235,20 @@ pub enum Assertion {
     Status {
         expected: u16,
     },
+    StatusRange {
+        min: u16,
+        max: u16,
+    },
     HeaderPresent {
         name: String,
     },
     HeaderEquals {
         name: String,
         expected: String,
+    },
+    HeaderContains {
+        name: String,
+        value: String,
     },
     BodyContains {
         value: String,

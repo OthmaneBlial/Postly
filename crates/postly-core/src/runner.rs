@@ -120,6 +120,16 @@ fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<
                 ))
             }
         }
+        Assertion::StatusRange { min, max } => {
+            if min <= max && response.status >= *min && response.status <= *max {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected status between {} and {}, received {}",
+                    min, max, response.status
+                ))
+            }
+        }
         Assertion::HeaderPresent { name } => {
             if response
                 .headers
@@ -141,6 +151,19 @@ fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<
             } else {
                 Err(format!(
                     "expected response header {name} to equal {expected}"
+                ))
+            }
+        }
+        Assertion::HeaderContains { name, value } => {
+            if response
+                .headers
+                .iter()
+                .any(|header| header.key.eq_ignore_ascii_case(name) && header.value.contains(value))
+            {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected response header {name} to contain {value}"
                 ))
             }
         }
@@ -445,9 +468,14 @@ mod tests {
             Request::new("Asserted health", "GET", format!("http://{address}/health"));
         request.assertions = vec![
             Assertion::Status { expected: 200 },
+            Assertion::StatusRange { min: 200, max: 299 },
             Assertion::HeaderEquals {
                 name: "content-type".to_owned(),
                 expected: "application/json".to_owned(),
+            },
+            Assertion::HeaderContains {
+                name: "content-type".to_owned(),
+                value: "json".to_owned(),
             },
             Assertion::BodyContains {
                 value: "\"ok\":true".to_owned(),
@@ -468,10 +496,10 @@ mod tests {
         server.await.expect("server");
 
         assert!(summary.succeeded());
-        assert_eq!(summary.assertions, 4);
+        assert_eq!(summary.assertions, 6);
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.status_distribution.get(&200), Some(&1));
-        assert_eq!(summary.results[0].assertions, 4);
+        assert_eq!(summary.results[0].assertions, 6);
     }
 
     #[tokio::test]

@@ -344,8 +344,10 @@ enum AuthKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssertionKind {
     Status,
+    StatusRange,
     HeaderPresent,
     HeaderEquals,
+    HeaderContains,
     BodyContains,
     JsonPointerEquals,
 }
@@ -354,8 +356,10 @@ impl AssertionKind {
     fn label(self) -> &'static str {
         match self {
             Self::Status => "Status equals",
+            Self::StatusRange => "Status is in range",
             Self::HeaderPresent => "Header exists",
             Self::HeaderEquals => "Header equals",
+            Self::HeaderContains => "Header contains",
             Self::BodyContains => "Body contains",
             Self::JsonPointerEquals => "JSON Pointer equals",
         }
@@ -364,12 +368,17 @@ impl AssertionKind {
     fn default_assertion(self) -> Assertion {
         match self {
             Self::Status => Assertion::Status { expected: 200 },
+            Self::StatusRange => Assertion::StatusRange { min: 200, max: 299 },
             Self::HeaderPresent => Assertion::HeaderPresent {
                 name: "content-type".to_owned(),
             },
             Self::HeaderEquals => Assertion::HeaderEquals {
                 name: "content-type".to_owned(),
                 expected: "application/json".to_owned(),
+            },
+            Self::HeaderContains => Assertion::HeaderContains {
+                name: "content-type".to_owned(),
+                value: "json".to_owned(),
             },
             Self::BodyContains => Assertion::BodyContains {
                 value: String::new(),
@@ -5824,12 +5833,24 @@ impl PostlyApp {
                             changed |= ui.add(egui::DragValue::new(expected)).changed();
                         });
                     }
+                    Assertion::StatusRange { min, max } => {
+                        ui.horizontal(|ui| {
+                            ui.label("Expected status range");
+                            changed |= ui.add(egui::DragValue::new(min)).changed();
+                            ui.label("to");
+                            changed |= ui.add(egui::DragValue::new(max)).changed();
+                        });
+                    }
                     Assertion::HeaderPresent { name } => {
                         changed |= labeled_singleline(ui, "Header name", name);
                     }
                     Assertion::HeaderEquals { name, expected } => {
                         changed |= labeled_singleline(ui, "Header name", name);
                         changed |= labeled_singleline(ui, "Expected value", expected);
+                    }
+                    Assertion::HeaderContains { name, value } => {
+                        changed |= labeled_singleline(ui, "Header name", name);
+                        changed |= labeled_singleline(ui, "Contained value", value);
                     }
                     Assertion::BodyContains { value } => {
                         changed |= labeled_singleline(ui, "Text", value);
@@ -5868,8 +5889,10 @@ impl PostlyApp {
                 .show_ui(ui, |ui| {
                     for kind in [
                         AssertionKind::Status,
+                        AssertionKind::StatusRange,
                         AssertionKind::HeaderPresent,
                         AssertionKind::HeaderEquals,
+                        AssertionKind::HeaderContains,
                         AssertionKind::BodyContains,
                         AssertionKind::JsonPointerEquals,
                     ] {
@@ -8098,12 +8121,17 @@ mod tests {
         let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
         app.request.assertions = vec![
             Assertion::Status { expected: 201 },
+            Assertion::StatusRange { min: 200, max: 299 },
             Assertion::HeaderPresent {
                 name: "x-request-id".to_owned(),
             },
             Assertion::HeaderEquals {
                 name: "content-type".to_owned(),
                 expected: "application/json".to_owned(),
+            },
+            Assertion::HeaderContains {
+                name: "content-type".to_owned(),
+                value: "json".to_owned(),
             },
             Assertion::BodyContains {
                 value: "created".to_owned(),
@@ -8114,13 +8142,13 @@ mod tests {
             },
         ];
         app.load_request_editors();
-        assert_eq!(app.assertion_json_text.len(), 5);
-        app.assertion_json_text[4] = "false".to_owned();
+        assert_eq!(app.assertion_json_text.len(), 7);
+        app.assertion_json_text[6] = "false".to_owned();
 
         let edited = app.edited_request().expect("valid assertion editor state");
         assert_eq!(edited.assertions, app.request.assertions);
         assert_eq!(
-            edited.assertions[4],
+            edited.assertions[6],
             Assertion::JsonPointerEquals {
                 pointer: "/data/active".to_owned(),
                 expected: serde_json::Value::Bool(false),
@@ -8130,7 +8158,7 @@ mod tests {
         app.save_current().expect("save assertions");
         let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
         assert_eq!(reopened.request.assertions, edited.assertions);
-        assert_eq!(reopened.assertion_json_text[4], "false");
+        assert_eq!(reopened.assertion_json_text[6], "false");
     }
 
     #[test]
