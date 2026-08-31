@@ -969,6 +969,8 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
         }
         "oauth2" => {
             let oauth = value.get("oauth2");
+            let saved_access_token =
+                auth_value_any(oauth, &["accessToken", "access_token", "token"]);
             let grant_type = auth_value_any(oauth, &["grant_type", "grantType"]);
             let grant_type = if grant_type.is_empty() {
                 "client_credentials"
@@ -983,6 +985,17 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
                     | "device_code"
                     | "urn:ietf:params:oauth:grant-type:device_code"
             ) {
+                if !saved_access_token.is_empty() {
+                    report.warn(format!(
+                        "{subject} uses unsupported OAuth 2.0 grant type {grant_type}; the saved access token was preserved as bearer authentication, but token renewal requires manual review."
+                    ));
+                    return ParsedAuth {
+                        auth: Auth::Bearer {
+                            token: saved_access_token,
+                        },
+                        requires_review: true,
+                    };
+                }
                 report.warn(format!(
                     "{subject} uses unsupported OAuth 2.0 grant type {grant_type}; client_credentials, authorization_code + PKCE, refresh_token and device_code are currently supported."
                 ));
@@ -1016,6 +1029,17 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
                     || code.is_empty()
                     || code_verifier.is_empty()
                 {
+                    if !saved_access_token.is_empty() {
+                        report.warn(format!(
+                            "{subject} has incomplete OAuth 2.0 authorization-code + PKCE fields; the saved access token was preserved as bearer authentication, but token renewal requires manual review."
+                        ));
+                        return ParsedAuth {
+                            auth: Auth::Bearer {
+                                token: saved_access_token,
+                            },
+                            requires_review: true,
+                        };
+                    }
                     report.warn(format!(
                         "{subject} has incomplete OAuth 2.0 authorization-code + PKCE fields; authentication requires manual review."
                     ));
@@ -1037,6 +1061,17 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
             } else if grant_type == "refresh_token" {
                 let refresh_token = auth_value_any(oauth, &["refreshToken", "refresh_token"]);
                 if token_url.is_empty() || client_id.is_empty() || refresh_token.is_empty() {
+                    if !saved_access_token.is_empty() {
+                        report.warn(format!(
+                            "{subject} has incomplete OAuth 2.0 refresh-token fields; the saved access token was preserved as bearer authentication, but token renewal requires manual review."
+                        ));
+                        return ParsedAuth {
+                            auth: Auth::Bearer {
+                                token: saved_access_token,
+                            },
+                            requires_review: true,
+                        };
+                    }
                     report.warn(format!(
                         "{subject} has incomplete OAuth 2.0 refresh-token fields; authentication requires manual review."
                     ));
@@ -1068,6 +1103,17 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
                     || token_url.is_empty()
                     || client_id.is_empty()
                 {
+                    if !saved_access_token.is_empty() {
+                        report.warn(format!(
+                            "{subject} has incomplete OAuth 2.0 device-code fields; the saved access token was preserved as bearer authentication, but token renewal requires manual review."
+                        ));
+                        return ParsedAuth {
+                            auth: Auth::Bearer {
+                                token: saved_access_token,
+                            },
+                            requires_review: true,
+                        };
+                    }
                     report.warn(format!(
                         "{subject} has incomplete OAuth 2.0 device-code fields; authentication requires manual review."
                     ));
@@ -1085,6 +1131,17 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
                 }
             } else {
                 if token_url.is_empty() || client_id.is_empty() || client_secret.is_empty() {
+                    if !saved_access_token.is_empty() {
+                        report.warn(format!(
+                            "{subject} has incomplete OAuth 2.0 client credentials; the saved access token was preserved as bearer authentication, but token renewal requires manual review."
+                        ));
+                        return ParsedAuth {
+                            auth: Auth::Bearer {
+                                token: saved_access_token,
+                            },
+                            requires_review: true,
+                        };
+                    }
                     report.warn(format!(
                         "{subject} has incomplete OAuth 2.0 client credentials; authentication requires manual review."
                     ));
@@ -1544,6 +1601,10 @@ TOKEN='last value'
             .warnings
             .iter()
             .any(|warning| warning.contains("unsupported event type unknown")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("saved access token was preserved")));
 
         let workspace = Workspace::open(output.path()).expect("workspace");
         let collection = workspace.collections().expect("collections").remove(0);
@@ -1606,6 +1667,12 @@ TOKEN='last value'
         assert_eq!(oauth.1.url, "{{baseUrl}}/oauth-check");
         assert_eq!(oauth.1.query, vec![KeyValue::enabled("scope", "read")]);
         assert_eq!(oauth.1.headers[0], HeaderEntry::enabled("X-Retry", "3"));
+        assert_eq!(
+            oauth.1.auth,
+            Auth::Bearer {
+                token: "{{accessToken}}".to_owned()
+            }
+        );
         assert!(matches!(&oauth.1.body, RequestBody::Json { .. }));
 
         let html = requests
