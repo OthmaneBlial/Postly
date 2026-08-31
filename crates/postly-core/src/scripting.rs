@@ -2376,6 +2376,122 @@ mod tests {
     }
 
     #[test]
+    fn supports_pm_send_request_sha256_auth_int_retry() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+
+            let read_request = |stream: &mut std::net::TcpStream| {
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                let header_end;
+                loop {
+                    let read = stream.read(&mut buffer).expect("read request");
+                    assert!(read > 0, "request ended before headers");
+                    request.extend_from_slice(&buffer[..read]);
+                    if let Some(position) =
+                        request.windows(4).position(|window| window == b"\r\n\r\n")
+                    {
+                        header_end = position + 4;
+                        break;
+                    }
+                }
+                let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length: "))
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                while request.len() < header_end + content_length {
+                    let read = stream.read(&mut buffer).expect("read body");
+                    assert!(read > 0, "body ended early");
+                    request.extend_from_slice(&buffer[..read]);
+                }
+                (
+                    headers,
+                    request[header_end..header_end + content_length].to_vec(),
+                )
+            };
+
+            let (mut first, _) = listener.accept().expect("first connection");
+            let (first_headers, first_body) = read_request(&mut first);
+            assert!(first_headers.starts_with("post /digest-body http/1.1"));
+            assert_eq!(first_body, b"alpha=body");
+            first
+                .write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\nwww-authenticate: Digest realm=\"local\", nonce=\"sha-nonce\", algorithm=SHA-256, qop=\"auth-int\"\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .expect("write challenge");
+
+            let (mut second, _) = listener.accept().expect("retry connection");
+            let (second_headers, second_body) = read_request(&mut second);
+            assert!(second_headers.starts_with("post /digest-body http/1.1"));
+            assert_eq!(second_body, b"alpha=body");
+            assert!(
+                second_headers.contains("authorization: digest"),
+                "{second_headers}"
+            );
+            assert!(
+                second_headers.contains("algorithm=sha-256"),
+                "{second_headers}"
+            );
+            assert!(second_headers.contains("qop=auth-int"), "{second_headers}");
+            let authorization = second_headers
+                .lines()
+                .find_map(|line| line.strip_prefix("authorization: digest "))
+                .expect("Digest authorization");
+            let response = authorization
+                .split(", ")
+                .find_map(|field| field.strip_prefix("response=\""))
+                .and_then(|value| value.strip_suffix('"'))
+                .expect("Digest response");
+            assert_eq!(response.len(), 64, "{authorization}");
+            second
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .expect("write response");
+        });
+
+        let request = Request::new("Scripted Digest auth-int", "GET", "https://example.test");
+        let result = run_script(
+            &format!(
+                r#"
+                    pm.sendRequest({{
+                        url: "http://{address}/digest-body",
+                        method: "POST",
+                        auth: {{
+                            type: "digest",
+                            digest: [
+                                {{ key: "username", value: "postly" }},
+                                {{ key: "password", value: "secret" }}
+                            ]
+                        }},
+                        body: {{ mode: "raw", raw: "alpha=body" }}
+                    }}, function (error, response) {{
+                        pm.test("sha256 auth-int retry", function () {{
+                            pm.expect(error).to.eql(null);
+                            response.to.have.status(204);
+                        }});
+                    }});
+                "#
+            ),
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("script SHA-256 Digest request");
+        server.join().expect("server");
+
+        assert_eq!(result.tests.len(), 1);
+        assert!(result.tests[0].passed, "{result:?}");
+    }
+
+    #[test]
     fn supports_pm_send_request_query_and_urlencoded_body() {
         if Command::new("node").arg("--version").output().is_err() {
             return;
