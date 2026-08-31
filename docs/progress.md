@@ -149,7 +149,8 @@ Implemented:
 
 Not yet implemented:
 
-- Desktop GUI polish, richer response preview/syntax features and manual responsive/accessibility QA.
+- Desktop GUI polish, richer response preview features beyond the current
+  lightweight format detection/coloring, and manual responsive/accessibility QA.
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
@@ -157,7 +158,8 @@ Not yet implemented:
 - Encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association and explicit insecure TLS remain open; gRPC custom PEM CA/client identity and SOCKS5 routing are now available in CLI and GUI.
 - OpenAPI cyclic/remote references, richer schema generation beyond the current composed/format-aware samples and deeper protocol-specific GUI tooling.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
-  cross-client/memory benchmarks and deeper packaging/release validation.
+  cross-client/memory benchmarks and production release validation beyond the
+  local package smoke checks.
 
 ## Verification
 
@@ -212,6 +214,13 @@ the already-built CLI `--help` startup, 5.75 ms for the Postman variant import,
 it. The startup samples ranged from 6.44 ms to 681.82 ms, so these are local
 measurements rather than competitor claims or universal performance
 guarantees.
+
+The latest local validation also passed `cargo xtask fuzz`: the three checked-in
+targets (`curl_command`, `variables` and `postman_import`) each completed 256
+bounded runs without a crash. `cargo xtask package` built the current macOS
+arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
+smokes, verified the archive listing and reported SHA-256
+`a42b743032f0c05c0a26afaeb05a2b9c615746097cdf925a79e1c3b1e24c2276`.
 
 ## Next highest-value work
 
