@@ -2467,6 +2467,8 @@ mod tests {
             response_size: 11,
             content_type: Some("application/json".to_owned()),
             duration_ms: 4,
+            ttfb_ms: 0,
+            download_ms: 0,
             protocol: "HTTP/1.1".to_owned(),
             url: "https://example.test".to_owned(),
             cookies: vec![ResponseCookie {
@@ -2547,6 +2549,8 @@ mod tests {
             response_size: 0,
             content_type: None,
             duration_ms: 1,
+            ttfb_ms: 0,
+            download_ms: 0,
             protocol: "HTTP/1.1".to_owned(),
             url: "https://example.test".to_owned(),
         };

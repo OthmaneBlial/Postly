@@ -1310,6 +1310,8 @@ mod tests {
                     response_size: 0,
                     content_type: None,
                     duration_ms: 8,
+                    ttfb_ms: 0,
+                    download_ms: 0,
                     protocol: "HTTP/1.1".to_owned(),
                     url: "https://example.com/users".to_owned(),
                     cookies: Vec::new(),
