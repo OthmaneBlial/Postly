@@ -74,8 +74,8 @@ This repository contains working vertical slices, not a static interface mockup.
   proxy routing, CLI/GUI WebSocket and gRPC HTTP CONNECT routing, environment proxy support
   and bypass rules, with actionable
   diagnostics.
-- **Response inspection:** Pretty/Raw views with JSON and well-formed XML
-  formatting, detected JSON/XML/HTML/JavaScript/Text previews with lightweight
+- **Response inspection:** Pretty/Raw views with JSON, YAML and well-formed XML
+  formatting, detected JSON/YAML/XML/HTML/JavaScript/Text previews with lightweight
   syntax coloring, status/headers/cookies/protocol/duration, local search,
   wrapping, clipboard copy, virtualized rendering, an in-app developer console,
   response snapshots and save-as-example fixtures for local mocks. Buffered

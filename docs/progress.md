@@ -45,7 +45,7 @@ Implemented:
 - native saved-request duplication and guarded deletion with storage/UI regression tests.
 - saved request rename/folder changes relocate the canonical file while preserving request identity.
 - response Pretty/Raw views now provide JSON and well-formed XML formatting,
-  detected JSON/XML/HTML/JavaScript/Text previews with lightweight syntax
+  YAML formatting, and detected JSON/YAML/XML/HTML/JavaScript/Text previews with lightweight syntax
   coloring, case-insensitive local search with occurrence counts and line
   snippets; HTTP and gRPC responses expose received body size as metadata. The
   buffered HTTP engine rejects bodies over its configurable 100 MiB default

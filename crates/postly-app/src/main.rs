@@ -131,6 +131,7 @@ enum ResponseTab {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ResponsePreviewLanguage {
     Json,
+    Yaml,
     Xml,
     Html,
     JavaScript,
@@ -141,6 +142,7 @@ impl ResponsePreviewLanguage {
     fn label(self) -> &'static str {
         match self {
             Self::Json => "JSON",
+            Self::Yaml => "YAML",
             Self::Xml => "XML",
             Self::Html => "HTML",
             Self::JavaScript => "JavaScript",
@@ -7892,6 +7894,9 @@ fn response_preview_language(response: &HttpResponse) -> ResponsePreviewLanguage
     if content_type.contains("json") {
         return ResponsePreviewLanguage::Json;
     }
+    if content_type.contains("yaml") {
+        return ResponsePreviewLanguage::Yaml;
+    }
     if content_type.contains("html") {
         return ResponsePreviewLanguage::Html;
     }
@@ -7905,6 +7910,8 @@ fn response_preview_language(response: &HttpResponse) -> ResponsePreviewLanguage
     let trimmed = response.body_text().trim_start().to_owned();
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
         ResponsePreviewLanguage::Json
+    } else if trimmed.starts_with("---") {
+        ResponsePreviewLanguage::Yaml
     } else if trimmed.starts_with("<!doctype html") || trimmed.starts_with("<html") {
         ResponsePreviewLanguage::Html
     } else if trimmed.starts_with("<?xml") || trimmed.starts_with('<') {
@@ -7964,6 +7971,10 @@ fn highlight_response_line(
             && current == '/'
             && next == Some('/')
         {
+            append(&line[offset..], comment_color);
+            break;
+        }
+        if matches!(language, ResponsePreviewLanguage::Yaml) && current == '#' {
             append(&line[offset..], comment_color);
             break;
         }
@@ -9604,6 +9615,11 @@ mod tests {
         assert_eq!(
             response_preview_language(&javascript),
             ResponsePreviewLanguage::JavaScript
+        );
+        let yaml = response(Some("application/yaml; charset=utf-8"), b"service: postly");
+        assert_eq!(
+            response_preview_language(&yaml),
+            ResponsePreviewLanguage::Yaml
         );
         let text = response(None, b"plain text");
         assert_eq!(

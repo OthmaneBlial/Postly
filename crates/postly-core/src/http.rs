@@ -586,6 +586,17 @@ impl HttpResponse {
                 return formatted;
             }
         }
+        let looks_like_yaml = self
+            .content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("yaml"));
+        if looks_like_yaml {
+            if let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&text) {
+                if let Ok(formatted) = serde_yaml::to_string(&value) {
+                    return formatted.trim_end().to_owned();
+                }
+            }
+        }
         text
     }
 }
@@ -3391,6 +3402,26 @@ mod tests {
         assert_eq!(
             response.formatted_body(ResponseView::Pretty),
             "<root>\n  <item id=\"1\">one</item>\n  <item>two</item>\n</root>"
+        );
+    }
+
+    #[test]
+    fn formats_yaml_in_pretty_view() {
+        let response = HttpResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: Vec::new(),
+            cookies: Vec::new(),
+            body: b"service: postly\nfeatures:\n- local\n- private\n".to_vec(),
+            response_size: 46,
+            content_type: Some("application/yaml; charset=utf-8".to_owned()),
+            protocol: "HTTP/1.1".to_owned(),
+            url: "http://example.test".to_owned(),
+            duration_ms: 1,
+        };
+        assert_eq!(
+            response.formatted_body(ResponseView::Pretty),
+            "service: postly\nfeatures:\n- local\n- private"
         );
     }
 
