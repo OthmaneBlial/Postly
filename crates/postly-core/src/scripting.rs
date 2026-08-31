@@ -442,6 +442,187 @@ function decorateKeyValueList(list, makeEntry, onChange = () => {}) {
   return list;
 }
 
+function authParameterValue(parameters, names) {
+  const candidates = Array.isArray(names) ? names : [names];
+  const found = parameters.find((parameter) => parameter
+    && parameter.enabled !== false
+    && candidates.some((name) => text(parameter.key).toLowerCase() === text(name).toLowerCase()));
+  return found ? text(found.value) : undefined;
+}
+
+function nativeAuthToPostman(nativeAuth) {
+  const source = nativeAuth && typeof nativeAuth === "object" ? nativeAuth : { type: "none" };
+  let authType = "noauth";
+  const parameters = [];
+  const add = (key, value) => parameters.push({ key, value: text(value), type: "string", enabled: true });
+  switch (source.type) {
+    case "basic":
+      authType = "basic";
+      add("username", source.username);
+      add("password", source.password);
+      break;
+    case "bearer":
+      authType = "bearer";
+      add("token", source.token);
+      break;
+    case "api_key":
+      authType = "apikey";
+      add("key", source.key);
+      add("value", source.value);
+      add("in", source.location === "query" ? "query" : "header");
+      break;
+    case "oauth2_client_credentials":
+      authType = "oauth2";
+      add("grant_type", "client_credentials");
+      add("accessTokenUrl", source.token_url);
+      add("clientId", source.client_id);
+      add("clientSecret", source.client_secret);
+      if (source.scope) add("scope", source.scope);
+      break;
+    case "oauth2_authorization_code_pkce":
+      authType = "oauth2";
+      add("grant_type", "authorization_code");
+      add("authorizationUrl", source.authorization_url);
+      add("accessTokenUrl", source.token_url);
+      add("clientId", source.client_id);
+      add("redirectUri", source.redirect_uri);
+      add("code", source.code);
+      add("codeVerifier", source.code_verifier);
+      if (source.client_secret) add("clientSecret", source.client_secret);
+      if (source.scope) add("scope", source.scope);
+      break;
+    case "oauth2_refresh_token":
+      authType = "oauth2";
+      add("grant_type", "refresh_token");
+      add("accessTokenUrl", source.token_url);
+      add("clientId", source.client_id);
+      add("refreshToken", source.refresh_token);
+      if (source.client_secret) add("clientSecret", source.client_secret);
+      if (source.scope) add("scope", source.scope);
+      break;
+    case "oauth2_device_code":
+      authType = "oauth2";
+      add("grant_type", "urn:ietf:params:oauth:grant-type:device_code");
+      add("deviceAuthorizationUrl", source.device_authorization_url);
+      add("accessTokenUrl", source.token_url);
+      add("clientId", source.client_id);
+      if (source.client_secret) add("clientSecret", source.client_secret);
+      if (source.scope) add("scope", source.scope);
+      break;
+    default:
+      break;
+  }
+
+  let dirty = false;
+  const auth = { parameters };
+  Object.defineProperty(auth, "type", {
+    enumerable: true,
+    get: () => authType,
+    set: (value) => { authType = text(value).toLowerCase(); dirty = true; }
+  });
+  Object.defineProperty(auth, "_native", { value: source, enumerable: false });
+  Object.defineProperty(auth, "_dirty", { get: () => dirty, enumerable: false });
+  const markDirty = () => { dirty = true; };
+  decorateKeyValueList(parameters, (entry) => ({
+    key: text(entry && entry.key),
+    value: text(entry && entry.value),
+    type: text(entry && entry.type) || "string",
+    enabled: entry && entry.disabled !== true && entry.enabled !== false
+  }), markDirty);
+  auth.get = (key) => authParameterValue(parameters, key);
+  auth.has = (key) => auth.get(key) !== undefined;
+  auth.upsert = (entry) => {
+    const key = text(entry && entry.key).trim();
+    if (!key) return;
+    const found = parameters.find((parameter) => text(parameter.key).toLowerCase() === key.toLowerCase());
+    if (found) {
+      found.value = text(entry.value);
+      found.type = text(entry.type) || found.type || "string";
+      found.enabled = entry.disabled !== true && entry.enabled !== false;
+      markDirty();
+    } else {
+      parameters.add(entry);
+    }
+  };
+  auth.remove = (key) => {
+    const normalized = text(key).toLowerCase();
+    for (let index = parameters.length - 1; index >= 0; index -= 1) {
+      if (text(parameters[index].key).toLowerCase() === normalized) {
+        parameters.splice(index, 1);
+        markDirty();
+      }
+    }
+  };
+  auth.clear = () => {
+    if (parameters.length > 0) {
+      parameters.splice(0, parameters.length);
+      markDirty();
+    }
+  };
+  auth.each = (callback) => parameters.forEach(callback);
+  auth.forEach = auth.each;
+  return auth;
+}
+
+function postmanAuthToNative(auth) {
+  const type = text(auth && auth.type).toLowerCase();
+  const parameters = auth && Array.isArray(auth.parameters) ? auth.parameters : [];
+  const value = (names) => authParameterValue(parameters, names);
+  if (type === "noauth" || type === "none" || !type) return { type: "none" };
+  if (type === "basic") {
+    return {
+      type: "basic",
+      username: value("username") || "",
+      password: value("password") || ""
+    };
+  }
+  if (type === "bearer") return { type: "bearer", token: value(["token", "value"]) || "" };
+  if (type === "apikey" || type === "api_key") {
+    return {
+      type: "api_key",
+      key: value("key") || "",
+      value: value("value") || "",
+      location: (value("in") || "header").toLowerCase() === "query" ? "query" : "header"
+    };
+  }
+
+  const native = auth && auth._native && typeof auth._native === "object"
+    ? JSON.parse(JSON.stringify(auth._native))
+    : { type: "none" };
+  const set = (key, names, optional = false) => {
+    const next = value(names);
+    if (next !== undefined || !optional) native[key] = next || "";
+  };
+  if (type === "oauth2" && native.type === "oauth2_client_credentials") {
+    set("token_url", ["token_url", "accessTokenUrl", "access_token_url"]);
+    set("client_id", ["client_id", "clientId"]);
+    set("client_secret", ["client_secret", "clientSecret"]);
+    set("scope", "scope", true);
+  } else if (type === "oauth2" && native.type === "oauth2_authorization_code_pkce") {
+    set("authorization_url", ["authorization_url", "authorizationUrl"]);
+    set("token_url", ["token_url", "accessTokenUrl", "access_token_url"]);
+    set("client_id", ["client_id", "clientId"]);
+    set("redirect_uri", ["redirect_uri", "redirectUri"]);
+    set("code", "code");
+    set("code_verifier", ["code_verifier", "codeVerifier"]);
+    set("client_secret", ["client_secret", "clientSecret"], true);
+    set("scope", "scope", true);
+  } else if (type === "oauth2" && native.type === "oauth2_refresh_token") {
+    set("token_url", ["token_url", "accessTokenUrl", "access_token_url"]);
+    set("client_id", ["client_id", "clientId"]);
+    set("refresh_token", ["refresh_token", "refreshToken"]);
+    set("client_secret", ["client_secret", "clientSecret"], true);
+    set("scope", "scope", true);
+  } else if (type === "oauth2" && native.type === "oauth2_device_code") {
+    set("device_authorization_url", ["device_authorization_url", "deviceAuthorizationUrl"]);
+    set("token_url", ["token_url", "accessTokenUrl", "access_token_url"]);
+    set("client_id", ["client_id", "clientId"]);
+    set("client_secret", ["client_secret", "clientSecret"], true);
+    set("scope", "scope", true);
+  }
+  return native;
+}
+
 function nativeBodyToPostman(nativeBody) {
   if (!nativeBody || nativeBody.type === "none") return null;
   switch (nativeBody.type) {
@@ -686,6 +867,7 @@ const runtime = {
 
 const request = { ...(input.request || {}) };
 request.url = makeUrlFacade(request.url, request.query);
+request.auth = nativeAuthToPostman(request.auth);
 request.body = nativeBodyToPostman(request.body);
 const requestHeaders = request.headers || [];
 requestHeaders.get = (name) => {
@@ -744,6 +926,7 @@ function serializeRequest() {
         ? request.url.toString()
         : text(request.url);
   }
+  serialized.auth = postmanAuthToNative(request.auth);
   serialized.body = postmanBodyToNative(request.body);
   serialized.headers = Array.from(request.headers || []).map((header) => ({
     key: text(header && header.key),
@@ -1360,6 +1543,69 @@ mod tests {
             vec![crate::model::KeyValue::enabled("session", "local")]
         );
         assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+    }
+
+    #[test]
+    fn supports_postman_request_auth_facade() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let mut request = Request::new("Auth facade", "GET", "https://api.example.test");
+        request.auth = crate::model::Auth::Bearer {
+            token: "old-token".to_owned(),
+        };
+        let result = run_script(
+            r#"
+                pm.test("bearer auth is visible", function () {
+                    pm.expect(pm.request.auth.type).to.eql("bearer");
+                    pm.expect(pm.request.auth.get("token")).to.eql("old-token");
+                    pm.expect(pm.request.auth.has("token")).to.eql(true);
+                });
+                pm.request.auth.upsert({ key: "token", value: "new-token" });
+            "#,
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("auth facade");
+        result
+            .apply(&mut request, &mut VariableContext::default())
+            .expect("apply auth facade");
+        assert_eq!(
+            request.auth,
+            crate::model::Auth::Bearer {
+                token: "new-token".to_owned()
+            }
+        );
+        assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+
+        let mut api_key_request = Request::new("API key facade", "GET", "https://api.example.test");
+        api_key_request.auth = crate::model::Auth::ApiKey {
+            key: "X-API-Key".to_owned(),
+            value: "old-key".to_owned(),
+            location: crate::model::ApiKeyLocation::Header,
+        };
+        let api_key_result = run_script(
+            r#"
+                pm.request.auth.upsert({ key: "value", value: "new-key" });
+                pm.request.auth.upsert({ key: "in", value: "query" });
+            "#,
+            &api_key_request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("API key facade");
+        api_key_result
+            .apply(&mut api_key_request, &mut VariableContext::default())
+            .expect("apply API key facade");
+        assert_eq!(
+            api_key_request.auth,
+            crate::model::Auth::ApiKey {
+                key: "X-API-Key".to_owned(),
+                value: "new-key".to_owned(),
+                location: crate::model::ApiKeyLocation::Query,
+            }
+        );
     }
 
     #[test]

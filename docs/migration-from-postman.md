@@ -41,7 +41,7 @@ interoperability path, not a claim of perfect Postman round-trip fidelity.
 
 Current limitations:
 
-- Script execution is opt-in and currently depends on a local Node.js installation; the bridge is a tested prototype, not an embedded or hardened sandbox. A bounded `pm.sendRequest` callback slice is available, but it uses Node's native fetch rather than Postly's proxy/TLS/cookie transport.
+- Script execution is opt-in and currently depends on a local Node.js installation; the bridge is a tested prototype, not an embedded or hostile-code sandbox. On newer Node versions its permission model is enabled for defense in depth. A bounded `pm.sendRequest` callback slice is available, but it uses Node's native fetch rather than Postly's proxy/TLS/cookie transport.
 - Authorization Code + PKCE, Refresh Token, Client Credentials and Device Code are supported in the HTTP engine. PKCE can use the explicit imported code/verifier exchange or an opt-in CLI / automatic GUI loopback-browser callback; the provider's redirect registration and login remain external requirements.
 - GraphQL request metadata is retained in the structured native body model.
 - File paths should be checked after import because their meaning depends on the source project location.

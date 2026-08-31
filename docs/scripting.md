@@ -29,7 +29,8 @@ The supported compatibility slice includes:
 - `pm.variables.get/set/unset/has/clear/replaceIn`, including iteration data precedence
 - `pm.request` URL, method, headers, cookies and Postman-shaped body facades;
   URL hosts/paths/query strings plus query-list mutations are converted back to
-  the native request model
+  the native request model; `pm.request.auth` supports parameter access and
+  mutation for no-auth, Basic, Bearer, API key and common OAuth shapes
 - `pm.response.code/status/responseTime/text/json/headers/cookies`
 - `pm.sendRequest` callback requests for bounded HTTP(S) subrequests with
   headers, raw bodies and response text/JSON
