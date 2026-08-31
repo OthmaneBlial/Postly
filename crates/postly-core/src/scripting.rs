@@ -1214,21 +1214,73 @@ function normalizeHeaders(inputHeaders) {
   return headers;
 }
 
+function appendQueryParameters(rawUrl, query) {
+  if (!query || (typeof query !== "object" && !Array.isArray(query))) return rawUrl;
+  const parsed = new URL(rawUrl);
+  const entries = Array.isArray(query)
+    ? query.map((entry) => [entry && (entry.key || entry.name), entry && entry.value, entry && (entry.disabled === true || entry.enabled === false)])
+    : Object.entries(query).map(([key, value]) => [key, value, false]);
+  entries.forEach(([key, value, disabled]) => {
+    if (!disabled && text(key)) parsed.searchParams.append(replaceIn(key), replaceIn(value));
+  });
+  return parsed.toString();
+}
+
+function hasHeader(headers, name) {
+  return Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase());
+}
+
+function normalizeSendRequestBody(inputBody, headers) {
+  if (inputBody === undefined || inputBody === null) return undefined;
+  if (typeof inputBody !== "object") return replaceIn(inputBody);
+  const mode = text(inputBody.mode).toLowerCase();
+  if (!mode || mode === "raw") return replaceIn(inputBody.raw);
+  if (mode === "urlencoded") {
+    const params = new URLSearchParams();
+    (Array.isArray(inputBody.urlencoded) ? inputBody.urlencoded : []).forEach((field) => {
+      if (!field || field.disabled === true || field.enabled === false || !text(field.key)) return;
+      params.append(replaceIn(field.key), replaceIn(field.value));
+    });
+    if (!hasHeader(headers, "content-type")) headers["content-type"] = "application/x-www-form-urlencoded";
+    return params.toString();
+  }
+  if (mode === "formdata") {
+    if (typeof FormData !== "function") throw new Error("pm.sendRequest formdata requires Node.js FormData");
+    const form = new FormData();
+    (Array.isArray(inputBody.formdata) ? inputBody.formdata : []).forEach((field) => {
+      if (!field || field.disabled === true || field.enabled === false || !text(field.key)) return;
+      if (field.src) throw new Error("pm.sendRequest file formdata parts are not supported");
+      form.append(replaceIn(field.key), replaceIn(field.value));
+    });
+    return form;
+  }
+  if (mode === "graphql") {
+    const graphql = inputBody.graphql || {};
+    let variables = graphql.variables;
+    if (typeof variables === "string") {
+      try { variables = JSON.parse(replaceIn(variables)); } catch (_) { variables = {}; }
+    }
+    if (!hasHeader(headers, "content-type")) headers["content-type"] = "application/json";
+    return JSON.stringify({ query: replaceIn(graphql.query), variables: variables || {} });
+  }
+  if (mode === "file") throw new Error("pm.sendRequest file bodies are not supported");
+  throw new Error("pm.sendRequest body mode is not supported: " + mode);
+}
+
 function normalizeSendRequest(inputRequest) {
   const options = typeof inputRequest === "string" ? { url: inputRequest } : (inputRequest || {});
-  let rawUrl = options.url;
-  if (rawUrl && typeof rawUrl === "object") rawUrl = rawUrl.raw || rawUrl.toString();
-  const url = replaceIn(rawUrl);
+  const urlOptions = options.url && typeof options.url === "object" ? options.url : null;
+  let rawUrl = urlOptions ? urlOptions.raw || urlOptions.toString() : options.url;
+  const url = appendQueryParameters(replaceIn(rawUrl), urlOptions && urlOptions.query);
   if (!url) throw new Error("pm.sendRequest requires a URL");
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("pm.sendRequest only permits http and https URLs");
   }
   const method = text(options.method || "GET").toUpperCase();
-  const body = options.body && typeof options.body === "object"
-    ? (options.body.mode === "raw" ? replaceIn(options.body.raw) : undefined)
-    : options.body === undefined || options.body === null ? undefined : replaceIn(options.body);
-  return { url, method, headers: normalizeHeaders(options.header || options.headers), body };
+  const headers = normalizeHeaders(options.header || options.headers);
+  const body = normalizeSendRequestBody(options.body, headers);
+  return { url, method, headers, body };
 }
 
 async function performSendRequest(inputRequest) {
@@ -1511,6 +1563,98 @@ mod tests {
             &VariableContext::default(),
         )
         .expect("script");
+        server.join().expect("server");
+
+        assert_eq!(result.tests.len(), 1);
+        assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+    }
+
+    #[test]
+    fn supports_pm_send_request_query_and_urlencoded_body() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+
+            let (mut stream, _) = listener.accept().expect("connection");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            let header_end;
+            loop {
+                let read = stream.read(&mut buffer).expect("read request");
+                assert!(read > 0, "request ended before headers");
+                request.extend_from_slice(&buffer[..read]);
+                if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    header_end = position + 4;
+                    break;
+                }
+            }
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            assert!(headers.starts_with("post /token?source=script&space=hello+world http/1.1"));
+            assert!(headers.contains("content-type: application/x-www-form-urlencoded"));
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length: "))
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .expect("content length");
+            while request.len() < header_end + content_length {
+                let read = stream.read(&mut buffer).expect("read body");
+                assert!(read > 0, "body ended early");
+                request.extend_from_slice(&buffer[..read]);
+            }
+            assert_eq!(
+                &request[header_end..header_end + content_length],
+                b"alpha=one&beta=two+words"
+            );
+            let body = r#"{"ok":true}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        let request = Request::new("Scripted", "GET", "https://example.test");
+        let result = run_script(
+            &format!(
+                r#"
+                    pm.sendRequest({{
+                        url: {{
+                            raw: "http://{address}/token",
+                            query: [
+                                {{ key: "source", value: "script" }},
+                                {{ key: "space", value: "hello world" }}
+                            ]
+                        }},
+                        method: "POST",
+                        body: {{
+                            mode: "urlencoded",
+                            urlencoded: [
+                                {{ key: "alpha", value: "one" }},
+                                {{ key: "beta", value: "two words" }}
+                            ]
+                        }}
+                    }}, function (error, response) {{
+                        pm.test("url and body are sent", function () {{
+                            pm.expect(error).to.eql(null);
+                            response.to.have.status(200);
+                            pm.expect(response.json()).to.have.property("ok", true);
+                        }});
+                    }});
+                "#
+            ),
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("script request");
         server.join().expect("server");
 
         assert_eq!(result.tests.len(), 1);

@@ -35,7 +35,8 @@ The supported compatibility slice includes:
   mutation for no-auth, Basic, Bearer, API key and common OAuth shapes
 - `pm.response.code/status/responseTime/text/json/headers/cookies`
 - `pm.sendRequest` callback requests for bounded HTTP(S) subrequests with
-  headers, raw bodies and response text/JSON
+  URL query parameters, headers, raw/urlencoded/form-data/GraphQL bodies and
+  response text/JSON; file bodies remain rejected explicitly
 - `pm.test` and `pm.expect` equality, inclusion, property, boolean, numeric, type, regex and negated checks
 - `pm.response.to.be.ok/withBody`, response header checks with optional value
   matching, `jsonBody` path checks, header/cookie `toObject` helpers and
@@ -65,8 +66,10 @@ or isolated-worker decision is still required before broad compatibility is
 enabled by default.
 `pm.sendRequest` is intentionally a partial compatibility slice: it permits up
 to eight HTTP(S) callback requests per script, caps each response at 1 MiB and
-uses a two-second request timeout. Those subrequests use Node's native fetch,
-so Postly proxy, custom-CA, mTLS, OAuth and cookie-jar parity does not apply to
-them yet. OAuth helpers, broader Postman parity and an embedded or isolated
-runtime remain planned. The current Node bridge is still intended for source
-the user intentionally runs locally; its VM is not a security boundary.
+uses a two-second request timeout. URL query parameters and common in-memory
+body modes are translated, while file form-data and file bodies are rejected
+explicitly. Those subrequests use Node's native fetch, so Postly proxy,
+custom-CA, mTLS, OAuth and cookie-jar parity does not apply to them yet. OAuth
+helpers, broader Postman parity and an embedded or isolated runtime remain
+planned. The current Node bridge is still intended for source the user
+intentionally runs locally; its VM is not a security boundary.
