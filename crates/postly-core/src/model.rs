@@ -271,6 +271,10 @@ pub enum Assertion {
         pointer: String,
         expected: serde_json::Value,
     },
+    JsonPointerContains {
+        pointer: String,
+        expected: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

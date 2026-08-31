@@ -76,7 +76,7 @@ Implemented:
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs, combined PEM client identities and explicit HTTP CONNECT proxy routing; explicit insecure TLS remains pending.
 - CLI gRPC server reflection discovery supports protocol v1 with a v1alpha fallback, keeps reflected descriptors in memory and reports services, methods and streaming shapes as text or JSON.
 - Native GUI gRPC requests now persist local proto/include paths or server-reflection mode/host, method paths and metadata, edit protobuf JSON bodies, and execute unary plus finite streaming shapes through the same dynamic descriptor model; GUI local-proto and reflection worker coverage is backed by local tonic HTTP/2 servers.
-- Persistable response assertions for exact/ranged status, present/equal/containing headers and cookies, valid JSON bodies, body text, response-time thresholds and JSON Pointer presence/equality, evaluated by the runner without Node.js.
+- Persistable response assertions for exact/ranged status, present/equal/containing headers and cookies, valid JSON bodies, body text, response-time thresholds and JSON Pointer presence/equality/deep inclusion, evaluated by the runner without Node.js.
 - Opt-in Node.js script bridge with basic `pm.*`, `pm.test` and runner assertion results.
 - Script compatibility boundary now carries explicit variable unsets, globals,
   read-only iteration data, request header mutations and bounded source size;
@@ -114,6 +114,8 @@ Implemented:
   JSON body path checks, non-empty body and cookie checks, and header/cookie object views;
   matcher coverage includes exact/all/any keys, contain, deep properties and
   common numeric aliases with regression coverage.
+- Native JSON Pointer assertions now support deterministic deep inclusion for
+  object subsets, array members and string substrings in the runner and GUI.
 - Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; the GUI and `postly cookies` inspect active session cookies by domain/path with masked values and can clear the jar explicitly; saved workspaces persist a bounded ignored local jar.
 - reusable runner results with pass/fail status, deterministic order, bounded
   script-free concurrency, fail-fast and cooperative cancellation; scripts and
@@ -188,7 +190,8 @@ Not yet implemented:
   lightweight format detection/coloring, and manual responsive/accessibility QA.
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
-- Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
+- Broader Postman-compatible test/assertion cases beyond the current explicit
+  native slice, including richer matcher composition and schema-aware checks.
 - Full multi-file transactional restore for arbitrary caller-managed canonical
   workspace batches remains open; imports now have a best-effort rollback
   journal, while individual TOML writes use unique flushed temporary files and
@@ -271,5 +274,6 @@ smokes, verified the archive listing and reported SHA-256
 2. Prototype an embedded or isolated script runtime before enabling broader
    compatibility by default; keep the opt-in Node boundary explicit even with
    its resource guards.
-3. Extend the explicit assertion model with broader Postman-compatible cases.
+3. Extend the explicit assertion model with richer Postman-compatible cases and
+   schema-aware checks.
 4. Extend response preview features and complete desktop accessibility/responsive QA.

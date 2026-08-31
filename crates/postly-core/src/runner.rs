@@ -240,6 +240,50 @@ fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<
                 ))
             }
         }
+        Assertion::JsonPointerContains { pointer, expected } => {
+            let body = serde_json::from_slice::<serde_json::Value>(&response.body)
+                .map_err(|error| format!("response body is not JSON: {error}"))?;
+            let actual = body
+                .pointer(pointer)
+                .ok_or_else(|| format!("JSON Pointer {pointer:?} was not found"))?;
+            if json_value_contains(actual, expected) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected JSON Pointer {pointer:?} to contain {expected}, received {actual}"
+                ))
+            }
+        }
+    }
+}
+
+/// Implements a predictable, JSON-native subset of Postman's deep inclusion
+/// checks without bringing a JavaScript assertion runtime into the runner.
+/// Objects require all expected fields, arrays require every expected item to
+/// have a matching item, and strings use substring matching.
+fn json_value_contains(actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
+    match (actual, expected) {
+        (serde_json::Value::Object(actual), serde_json::Value::Object(expected)) => {
+            expected.iter().all(|(key, expected)| {
+                actual
+                    .get(key)
+                    .is_some_and(|actual| json_value_contains(actual, expected))
+            })
+        }
+        (serde_json::Value::Array(actual), serde_json::Value::Array(expected)) => {
+            expected.iter().all(|expected| {
+                actual
+                    .iter()
+                    .any(|actual| json_value_contains(actual, expected))
+            })
+        }
+        (serde_json::Value::Array(actual), expected) => actual
+            .iter()
+            .any(|actual| json_value_contains(actual, expected)),
+        (serde_json::Value::String(actual), serde_json::Value::String(expected)) => {
+            actual.contains(expected)
+        }
+        _ => actual == expected,
     }
 }
 
@@ -686,7 +730,7 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("connection");
             use tokio::io::AsyncWriteExt;
-            let body = r#"{"ok":true,"count":3}"#;
+            let body = r#"{"ok":true,"count":3,"tags":["postly","rust"],"message":"hello postly"}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-request-id: local\r\nset-cookie: session=abc; Path=/\r\ncontent-length: {}\r\n\r\n{}",
                 body.len(), body
@@ -725,6 +769,18 @@ mod tests {
                 pointer: "/count".to_owned(),
                 expected: serde_json::json!(3),
             },
+            Assertion::JsonPointerContains {
+                pointer: String::new(),
+                expected: serde_json::json!({"ok": true}),
+            },
+            Assertion::JsonPointerContains {
+                pointer: "/tags".to_owned(),
+                expected: serde_json::json!("rust"),
+            },
+            Assertion::JsonPointerContains {
+                pointer: "/message".to_owned(),
+                expected: serde_json::json!("postly"),
+            },
         ];
         let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
         let summary = run_requests(
@@ -737,10 +793,34 @@ mod tests {
         server.await.expect("server");
 
         assert!(summary.succeeded());
-        assert_eq!(summary.assertions, 11);
+        assert_eq!(summary.assertions, 14);
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.status_distribution.get(&200), Some(&1));
-        assert_eq!(summary.results[0].assertions, 11);
+        assert_eq!(summary.results[0].assertions, 14);
+    }
+
+    #[test]
+    fn json_value_contains_supports_deep_objects_arrays_and_strings() {
+        let actual = serde_json::json!({
+            "profile": {"role": "admin", "flags": ["staff", "active"]},
+            "message": "hello postly"
+        });
+        assert!(json_value_contains(
+            &actual,
+            &serde_json::json!({"profile": {"flags": ["active"]}})
+        ));
+        assert!(json_value_contains(
+            actual.pointer("/profile/flags").expect("flags"),
+            &serde_json::json!("staff")
+        ));
+        assert!(json_value_contains(
+            actual.pointer("/message").expect("message"),
+            &serde_json::json!("postly")
+        ));
+        assert!(!json_value_contains(
+            &actual,
+            &serde_json::json!({"profile": {"role": "owner"}})
+        ));
     }
 
     #[tokio::test]
