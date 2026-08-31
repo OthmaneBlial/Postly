@@ -337,9 +337,10 @@ workspace, 1.874 s to search it and 31.007 ms for 100 local runner requests.
 These are local measurements rather than competitor claims or universal
 performance guarantees.
 
-The latest local validation also passed `cargo xtask fuzz`: the three checked-in
-targets (`curl_command`, `variables` and `postman_import`) each completed 256
-bounded runs without a crash. `cargo xtask package` built the current macOS
+The latest local validation, after the Postman URL-variable, header-inferred JSON
+body and JSON Schema format slices, also passed `cargo xtask fuzz`: the three
+checked-in targets (`curl_command`, `variables` and `postman_import`) each
+completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
 `b798fc0b3c1ae0330c8304ea32da2d07313d573f4514d9a5add81e26495fac77`.
