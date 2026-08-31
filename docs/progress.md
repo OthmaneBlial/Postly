@@ -302,7 +302,7 @@ targets (`curl_command`, `variables` and `postman_import`) each completed 256
 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`6780cc4a116e0404e769969e1e3175097df3d8ed2de65414a33dced87b333cb5`.
+`4e424090d7a331e33e3c40fbdefd5e0020603768865d98b73a9d933cd62660d1`.
 
 ## Next highest-value work
 
