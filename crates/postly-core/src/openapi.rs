@@ -898,8 +898,8 @@ fn schema_for_example(value: &Value) -> Value {
         Value::Array(values) => {
             let mut schema = Map::new();
             schema.insert("type".to_owned(), json!("array"));
-            if let Some(first) = values.first() {
-                schema.insert("items".to_owned(), schema_for_example(first));
+            if let Some(items) = array_item_schema(values) {
+                schema.insert("items".to_owned(), items);
             }
             schema.insert("example".to_owned(), value.clone());
             Value::Object(schema)
@@ -911,6 +911,40 @@ fn schema_for_example(value: &Value) -> Value {
                 .collect::<Map<String, Value>>();
             json!({ "type": "object", "properties": properties, "example": value })
         }
+    }
+}
+
+fn array_item_schema(values: &[Value]) -> Option<Value> {
+    let mut variants = Vec::new();
+    let mut shapes = Vec::new();
+
+    for value in values {
+        let schema = schema_for_example(value);
+        let shape = schema_without_examples(&schema);
+        if !shapes.iter().any(|candidate| candidate == &shape) {
+            shapes.push(shape);
+            variants.push(schema);
+        }
+    }
+
+    match variants.as_slice() {
+        [] => None,
+        [schema] => Some(schema.clone()),
+        _ => Some(json!({ "oneOf": variants })),
+    }
+}
+
+fn schema_without_examples(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .filter(|(key, _)| key.as_str() != "example")
+                .map(|(key, value)| (key.clone(), schema_without_examples(value)))
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(values.iter().map(schema_without_examples).collect()),
+        _ => value.clone(),
     }
 }
 
@@ -2606,6 +2640,26 @@ paths:
         assert_eq!(schema["properties"]["deletedAt"]["nullable"], true);
         assert_eq!(schema["properties"]["tags"]["items"]["example"], "api");
         assert_eq!(schema["properties"]["tags"]["example"][0], "api");
+
+        let homogeneous = schema_for_example(&json!([{"id": 1}, {"id": 2}]));
+        assert_eq!(homogeneous["items"]["type"], "object");
+        assert_eq!(homogeneous["items"]["properties"]["id"]["example"], 1);
+        assert!(homogeneous["items"].get("oneOf").is_none());
+
+        let heterogeneous = schema_for_example(&json!([
+            {"id": 1},
+            {"name": "Ada"},
+            {"id": 2}
+        ]));
+        assert_eq!(heterogeneous["items"]["oneOf"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            heterogeneous["items"]["oneOf"][0]["properties"]["id"]["example"],
+            1
+        );
+        assert_eq!(
+            heterogeneous["items"]["oneOf"][1]["properties"]["name"]["example"],
+            "Ada"
+        );
     }
 
     #[test]

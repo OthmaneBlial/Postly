@@ -72,8 +72,10 @@ Implemented:
 - OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components, same-source-directory external refs and bounded remote HTTP(S) refs, parameters, JSON bodies, response examples and auth placeholders.
 - OpenAPI import accepts local files or explicit HTTP(S) URLs with bounded root/reference downloads and a source-preserving report; remote references are cached per import and cycles remain visible as warnings.
 - Native collections export to OpenAPI 3.0 JSON/YAML with operation paths,
-  parameters, request bodies, common security schemes, response examples and
-  explicit x-postly-* warnings/extensions for lossy or non-standard cases.
+  parameters, request bodies, common security schemes, response examples,
+  nested example-derived schemas and deterministic `oneOf` item schemas for
+  heterogeneous arrays, plus explicit x-postly-* warnings/extensions for
+  lossy or non-standard cases.
 - Structured GraphQL core/CLI/GUI request model with variables, operation names, partial-data/error parsing, validated GUI editing and local HTTP integration coverage.
 - GraphQL schema introspection through the CLI and native GUI, with parsed roots, fields, arguments, nested type references, enums, input fields, filtering and deprecated markers.
 - SSE parser plus progressive CLI/native GUI subscriptions with chunk-safe event decoding, event metadata, bounded GUI history, JSON-lines output and local streaming coverage.
@@ -264,9 +266,9 @@ Not yet implemented:
   gRPC PKCS#12 remains open.
   gRPC custom PEM CA/client identity and SOCKS5 routing are available in CLI
   and GUI.
-- OpenAPI schema generation beyond the current nested-example/nullable/format-aware
-  slice and deeper protocol-specific GUI tooling; remote references are bounded
-  but still need broader corpus coverage.
+- OpenAPI schema generation beyond the current nested-example/nullable/
+  format-aware/heterogeneous-array slice and deeper protocol-specific GUI
+  tooling; remote references are bounded but still need broader corpus coverage.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
   cross-client/memory benchmarks and production release validation beyond the
   local package smoke checks.
@@ -360,7 +362,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`1048100a33b6f3001ef58446dadc16dbe60aace9bb3893c81ae6fba56ee1db70`.
+`a5976578376b8f05bf8c95dd5a287d4032feefaa7f64515b33bdfdfc7954e995`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
