@@ -226,6 +226,15 @@ fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<
                 Err(format!("JSON Pointer {pointer:?} was not found"))
             }
         }
+        Assertion::JsonPointerNotPresent { pointer } => {
+            let body = serde_json::from_slice::<serde_json::Value>(&response.body)
+                .map_err(|error| format!("response body is not JSON: {error}"))?;
+            if body.pointer(pointer).is_none() {
+                Ok(())
+            } else {
+                Err(format!("JSON Pointer {pointer:?} unexpectedly exists"))
+            }
+        }
         Assertion::JsonPointerEquals { pointer, expected } => {
             let body = serde_json::from_slice::<serde_json::Value>(&response.body)
                 .map_err(|error| format!("response body is not JSON: {error}"))?;
@@ -792,6 +801,9 @@ mod tests {
             Assertion::JsonPointerPresent {
                 pointer: "/ok".to_owned(),
             },
+            Assertion::JsonPointerNotPresent {
+                pointer: "/missing".to_owned(),
+            },
             Assertion::JsonPointerEquals {
                 pointer: "/count".to_owned(),
                 expected: serde_json::json!(3),
@@ -824,10 +836,10 @@ mod tests {
         server.await.expect("server");
 
         assert!(summary.succeeded());
-        assert_eq!(summary.assertions, 15);
+        assert_eq!(summary.assertions, 16);
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.status_distribution.get(&200), Some(&1));
-        assert_eq!(summary.results[0].assertions, 15);
+        assert_eq!(summary.results[0].assertions, 16);
     }
 
     #[test]

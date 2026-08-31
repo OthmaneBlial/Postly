@@ -357,6 +357,7 @@ enum AssertionKind {
     CookieEquals,
     ResponseTimeUnder,
     JsonPointerPresent,
+    JsonPointerNotPresent,
     JsonPointerEquals,
     JsonPointerContains,
     JsonPointerType,
@@ -376,6 +377,7 @@ impl AssertionKind {
             Self::CookieEquals => "Cookie equals",
             Self::ResponseTimeUnder => "Response time is under",
             Self::JsonPointerPresent => "JSON Pointer exists",
+            Self::JsonPointerNotPresent => "JSON Pointer is absent",
             Self::JsonPointerEquals => "JSON Pointer equals",
             Self::JsonPointerContains => "JSON Pointer contains",
             Self::JsonPointerType => "JSON Pointer type",
@@ -411,6 +413,9 @@ impl AssertionKind {
             Self::ResponseTimeUnder => Assertion::ResponseTimeUnder { max_ms: 1000 },
             Self::JsonPointerPresent => Assertion::JsonPointerPresent {
                 pointer: "/status".to_owned(),
+            },
+            Self::JsonPointerNotPresent => Assertion::JsonPointerNotPresent {
+                pointer: "/error".to_owned(),
             },
             Self::JsonPointerEquals => Assertion::JsonPointerEquals {
                 pointer: "/status".to_owned(),
@@ -6203,6 +6208,9 @@ impl PostlyApp {
                     Assertion::JsonPointerPresent { pointer } => {
                         changed |= labeled_singleline(ui, "JSON Pointer", pointer);
                     }
+                    Assertion::JsonPointerNotPresent { pointer } => {
+                        changed |= labeled_singleline(ui, "JSON Pointer", pointer);
+                    }
                     Assertion::JsonPointerEquals { pointer, .. }
                     | Assertion::JsonPointerContains { pointer, .. } => {
                         changed |= labeled_singleline(ui, "JSON Pointer", pointer);
@@ -6270,6 +6278,7 @@ impl PostlyApp {
                         AssertionKind::CookieEquals,
                         AssertionKind::ResponseTimeUnder,
                         AssertionKind::JsonPointerPresent,
+                        AssertionKind::JsonPointerNotPresent,
                         AssertionKind::JsonPointerEquals,
                         AssertionKind::JsonPointerContains,
                         AssertionKind::JsonPointerType,
@@ -8669,6 +8678,9 @@ mod tests {
             Assertion::JsonPointerPresent {
                 pointer: "/data/active".to_owned(),
             },
+            Assertion::JsonPointerNotPresent {
+                pointer: "/data/missing".to_owned(),
+            },
             Assertion::JsonPointerEquals {
                 pointer: "/data/active".to_owned(),
                 expected: serde_json::Value::Bool(false),
@@ -8683,28 +8695,28 @@ mod tests {
             },
         ];
         app.load_request_editors();
-        assert_eq!(app.assertion_json_text.len(), 14);
-        app.assertion_json_text[11] = "false".to_owned();
-        app.assertion_json_text[12] = r#"{"active":false}"#.to_owned();
+        assert_eq!(app.assertion_json_text.len(), 15);
+        app.assertion_json_text[12] = "false".to_owned();
+        app.assertion_json_text[13] = r#"{"active":false}"#.to_owned();
 
         let edited = app.edited_request().expect("valid assertion editor state");
         assert_eq!(edited.assertions, app.request.assertions);
         assert_eq!(
-            edited.assertions[11],
+            edited.assertions[12],
             Assertion::JsonPointerEquals {
                 pointer: "/data/active".to_owned(),
                 expected: serde_json::Value::Bool(false),
             }
         );
         assert_eq!(
-            edited.assertions[12],
+            edited.assertions[13],
             Assertion::JsonPointerContains {
                 pointer: "/data".to_owned(),
                 expected: serde_json::json!({"active": false}),
             }
         );
         assert_eq!(
-            edited.assertions[13],
+            edited.assertions[14],
             Assertion::JsonPointerType {
                 pointer: "/data/active".to_owned(),
                 expected: JsonValueType::Boolean,
@@ -8714,9 +8726,9 @@ mod tests {
         app.save_current().expect("save assertions");
         let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
         assert_eq!(reopened.request.assertions, edited.assertions);
-        assert_eq!(reopened.assertion_json_text[11], "false");
+        assert_eq!(reopened.assertion_json_text[12], "false");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&reopened.assertion_json_text[12])
+            serde_json::from_str::<serde_json::Value>(&reopened.assertion_json_text[13])
                 .expect("reopened JSON assertion"),
             serde_json::json!({"active": false})
         );

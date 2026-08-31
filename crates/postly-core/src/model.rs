@@ -291,6 +291,9 @@ pub enum Assertion {
     JsonPointerPresent {
         pointer: String,
     },
+    JsonPointerNotPresent {
+        pointer: String,
+    },
     JsonPointerEquals {
         pointer: String,
         expected: serde_json::Value,
