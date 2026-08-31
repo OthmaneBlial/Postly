@@ -23,6 +23,8 @@ The native GUI exposes `Connect WS` for the current request. It supports
 `ws://` and `wss://`, request headers/auth/cookies/query parameters, text sends,
 binary/ping/pong/close frame visibility, connection status and a bounded
 500-message console history. Header and query API-key auth are supported.
-`Cancel` closes an active connection during the
-handshake or receive loop. Reconnect policy and saved message presets remain
-future slices.
+`Cancel` closes an active connection during the handshake or receive loop. The
+GUI exposes bounded `WS retries` (0–10) and reconnects after a peer close or
+recoverable handshake/read failure, while preserving the message history and
+surfacing each retry in the console. Saved message presets remain a future
+slice.

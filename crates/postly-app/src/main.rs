@@ -253,6 +253,11 @@ enum WebSocketStreamUpdate {
     Connected {
         url: String,
     },
+    Reconnecting {
+        attempt: u32,
+        max_attempts: u32,
+        delay_ms: u64,
+    },
     Message {
         direction: WebSocketDirection,
         kind: String,
@@ -655,6 +660,7 @@ pub struct PostlyApp {
     websocket_messages: VecDeque<ReceivedWebSocketMessage>,
     websocket_input: String,
     websocket_url: Option<String>,
+    websocket_reconnect_limit: u32,
     websocket_started: bool,
     websocket_connected: bool,
     selected_environment: Option<String>,
@@ -782,6 +788,7 @@ impl PostlyApp {
             websocket_messages: VecDeque::new(),
             websocket_input: String::new(),
             websocket_url: None,
+            websocket_reconnect_limit: 0,
             websocket_started: false,
             websocket_connected: false,
             selected_environment: None,
@@ -2899,6 +2906,7 @@ impl PostlyApp {
         self.remember_sensitive_values(&request, &context);
         let proxy_url = self.transport.proxy_url.trim().to_owned();
         let no_proxy = self.transport.no_proxy_hosts.trim().to_owned();
+        let reconnect_limit = self.websocket_reconnect_limit;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
         let (command_sender, mut command_receiver) =
@@ -2914,107 +2922,182 @@ impl PostlyApp {
                 runtime.block_on(async move {
                     let websocket_request = build_websocket_request(&request, &context)?;
                     let websocket_url = websocket_request.uri().to_string();
-                    let connect_result = tokio::select! {
-                        result = tokio::time::timeout(
-                            Duration::from_secs(30),
-                            connect_websocket(
-                                websocket_request,
-                                (!proxy_url.is_empty()).then_some(proxy_url.as_str()),
-                                (!no_proxy.is_empty()).then_some(no_proxy.as_str()),
-                            ),
-                        ) => result,
-                        _ = worker_cancellation.cancelled() => {
-                            return Err("WebSocket connection cancelled".to_owned());
-                        }
-                    };
-                    let (mut socket, _) = connect_result
-                        .map_err(|_| "WebSocket handshake timed out".to_owned())?
-                        .map_err(|error| format!("WebSocket connection failed: {error}"))?;
-                    sender
-                        .send(Ok(WebSocketStreamUpdate::Connected {
-                            url: websocket_url,
-                        }))
-                        .map_err(|_| "WebSocket console was closed".to_owned())?;
+                    let mut reconnects_used = 0_u32;
                     loop {
-                        tokio::select! {
-                            inbound = socket.next() => {
-                                match inbound {
-                                    Some(Ok(Message::Text(text))) => {
-                                        sender.send(Ok(WebSocketStreamUpdate::Message {
-                                            direction: WebSocketDirection::Received,
-                                            kind: "text".to_owned(),
-                                            data: text.to_string(),
-                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
-                                    }
-                                    Some(Ok(Message::Binary(bytes))) => {
-                                        sender.send(Ok(WebSocketStreamUpdate::Message {
-                                            direction: WebSocketDirection::Received,
-                                            kind: "binary".to_owned(),
-                                            data: format!(
-                                                "{} bytes · base64 {}",
-                                                bytes.len(),
-                                                base64::engine::general_purpose::STANDARD.encode(&bytes)
-                                            ),
-                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
-                                    }
-                                    Some(Ok(Message::Ping(bytes))) => {
-                                        socket.send(Message::Pong(bytes.clone())).await
-                                            .map_err(|error| format!("could not reply to WebSocket ping: {error}"))?;
-                                        sender.send(Ok(WebSocketStreamUpdate::Message {
-                                            direction: WebSocketDirection::Received,
-                                            kind: "ping".to_owned(),
-                                            data: format!("{} bytes", bytes.len()),
-                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
-                                    }
-                                    Some(Ok(Message::Pong(bytes))) => {
-                                        sender.send(Ok(WebSocketStreamUpdate::Message {
-                                            direction: WebSocketDirection::Received,
-                                            kind: "pong".to_owned(),
-                                            data: format!("{} bytes", bytes.len()),
-                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
-                                    }
-                                    Some(Ok(Message::Close(frame))) => {
-                                        let data = frame.map(|frame| format!("{} ({})", frame.reason, frame.code))
-                                            .unwrap_or_else(|| "peer closed the connection".to_owned());
-                                        sender.send(Ok(WebSocketStreamUpdate::Message {
-                                            direction: WebSocketDirection::Received,
-                                            kind: "close".to_owned(),
-                                            data,
-                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
-                                        break;
-                                    }
-                                    Some(Ok(Message::Frame(_))) => {}
-                                    Some(Err(error)) => {
-                                        return Err(format!("WebSocket receive failed: {error}"));
-                                    }
-                                    None => break,
-                                }
-                            }
-                            command = command_receiver.recv() => {
-                                match command {
-                                    Some(WebSocketCommand::SendText(text)) => {
-                                        socket.send(Message::Text(text.clone().into())).await
-                                            .map_err(|error| format!("WebSocket send failed: {error}"))?;
-                                        sender.send(Ok(WebSocketStreamUpdate::Message {
-                                            direction: WebSocketDirection::Sent,
-                                            kind: "text".to_owned(),
-                                            data: text,
-                                        })).map_err(|_| "WebSocket console was closed".to_owned())?;
-                                    }
-                                    Some(WebSocketCommand::Close) | None => {
-                                        let _ = socket.close(None).await;
-                                        break;
-                                    }
-                                }
-                            }
+                        let connect_result = tokio::select! {
+                            result = tokio::time::timeout(
+                                Duration::from_secs(30),
+                                connect_websocket(
+                                    websocket_request.clone(),
+                                    (!proxy_url.is_empty()).then_some(proxy_url.as_str()),
+                                    (!no_proxy.is_empty()).then_some(no_proxy.as_str()),
+                                ),
+                            ) => result,
                             _ = worker_cancellation.cancelled() => {
-                                let _ = socket.close(None).await;
-                                break;
+                                return Err("WebSocket connection cancelled".to_owned());
+                            }
+                        };
+                        let connection = match connect_result {
+                            Ok(Ok(connection)) => connection,
+                            Ok(Err(error)) => {
+                                let error = format!("WebSocket connection failed: {error}");
+                                if reconnects_used >= reconnect_limit {
+                                    return Err(error);
+                                }
+                                reconnects_used += 1;
+                                sender
+                                    .send(Ok(WebSocketStreamUpdate::Reconnecting {
+                                        attempt: reconnects_used,
+                                        max_attempts: reconnect_limit,
+                                        delay_ms: 250,
+                                    }))
+                                    .map_err(|_| "WebSocket console was closed".to_owned())?;
+                                tokio::select! {
+                                    _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                                    _ = worker_cancellation.cancelled() => {
+                                        return Err("WebSocket connection cancelled".to_owned());
+                                    }
+                                }
+                                continue;
+                            }
+                            Err(_) => {
+                                let error = "WebSocket handshake timed out".to_owned();
+                                if reconnects_used >= reconnect_limit {
+                                    return Err(error);
+                                }
+                                reconnects_used += 1;
+                                sender
+                                    .send(Ok(WebSocketStreamUpdate::Reconnecting {
+                                        attempt: reconnects_used,
+                                        max_attempts: reconnect_limit,
+                                        delay_ms: 250,
+                                    }))
+                                    .map_err(|_| "WebSocket console was closed".to_owned())?;
+                                tokio::select! {
+                                    _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                                    _ = worker_cancellation.cancelled() => {
+                                        return Err("WebSocket connection cancelled".to_owned());
+                                    }
+                                }
+                                continue;
+                            }
+                        };
+                        let (mut socket, _) = connection;
+                        sender
+                            .send(Ok(WebSocketStreamUpdate::Connected {
+                                url: websocket_url.clone(),
+                            }))
+                            .map_err(|_| "WebSocket console was closed".to_owned())?;
+                        let mut reconnect_after_close = true;
+                        let mut receive_error = None;
+                        loop {
+                            tokio::select! {
+                                inbound = socket.next() => {
+                                    match inbound {
+                                        Some(Ok(Message::Text(text))) => {
+                                            sender.send(Ok(WebSocketStreamUpdate::Message {
+                                                direction: WebSocketDirection::Received,
+                                                kind: "text".to_owned(),
+                                                data: text.to_string(),
+                                            })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                        }
+                                        Some(Ok(Message::Binary(bytes))) => {
+                                            sender.send(Ok(WebSocketStreamUpdate::Message {
+                                                direction: WebSocketDirection::Received,
+                                                kind: "binary".to_owned(),
+                                                data: format!(
+                                                    "{} bytes · base64 {}",
+                                                    bytes.len(),
+                                                    base64::engine::general_purpose::STANDARD.encode(&bytes)
+                                                ),
+                                            })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                        }
+                                        Some(Ok(Message::Ping(bytes))) => {
+                                            socket.send(Message::Pong(bytes.clone())).await
+                                                .map_err(|error| format!("could not reply to WebSocket ping: {error}"))?;
+                                            sender.send(Ok(WebSocketStreamUpdate::Message {
+                                                direction: WebSocketDirection::Received,
+                                                kind: "ping".to_owned(),
+                                                data: format!("{} bytes", bytes.len()),
+                                            })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                        }
+                                        Some(Ok(Message::Pong(bytes))) => {
+                                            sender.send(Ok(WebSocketStreamUpdate::Message {
+                                                direction: WebSocketDirection::Received,
+                                                kind: "pong".to_owned(),
+                                                data: format!("{} bytes", bytes.len()),
+                                            })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                        }
+                                        Some(Ok(Message::Close(frame))) => {
+                                            let data = frame.map(|frame| format!("{} ({})", frame.reason, frame.code))
+                                                .unwrap_or_else(|| "peer closed the connection".to_owned());
+                                            sender.send(Ok(WebSocketStreamUpdate::Message {
+                                                direction: WebSocketDirection::Received,
+                                                kind: "close".to_owned(),
+                                                data,
+                                            })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                            break;
+                                        }
+                                        Some(Ok(Message::Frame(_))) => {}
+                                        Some(Err(error)) => {
+                                            receive_error = Some(format!("WebSocket receive failed: {error}"));
+                                            break;
+                                        }
+                                        None => break,
+                                    }
+                                }
+                                command = command_receiver.recv() => {
+                                    match command {
+                                        Some(WebSocketCommand::SendText(text)) => {
+                                            socket.send(Message::Text(text.clone().into())).await
+                                                .map_err(|error| format!("WebSocket send failed: {error}"))?;
+                                            sender.send(Ok(WebSocketStreamUpdate::Message {
+                                                direction: WebSocketDirection::Sent,
+                                                kind: "text".to_owned(),
+                                                data: text,
+                                            })).map_err(|_| "WebSocket console was closed".to_owned())?;
+                                        }
+                                        Some(WebSocketCommand::Close) | None => {
+                                            let _ = socket.close(None).await;
+                                            reconnect_after_close = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ = worker_cancellation.cancelled() => {
+                                    let _ = socket.close(None).await;
+                                    reconnect_after_close = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if !reconnect_after_close {
+                            let _ = sender.send(Ok(WebSocketStreamUpdate::Closed));
+                            return Ok::<(), String>(());
+                        }
+                        if let Some(error) = receive_error {
+                            if reconnects_used >= reconnect_limit {
+                                return Err(error);
+                            }
+                        } else if reconnects_used >= reconnect_limit {
+                            let _ = sender.send(Ok(WebSocketStreamUpdate::Closed));
+                            return Ok::<(), String>(());
+                        }
+                        reconnects_used += 1;
+                        sender
+                            .send(Ok(WebSocketStreamUpdate::Reconnecting {
+                                attempt: reconnects_used,
+                                max_attempts: reconnect_limit,
+                                delay_ms: 250,
+                            }))
+                            .map_err(|_| "WebSocket console was closed".to_owned())?;
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                            _ = worker_cancellation.cancelled() => {
+                                return Err("WebSocket connection cancelled".to_owned());
                             }
                         }
                     }
-                    let _ = sender.send(Ok(WebSocketStreamUpdate::Closed));
-                    Ok::<(), String>(())
                 })
             })();
             if let Err(error) = result {
@@ -3485,6 +3568,23 @@ impl PostlyApp {
                     self.websocket_connected = true;
                     self.push_console(ConsoleLevel::Info, "WebSocket connected");
                     self.status_message = "WebSocket connected".to_owned();
+                }
+                Ok(Ok(WebSocketStreamUpdate::Reconnecting {
+                    attempt,
+                    max_attempts,
+                    delay_ms,
+                })) => {
+                    self.websocket_started = true;
+                    self.websocket_connected = false;
+                    self.push_console(
+                        ConsoleLevel::Warn,
+                        format!(
+                            "WebSocket reconnecting · attempt {attempt}/{max_attempts} · {delay_ms} ms"
+                        ),
+                    );
+                    self.status_message = format!(
+                        "WebSocket reconnecting · attempt {attempt}/{max_attempts} · {delay_ms} ms"
+                    );
                 }
                 Ok(Ok(WebSocketStreamUpdate::Message {
                     direction,
@@ -4354,6 +4454,18 @@ impl PostlyApp {
                                 .speed(0.1),
                         )
                         .on_hover_text("Bounded reconnect attempts for SSE streams");
+                        ui.label(
+                            RichText::new("WS retries")
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.add_enabled(
+                            !busy,
+                            egui::DragValue::new(&mut self.websocket_reconnect_limit)
+                                .range(0..=10)
+                                .speed(0.1),
+                        )
+                        .on_hover_text("Bounded reconnect attempts for WebSocket connections");
                         if ui
                             .add_enabled(!busy, egui::Button::new("Stream SSE"))
                             .on_hover_text("Open the current request as a progressive SSE console")
@@ -9018,6 +9130,70 @@ mod tests {
             matches!(message.direction, WebSocketDirection::Received)
                 && message.kind == "text"
                 && message.data == "echo:hello"
+        }));
+    }
+
+    #[test]
+    fn websocket_worker_reconnects_after_peer_close() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener).expect("listener");
+                for connection_index in 0..2 {
+                    let (stream, _) = listener.accept().await.expect("connection");
+                    let mut websocket = tokio_tungstenite::accept_async(stream)
+                        .await
+                        .expect("handshake");
+                    if connection_index == 0 {
+                        websocket.close(None).await.expect("initial close");
+                    } else {
+                        websocket
+                            .send(Message::Text("reconnected".to_owned().into()))
+                            .await
+                            .expect("reconnected message");
+                        websocket.close(None).await.expect("final close");
+                    }
+                }
+            });
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.url = format!("ws://{address}/reconnect");
+        app.websocket_reconnect_limit = 1;
+        app.start_websocket_current().expect("start WebSocket");
+
+        let mut finished = false;
+        for _ in 0..300 {
+            let active = app.poll_pending();
+            let reconnected = app.websocket_messages.iter().any(|message| {
+                matches!(message.direction, WebSocketDirection::Received)
+                    && message.data == "reconnected"
+            });
+            if !active && reconnected {
+                finished = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        server.join().expect("server");
+        assert!(finished, "WebSocket worker did not reconnect");
+        assert!(!app.websocket_connected);
+        assert!(app
+            .console_entries
+            .iter()
+            .any(|entry| entry.message.contains("attempt 1/1")));
+        assert!(app.websocket_messages.iter().any(|message| {
+            matches!(message.direction, WebSocketDirection::Received)
+                && message.kind == "text"
+                && message.data == "reconnected"
         }));
     }
 
