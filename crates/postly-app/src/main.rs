@@ -24,7 +24,7 @@ use postly_core::{
     GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue,
     MultipartPart, OAuthDeviceCodePrompt, Request, RequestBody, RequestSearchResult,
     ResponseExample, ResponseView, ScriptResult, SecretStore, SseEvent, SseParser, VariableContext,
-    Workspace,
+    WebSocketMessage, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -106,6 +106,7 @@ enum EditorTab {
     Params,
     Headers,
     Cookies,
+    WebSocket,
     Body,
     Grpc,
     Auth,
@@ -660,6 +661,9 @@ pub struct PostlyApp {
     websocket_commands: Option<tokio::sync::mpsc::UnboundedSender<WebSocketCommand>>,
     websocket_messages: VecDeque<ReceivedWebSocketMessage>,
     websocket_input: String,
+    websocket_preset_name: String,
+    websocket_preset_text: String,
+    websocket_selected_preset: Option<usize>,
     websocket_url: Option<String>,
     websocket_reconnect_limit: u32,
     websocket_started: bool,
@@ -788,6 +792,9 @@ impl PostlyApp {
             websocket_commands: None,
             websocket_messages: VecDeque::new(),
             websocket_input: String::new(),
+            websocket_preset_name: String::new(),
+            websocket_preset_text: String::new(),
+            websocket_selected_preset: None,
             websocket_url: None,
             websocket_reconnect_limit: 0,
             websocket_started: false,
@@ -1398,6 +1405,9 @@ impl PostlyApp {
     }
 
     fn load_request_editors(&mut self) {
+        self.websocket_preset_name.clear();
+        self.websocket_preset_text.clear();
+        self.websocket_selected_preset = None;
         if let Some(grpc) = &self.request.grpc {
             self.editor_tab = EditorTab::Grpc;
             self.grpc_proto_path.clone_from(&grpc.proto);
@@ -1648,6 +1658,9 @@ impl PostlyApp {
         self.websocket_commands = None;
         self.websocket_messages.clear();
         self.websocket_input.clear();
+        self.websocket_preset_name.clear();
+        self.websocket_preset_text.clear();
+        self.websocket_selected_preset = None;
         self.websocket_url = None;
         self.websocket_started = false;
         self.websocket_connected = false;
@@ -3119,10 +3132,12 @@ impl PostlyApp {
         if !self.websocket_connected {
             return Err("WebSocket is not connected".to_owned());
         }
-        let text = std::mem::take(&mut self.websocket_input);
-        if text.is_empty() {
+        if self.websocket_input.is_empty() {
             return Ok(());
         }
+        let context = self.context()?;
+        let text = resolve_websocket_value(&self.websocket_input, &context)?;
+        self.websocket_input.clear();
         let sender = self
             .websocket_commands
             .as_ref()
@@ -4427,6 +4442,12 @@ impl PostlyApp {
                             self.editor_tab = tab;
                         }
                     }
+                    if is_websocket_endpoint(&self.request.url)
+                        && tab_button(ui, self.editor_tab == EditorTab::WebSocket, "WebSocket")
+                            .clicked()
+                    {
+                        self.editor_tab = EditorTab::WebSocket;
+                    }
                     if self.request.grpc.is_some()
                         && tab_button(ui, self.editor_tab == EditorTab::Grpc, "gRPC").clicked()
                     {
@@ -4574,6 +4595,7 @@ impl PostlyApp {
                         );
                     }
                     EditorTab::Body => self.render_body(ui),
+                    EditorTab::WebSocket => self.render_websocket_editor(ui),
                     EditorTab::Grpc => self.render_grpc(ui),
                     EditorTab::Auth => self.render_auth(ui),
                     EditorTab::Scripts => self.render_scripts(ui),
@@ -4673,6 +4695,126 @@ impl PostlyApp {
         if changed {
             self.dirty = true;
         }
+    }
+
+    fn render_websocket_editor(&mut self, ui: &mut egui::Ui) {
+        ui.heading(RichText::new("WebSocket messages").color(ui.visuals().text_color()));
+        ui.label(
+            RichText::new(
+                "Keep reusable text frames with this request. Variables are resolved when a frame is sent.",
+            )
+            .small()
+            .color(ui.visuals().weak_text_color()),
+        );
+        ui.add_space(9.0);
+
+        if self.request.websocket_messages.is_empty() {
+            ui.label(RichText::new("No saved messages yet.").color(ui.visuals().weak_text_color()));
+        } else {
+            let presets = self
+                .request
+                .websocket_messages
+                .iter()
+                .enumerate()
+                .map(|(index, message)| (index, message.name.clone()))
+                .collect::<Vec<_>>();
+            for (index, name) in presets {
+                let selected = self.websocket_selected_preset == Some(index);
+                if ui
+                    .selectable_label(selected, format!("{}  ·  {name}", index + 1))
+                    .clicked()
+                {
+                    self.websocket_selected_preset = Some(index);
+                    if let Some(message) = self.request.websocket_messages.get(index) {
+                        self.websocket_preset_name.clone_from(&message.name);
+                        self.websocket_preset_text.clone_from(&message.text);
+                    }
+                }
+            }
+        }
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(5.0);
+        if labeled_singleline(ui, "Preset name", &mut self.websocket_preset_name) {
+            self.dirty = true;
+        }
+        ui.add_space(5.0);
+        ui.label(
+            RichText::new("Text frame")
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+        if ui
+            .add(
+                TextEdit::multiline(&mut self.websocket_preset_text)
+                    .font(TextStyle::Monospace)
+                    .desired_rows(7)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("{\"type\":\"ping\"}"),
+            )
+            .changed()
+        {
+            self.dirty = true;
+        }
+        ui.add_space(7.0);
+        ui.horizontal(|ui| {
+            if ui.button("New preset").clicked() {
+                self.websocket_selected_preset = None;
+                self.websocket_preset_name.clear();
+                self.websocket_preset_text.clear();
+            }
+            let can_save = !self.websocket_preset_name.trim().is_empty();
+            if ui
+                .add_enabled(can_save, egui::Button::new("Save preset"))
+                .clicked()
+            {
+                let message = WebSocketMessage::new(
+                    self.websocket_preset_name.trim(),
+                    self.websocket_preset_text.clone(),
+                );
+                let index = if let Some(index) = self
+                    .websocket_selected_preset
+                    .filter(|index| *index < self.request.websocket_messages.len())
+                {
+                    self.request.websocket_messages[index] = message;
+                    index
+                } else {
+                    self.request.websocket_messages.push(message);
+                    self.request.websocket_messages.len() - 1
+                };
+                self.websocket_selected_preset = Some(index);
+                self.dirty = true;
+                self.status_message =
+                    "WebSocket preset staged — click Save to persist it".to_owned();
+            }
+            if ui
+                .add_enabled(
+                    self.websocket_selected_preset.is_some(),
+                    egui::Button::new("Delete preset"),
+                )
+                .clicked()
+            {
+                if let Some(index) = self
+                    .websocket_selected_preset
+                    .filter(|index| *index < self.request.websocket_messages.len())
+                {
+                    self.request.websocket_messages.remove(index);
+                    self.websocket_selected_preset = None;
+                    self.websocket_preset_name.clear();
+                    self.websocket_preset_text.clear();
+                    self.dirty = true;
+                    self.status_message =
+                        "WebSocket preset deleted — click Save to persist the change".to_owned();
+                }
+            }
+        });
+        ui.add_space(5.0);
+        ui.label(
+            RichText::new("Preset changes are local draft edits until the request is saved.")
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
     }
 
     fn render_body(&mut self, ui: &mut egui::Ui) {
@@ -5957,6 +6099,35 @@ impl PostlyApp {
                 });
         }
         ui.separator();
+        let presets = self
+            .request
+            .websocket_messages
+            .iter()
+            .map(|message| (message.name.clone(), message.text.clone()))
+            .collect::<Vec<_>>();
+        if !presets.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new("Saved frames")
+                        .small()
+                        .strong()
+                        .color(ui.visuals().weak_text_color()),
+                );
+                for (name, text) in presets {
+                    if ui
+                        .small_button(&name)
+                        .on_hover_text("Load this frame into the composer")
+                        .clicked()
+                    {
+                        self.websocket_input = text;
+                    }
+                }
+                if ui.small_button("Edit presets").clicked() {
+                    self.editor_tab = EditorTab::WebSocket;
+                }
+            });
+            ui.add_space(5.0);
+        }
         ui.horizontal(|ui| {
             let send = ui
                 .add(
@@ -6417,6 +6588,11 @@ impl PostlyApp {
             }
         }
     }
+}
+
+fn is_websocket_endpoint(input: &str) -> bool {
+    let input = input.trim().to_ascii_lowercase();
+    input.starts_with("ws://") || input.starts_with("wss://")
 }
 
 fn resolve_websocket_value(input: &str, context: &VariableContext) -> Result<String, String> {
@@ -7527,6 +7703,58 @@ mod tests {
         net::TcpListener,
         task::{Context, Poll},
     };
+
+    #[test]
+    fn websocket_presets_round_trip_through_local_request_storage() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "Echo socket".to_owned();
+        app.request.url = "ws://127.0.0.1:9000/socket".to_owned();
+        app.request.websocket_messages = vec![
+            WebSocketMessage::new("Ping", r#"{"type":"ping"}"#),
+            WebSocketMessage::new("Subscribe", "subscribe\nchannel=events"),
+        ];
+
+        app.save_current().expect("save request");
+        let path = app.request_path.clone().expect("saved path");
+        let reopened = Workspace::open(directory.path()).expect("reopen workspace");
+        let request = reopened.load_request(&path).expect("load request");
+
+        assert!(is_websocket_endpoint(&request.url));
+        assert_eq!(request.websocket_messages.len(), 2);
+        assert_eq!(request.websocket_messages[0].name, "Ping");
+        assert_eq!(request.websocket_messages[0].text, r#"{"type":"ping"}"#);
+        assert_eq!(
+            request.websocket_messages[1].text,
+            "subscribe\nchannel=events"
+        );
+    }
+
+    #[test]
+    fn websocket_endpoint_detection_accepts_only_ws_schemes() {
+        assert!(is_websocket_endpoint("ws://localhost/socket"));
+        assert!(is_websocket_endpoint(" WSS://api.example.test/socket "));
+        assert!(!is_websocket_endpoint("https://api.example.test/socket"));
+        assert!(!is_websocket_endpoint("socket"));
+    }
+
+    #[test]
+    fn websocket_message_values_resolve_active_variables() {
+        let context = VariableContext::default().with_environment(
+            [
+                ("channel".to_owned(), "events".to_owned()),
+                ("tenant".to_owned(), "local".to_owned()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let resolved = resolve_websocket_value(
+            r#"{"subscribe":"{{channel}}","tenant":"{{tenant}}"}"#,
+            &context,
+        )
+        .expect("message variables");
+        assert_eq!(resolved, r#"{"subscribe":"events","tenant":"local"}"#);
+    }
 
     #[test]
     fn editor_state_builds_a_json_bearer_request() {

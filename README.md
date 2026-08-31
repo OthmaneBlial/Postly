@@ -100,8 +100,9 @@ This repository contains working vertical slices, not a static interface mockup.
   data, fail-fast execution, pretty/JSON/JUnit reporters and a deterministic
   local HTTP mock server backed by saved response examples.
 - **Modern API protocols:** structured GraphQL with schema introspection, SSE
-  subscriptions, WebSocket text/binary flows, and dynamic gRPC calls with local
-  `.proto` discovery or CLI server reflection (v1 with v1alpha fallback).
+  subscriptions, WebSocket text/binary flows with saved message presets, and
+  dynamic gRPC calls with local `.proto` discovery or CLI server reflection (v1
+  with v1alpha fallback).
 - **Native desktop workspace:** request editing, Scripts and Body tabs, command
   palette, cancellation, local history, transport settings, dark/light/system
   themes and the same core semantics as the CLI.

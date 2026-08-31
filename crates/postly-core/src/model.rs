@@ -137,6 +137,11 @@ pub struct Request {
     pub headers: Vec<HeaderEntry>,
     #[serde(default)]
     pub cookies: Vec<KeyValue>,
+    /// Reusable text payloads for the native WebSocket workspace. These are
+    /// intentionally kept separate from the live console history so they can
+    /// be versioned with the request and reused across connections.
+    #[serde(default)]
+    pub websocket_messages: Vec<WebSocketMessage>,
     #[serde(default)]
     pub body: RequestBody,
     #[serde(default)]
@@ -164,12 +169,29 @@ impl Request {
             query: Vec::new(),
             headers: Vec::new(),
             cookies: Vec::new(),
+            websocket_messages: Vec::new(),
             body: RequestBody::None,
             auth: Auth::None,
             pre_request_script: None,
             test_script: None,
             examples: Vec::new(),
             assertions: Vec::new(),
+        }
+    }
+}
+
+/// A named, Git-friendly text payload for a WebSocket request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WebSocketMessage {
+    pub name: String,
+    pub text: String,
+}
+
+impl WebSocketMessage {
+    pub fn new(name: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            text: text.into(),
         }
     }
 }

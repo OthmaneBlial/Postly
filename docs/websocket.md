@@ -23,11 +23,15 @@ The native GUI exposes `Connect WS` for the current request. It supports
 `ws://` and `wss://`, request headers/auth/cookies/query parameters, text sends,
 binary/ping/pong/close frame visibility, connection status and a bounded
 500-message console history. Header and query API-key auth are supported.
+WebSocket requests also have a dedicated editor for named, Git-friendly text
+message presets. Select a saved frame from the live console to load it into the
+composer; variable expressions are resolved when the frame is sent. Preset
+changes are staged in the request draft and become durable when the request is
+saved.
 `Cancel` closes an active connection during the handshake or receive loop. The
 GUI exposes bounded `WS retries` (0–10) and reconnects after a peer close or
 recoverable handshake/read failure, while preserving the message history and
-surfacing each retry in the console. Saved message presets remain a future
-slice.
+surfacing each retry in the console.
 
 The CLI and GUI accept HTTP CONNECT and `socks5://`/`socks5h://` proxy URLs for
 WebSocket connections. SOCKS5 username/password authentication is supported;
