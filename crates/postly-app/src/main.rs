@@ -13,7 +13,7 @@ use std::{
 
 use base64::Engine;
 use chrono::Local;
-use eframe::egui::{self, Color32, RichText, TextEdit, TextStyle};
+use eframe::egui::{self, Color32, FontId, RichText, TextEdit, TextStyle};
 use futures_util::{SinkExt, StreamExt};
 use hyper_util::rt::TokioIo;
 use postly_core::{
@@ -126,6 +126,27 @@ enum ResponseTab {
     SseEvents,
     WebSocket,
     GraphqlSchema,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResponsePreviewLanguage {
+    Json,
+    Xml,
+    Html,
+    JavaScript,
+    Text,
+}
+
+impl ResponsePreviewLanguage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Json => "JSON",
+            Self::Xml => "XML",
+            Self::Html => "HTML",
+            Self::JavaScript => "JavaScript",
+            Self::Text => "Text",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6507,6 +6528,30 @@ impl PostlyApp {
                     ResponseView::Raw
                 };
                 let text = response.formatted_body(view);
+                let language = response_preview_language(response);
+                let line_count = text.lines().count().max(1);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(language.label())
+                            .strong()
+                            .color(ui.visuals().text_color()),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "{} line{} · {} bytes{}",
+                            line_count,
+                            if line_count == 1 { "" } else { "s" },
+                            response.response_size,
+                            if self.response_tab == ResponseTab::Pretty {
+                                " · formatted when valid"
+                            } else {
+                                ""
+                            }
+                        ))
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                    );
+                });
                 if !self.response_search.trim().is_empty() {
                     let total = response_search_matches(&text, &self.response_search);
                     let lines = response_search_lines(&text, &self.response_search);
@@ -6537,7 +6582,6 @@ impl PostlyApp {
                         });
                 }
                 let lines = text.lines().collect::<Vec<_>>();
-                let line_count = lines.len().max(1);
                 let line_height = ui.text_style_height(&TextStyle::Monospace);
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
@@ -6553,7 +6597,11 @@ impl PostlyApp {
                                     ),
                                 );
                                 let line = lines.get(index).copied().unwrap_or_default();
-                                let label = egui::Label::new(RichText::new(line).monospace());
+                                let label = egui::Label::new(highlight_response_line(
+                                    line,
+                                    language,
+                                    ui.visuals(),
+                                ));
                                 if self.response_wrap {
                                     ui.add(label.wrap());
                                 } else {
@@ -7507,6 +7555,206 @@ fn tab_button(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response 
         }))
         .fill(fill),
     )
+}
+
+fn response_preview_language(response: &HttpResponse) -> ResponsePreviewLanguage {
+    let content_type = response
+        .content_type
+        .as_deref()
+        .unwrap_or_default()
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if content_type.contains("json") {
+        return ResponsePreviewLanguage::Json;
+    }
+    if content_type.contains("html") {
+        return ResponsePreviewLanguage::Html;
+    }
+    if content_type.contains("xml") {
+        return ResponsePreviewLanguage::Xml;
+    }
+    if content_type.contains("javascript") || content_type.contains("ecmascript") {
+        return ResponsePreviewLanguage::JavaScript;
+    }
+
+    let trimmed = response.body_text().trim_start().to_owned();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        ResponsePreviewLanguage::Json
+    } else if trimmed.starts_with("<!doctype html") || trimmed.starts_with("<html") {
+        ResponsePreviewLanguage::Html
+    } else if trimmed.starts_with("<?xml") || trimmed.starts_with('<') {
+        ResponsePreviewLanguage::Xml
+    } else if trimmed.starts_with("function ")
+        || trimmed.starts_with("const ")
+        || trimmed.starts_with("let ")
+        || trimmed.starts_with("import ")
+        || trimmed.starts_with("export ")
+    {
+        ResponsePreviewLanguage::JavaScript
+    } else {
+        ResponsePreviewLanguage::Text
+    }
+}
+
+fn highlight_response_line(
+    line: &str,
+    language: ResponsePreviewLanguage,
+    visuals: &egui::Visuals,
+) -> egui::text::LayoutJob {
+    let default_color = visuals.text_color();
+    let string_color = Color32::from_rgb(214, 166, 95);
+    let number_color = Color32::from_rgb(117, 194, 226);
+    let keyword_color = Color32::from_rgb(194, 139, 236);
+    let markup_color = Color32::from_rgb(103, 190, 143);
+    let comment_color = visuals.weak_text_color();
+    let mut job = egui::text::LayoutJob::default();
+    let font_id = FontId::monospace(13.0);
+    let mut append = |text: &str, color: Color32| {
+        job.append(
+            text,
+            0.0,
+            egui::text::TextFormat {
+                font_id: font_id.clone(),
+                color,
+                ..Default::default()
+            },
+        );
+    };
+    if matches!(language, ResponsePreviewLanguage::Text) {
+        append(line, default_color);
+        return job;
+    }
+
+    let mut offset = 0;
+    let mut in_markup_tag = false;
+    while offset < line.len() {
+        let current = line[offset..]
+            .chars()
+            .next()
+            .expect("offset stays on a character boundary");
+        let current_width = current.len_utf8();
+        let next = line[offset + current_width..].chars().next();
+
+        if matches!(language, ResponsePreviewLanguage::JavaScript)
+            && current == '/'
+            && next == Some('/')
+        {
+            append(&line[offset..], comment_color);
+            break;
+        }
+        if matches!(
+            language,
+            ResponsePreviewLanguage::Xml | ResponsePreviewLanguage::Html
+        ) && current == '<'
+        {
+            in_markup_tag = true;
+            append(&line[offset..offset + current_width], markup_color);
+            offset += current_width;
+            continue;
+        }
+        if matches!(
+            language,
+            ResponsePreviewLanguage::Xml | ResponsePreviewLanguage::Html
+        ) && current == '>'
+        {
+            in_markup_tag = false;
+            append(&line[offset..offset + current_width], markup_color);
+            offset += current_width;
+            continue;
+        }
+        if current == '"'
+            || (current == '\'' && matches!(language, ResponsePreviewLanguage::JavaScript))
+            || (current == '`' && matches!(language, ResponsePreviewLanguage::JavaScript))
+        {
+            let quote = current;
+            let start = offset;
+            offset += current_width;
+            let mut escaped = false;
+            while offset < line.len() {
+                let character = line[offset..]
+                    .chars()
+                    .next()
+                    .expect("offset stays on a character boundary");
+                let width = character.len_utf8();
+                offset += width;
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == quote {
+                    break;
+                }
+            }
+            append(&line[start..offset], string_color);
+            continue;
+        }
+        if current.is_ascii_digit()
+            || (current == '-' && next.is_some_and(|character| character.is_ascii_digit()))
+        {
+            let start = offset;
+            offset += current_width;
+            while offset < line.len() {
+                let character = line[offset..]
+                    .chars()
+                    .next()
+                    .expect("offset stays on a character boundary");
+                if character.is_ascii_digit() || matches!(character, '.' | 'e' | 'E' | '+' | '-') {
+                    offset += character.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            append(&line[start..offset], number_color);
+            continue;
+        }
+        if current.is_ascii_alphabetic() || current == '_' || current == '$' {
+            let start = offset;
+            offset += current_width;
+            while offset < line.len() {
+                let character = line[offset..]
+                    .chars()
+                    .next()
+                    .expect("offset stays on a character boundary");
+                if character.is_ascii_alphanumeric() || matches!(character, '_' | '$' | '-') {
+                    offset += character.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let token = &line[start..offset];
+            let color = if in_markup_tag {
+                markup_color
+            } else if matches!(
+                token,
+                "true"
+                    | "false"
+                    | "null"
+                    | "undefined"
+                    | "const"
+                    | "let"
+                    | "var"
+                    | "function"
+                    | "return"
+                    | "export"
+                    | "import"
+                    | "async"
+                    | "await"
+            ) {
+                keyword_color
+            } else {
+                default_color
+            };
+            append(token, color);
+            continue;
+        }
+
+        append(&line[offset..offset + current_width], default_color);
+        offset += current_width;
+    }
+    job
 }
 
 fn response_search_matches(text: &str, query: &str) -> usize {
@@ -8919,6 +9167,48 @@ mod tests {
             vec![(2, "  \"Name\": \"Ada\",".to_owned())]
         );
         assert!(response_search_lines(body, "missing").is_empty());
+    }
+
+    #[test]
+    fn response_preview_detects_declared_and_structured_formats() {
+        let response = |content_type: Option<&str>, body: &[u8]| HttpResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: Vec::new(),
+            body: body.to_vec(),
+            response_size: body.len(),
+            content_type: content_type.map(str::to_owned),
+            duration_ms: 1,
+            protocol: "HTTP/1.1".to_owned(),
+            url: "http://example.test".to_owned(),
+            cookies: Vec::new(),
+        };
+
+        let json_by_type = response(Some("application/json; charset=utf-8"), b"plain");
+        assert_eq!(
+            response_preview_language(&json_by_type),
+            ResponsePreviewLanguage::Json
+        );
+        let json_by_shape = response(None, br#"{"ok":true}"#);
+        assert_eq!(
+            response_preview_language(&json_by_shape),
+            ResponsePreviewLanguage::Json
+        );
+        let html = response(None, b"<!doctype html><html></html>");
+        assert_eq!(
+            response_preview_language(&html),
+            ResponsePreviewLanguage::Html
+        );
+        let javascript = response(Some("text/javascript"), b"const ok = true;");
+        assert_eq!(
+            response_preview_language(&javascript),
+            ResponsePreviewLanguage::JavaScript
+        );
+        let text = response(None, b"plain text");
+        assert_eq!(
+            response_preview_language(&text),
+            ResponsePreviewLanguage::Text
+        );
     }
 
     #[test]

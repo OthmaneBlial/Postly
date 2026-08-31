@@ -74,9 +74,10 @@ This repository contains working vertical slices, not a static interface mockup.
   and bypass rules, with actionable
   diagnostics.
 - **Response inspection:** Pretty/Raw views with JSON and well-formed XML
-  formatting, status/headers/cookies/protocol/duration, local search, wrapping,
-  clipboard copy, virtualized rendering, an in-app developer console, response
-  snapshots and save-as-example fixtures for local mocks.
+  formatting, detected JSON/XML/HTML/JavaScript/Text previews with lightweight
+  syntax coloring, status/headers/cookies/protocol/duration, local search,
+  wrapping, clipboard copy, virtualized rendering, an in-app developer console,
+  response snapshots and save-as-example fixtures for local mocks.
 - **Collections:** local TOML projects, nested folders, deterministic discovery,
   stable request identity, duplicate/delete/rename flows, metadata-only history
   and workspace-wide request search. The native GUI supports multiple saved
