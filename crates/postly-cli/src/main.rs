@@ -38,6 +38,17 @@ use tokio_tungstenite::{
 };
 use tracing_subscriber::EnvFilter;
 
+fn parse_concurrency(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|error| format!("concurrency must be a positive integer: {error}"))?;
+    if (1..=64).contains(&parsed) {
+        Ok(parsed)
+    } else {
+        Err("concurrency must be between 1 and 64".to_owned())
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "postly",
@@ -524,6 +535,7 @@ struct RunOptions<'a> {
     folder: Option<&'a str>,
     fail_fast: bool,
     scripts: bool,
+    concurrency: usize,
     timeout: u64,
     proxy: Option<&'a str>,
     no_proxy: Option<&'a str>,
@@ -1033,7 +1045,7 @@ enum Command {
         #[arg(long, help = "Serve one request, then exit; useful for local tests")]
         once: bool,
     },
-    /// Execute every saved request in a collection, sequentially.
+    /// Execute every saved request in a collection.
     Run {
         #[arg(default_value = ".")]
         path: PathBuf,
@@ -1052,6 +1064,14 @@ enum Command {
             help = "Execute preserved pre-request and test scripts through Node.js"
         )]
         scripts: bool,
+        #[arg(
+            long,
+            default_value_t = 1,
+            value_parser = parse_concurrency,
+            value_name = "N",
+            help = "Run up to N requests concurrently when scripts and delays are disabled"
+        )]
+        concurrency: usize,
         #[arg(long, default_value_t = 30)]
         timeout: u64,
         #[arg(
@@ -1694,6 +1714,7 @@ async fn main() -> Result<()> {
             folder,
             fail_fast,
             scripts,
+            concurrency,
             timeout,
             proxy,
             no_proxy,
@@ -1709,6 +1730,7 @@ async fn main() -> Result<()> {
                 folder: folder.as_deref(),
                 fail_fast,
                 scripts,
+                concurrency,
                 timeout,
                 proxy: proxy.as_deref(),
                 no_proxy: no_proxy.as_deref(),
@@ -3659,6 +3681,7 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
             &context,
             &RunnerOptions {
                 fail_fast: options.fail_fast,
+                concurrency: options.concurrency,
                 scripts: options.scripts,
                 iterations: iterations.clone(),
                 ..RunnerOptions::default()
@@ -4298,6 +4321,23 @@ mod tests {
             }
             command => panic!("unexpected command: {command:?}"),
         }
+    }
+
+    #[test]
+    fn parses_bounded_run_concurrency() {
+        let cli = Cli::try_parse_from(["postly", "run", "./workspace", "--concurrency", "4"])
+            .expect("run concurrency flag");
+        match cli.command {
+            Command::Run { concurrency, .. } => assert_eq!(concurrency, 4),
+            command => panic!("unexpected command: {command:?}"),
+        }
+
+        assert!(
+            Cli::try_parse_from(["postly", "run", "./workspace", "--concurrency", "0"]).is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["postly", "run", "./workspace", "--concurrency", "65"]).is_err()
+        );
     }
 
     #[test]
@@ -5568,6 +5608,7 @@ paths:
             folder: Some("Auth"),
             fail_fast: false,
             scripts: false,
+            concurrency: 1,
             timeout: 10,
             proxy: None,
             no_proxy: None,

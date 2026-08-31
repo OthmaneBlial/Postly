@@ -102,7 +102,9 @@ Implemented:
   matcher coverage includes exact/all/any keys, contain, deep properties and
   common numeric aliases with regression coverage.
 - Stateful cookie jar, response `Set-Cookie` metadata and explicit request-cookie editing; the GUI and `postly cookies` inspect active session cookies by domain/path with masked values and can clear the jar explicitly; saved workspaces persist a bounded ignored local jar.
-- reusable runner results with pass/fail status, deterministic order, fail-fast and cooperative cancellation.
+- reusable runner results with pass/fail status, deterministic order, bounded
+  script-free concurrency, fail-fast and cooperative cancellation; scripts and
+  configured delays retain sequential execution.
 - runner summaries now expose a deterministic HTTP status distribution in JSON
   and the pretty reporter.
 - runner iteration data from JSON objects/arrays plus pretty, JSON and JUnit reporters.

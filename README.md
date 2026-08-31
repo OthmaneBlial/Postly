@@ -102,8 +102,9 @@ This repository contains working vertical slices, not a static interface mockup.
 - **Testing and automation:** response assertions, an opt-in Node.js script
   bridge, tested `pm.*` behavior including request/body facades and bounded
   `pm.sendRequest` callbacks, collection runs, folder selection, iteration
-  data, fail-fast execution, pretty/JSON/JUnit reporters and a deterministic
-  local HTTP mock server backed by saved response examples.
+  data, bounded script-free concurrency, fail-fast execution, pretty/JSON/JUnit
+  reporters and a deterministic local HTTP mock server backed by saved response
+  examples.
 - **Modern API protocols:** structured GraphQL with schema introspection, SSE
   subscriptions, WebSocket text/binary flows with saved message presets, and
   dynamic gRPC calls with local `.proto` discovery or CLI server reflection (v1

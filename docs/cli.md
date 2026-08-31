@@ -120,13 +120,17 @@ project. See the code-generation guide.
 postly run ./my-api --environment Local --reporter pretty
 postly run ./my-api --folder smoke --environment Local --reporter json
 postly run ./my-api --folder auth --scripts --reporter junit > postly-results.xml
+postly run ./my-api --concurrency 4 --reporter json
 ~~~
 
 `--folder` selects the named folder and all nested folders. Folder matching is
 case-sensitive and accepts either slash separator. A run with no matching
 request fails instead of silently reporting success. The runner is sequential
-and deterministic; `--fail-fast` stops after the first failed request. Pretty
-output includes a status distribution, while JSON exposes it as
+by default and deterministic. `--concurrency N` enables bounded batches of up
+to 64 script-free requests when no delay is configured; result output remains
+in request order, while `--fail-fast` stops after the first completed failed
+batch. Scripts and delays keep the safer sequential behavior. Pretty output
+includes a status distribution, while JSON exposes it as
 `status_distribution` for automation.
 
 Iteration data is a JSON object or an array of objects:

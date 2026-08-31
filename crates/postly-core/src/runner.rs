@@ -8,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use futures_util::future::join_all;
 use serde::Serialize;
 use tokio::sync::Notify;
 
@@ -61,6 +62,9 @@ impl CancellationToken {
 pub struct RunnerOptions {
     pub fail_fast: bool,
     pub delay: Duration,
+    /// Maximum number of script-free requests to execute concurrently.
+    /// Requests remain sequential when scripts or delays are enabled.
+    pub concurrency: usize,
     pub cancellation: CancellationToken,
     pub iterations: Vec<Variables>,
     pub scripts: bool,
@@ -71,6 +75,7 @@ impl Default for RunnerOptions {
         Self {
             fail_fast: false,
             delay: Duration::ZERO,
+            concurrency: 1,
             cancellation: CancellationToken::default(),
             iterations: Vec::new(),
             scripts: false,
@@ -228,6 +233,84 @@ impl RunnerSummary {
     }
 }
 
+async fn execute_concurrent_request(
+    engine: HttpEngine,
+    path: PathBuf,
+    request: Request,
+    context: VariableContext,
+    iteration: usize,
+    cancellation: CancellationToken,
+) -> Option<RunnerItemResult> {
+    let started = Instant::now();
+    let response = tokio::select! {
+        _ = cancellation.cancelled() => return None,
+        response = engine.execute(&request, &context) => response,
+    };
+    let duration_ms = started.elapsed().as_millis();
+    match response {
+        Ok(response) => {
+            let assertion_failures = evaluate_assertions(&request.assertions, &response);
+            let error = (!assertion_failures.is_empty())
+                .then(|| format!("{} explicit assertion(s) failed", assertion_failures.len()));
+            Some(RunnerItemResult {
+                path,
+                iteration,
+                name: request.name,
+                method: request.method,
+                status: Some(response.status),
+                duration_ms,
+                passed: response.status < 400 && error.is_none(),
+                error,
+                assertions: request.assertions.len(),
+                assertion_failures,
+            })
+        }
+        Err(error) => Some(RunnerItemResult {
+            path,
+            iteration,
+            name: request.name,
+            method: request.method,
+            status: None,
+            duration_ms,
+            passed: false,
+            error: Some(error.to_string()),
+            assertions: 0,
+            assertion_failures: Vec::new(),
+        }),
+    }
+}
+
+async fn execute_concurrent_batch(
+    engine: &HttpEngine,
+    requests: &[(PathBuf, Request)],
+    context: &VariableContext,
+    iteration: usize,
+    cancellation: &CancellationToken,
+) -> (Vec<RunnerItemResult>, bool) {
+    let futures = requests.iter().map(|(path, request)| {
+        let engine = engine.clone();
+        let path = path.clone();
+        let request = request.clone();
+        let context = context.clone();
+        let cancellation = cancellation.clone();
+        async move {
+            execute_concurrent_request(engine, path, request, context, iteration, cancellation)
+                .await
+        }
+    });
+    let results = join_all(futures).await;
+    let mut cancelled = false;
+    let mut items = Vec::with_capacity(results.len());
+    for item in results {
+        if let Some(item) = item {
+            items.push(item);
+        } else {
+            cancelled = true;
+        }
+    }
+    (items, cancelled)
+}
+
 pub async fn run_requests(
     engine: &HttpEngine,
     requests: &[(PathBuf, Request)],
@@ -244,6 +327,50 @@ pub async fn run_requests(
     'iterations: for (iteration_index, iteration_data) in iterations.into_iter().enumerate() {
         let mut iteration_context = context.clone();
         iteration_context.iteration = iteration_data;
+        if options.concurrency > 1 && options.delay.is_zero() && !options.scripts {
+            let concurrency = options.concurrency.max(1);
+            let mut start = 0;
+            while start < requests.len() {
+                if options.cancellation.is_cancelled() {
+                    summary.cancelled = true;
+                    break 'iterations;
+                }
+                let end = (start + concurrency).min(requests.len());
+                let (items, cancelled) = execute_concurrent_batch(
+                    engine,
+                    &requests[start..end],
+                    &iteration_context,
+                    iteration_index + 1,
+                    &options.cancellation,
+                )
+                .await;
+                let mut batch_failed = false;
+                for item in items {
+                    if let Some(status) = item.status {
+                        *summary.status_distribution.entry(status).or_default() += 1;
+                    }
+                    summary.requests += 1;
+                    summary.assertions += item.assertions;
+                    summary.assertion_failures += item.assertion_failures.len();
+                    if item.passed {
+                        summary.passed += 1;
+                    } else {
+                        summary.failed += 1;
+                        batch_failed = true;
+                    }
+                    summary.results.push(item);
+                }
+                if batch_failed && options.fail_fast {
+                    break 'iterations;
+                }
+                if cancelled {
+                    summary.cancelled = true;
+                    break 'iterations;
+                }
+                start = end;
+            }
+            continue;
+        }
         for (index, (path, request)) in requests.iter().enumerate() {
             if options.cancellation.is_cancelled() {
                 summary.cancelled = true;
@@ -523,6 +650,68 @@ mod tests {
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.status_distribution.get(&200), Some(&1));
         assert_eq!(summary.results[0].assertions, 8);
+    }
+
+    #[tokio::test]
+    async fn runs_script_free_requests_with_bounded_concurrency_in_stable_order() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (first, _) = listener.accept().await.expect("first connection");
+            let (second, _) = listener.accept().await.expect("second connection");
+            let respond = |mut socket: tokio::net::TcpStream| async move {
+                let mut request = [0_u8; 4096];
+                let _request_len = socket.read(&mut request).await.expect("request");
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+                    )
+                    .await
+                    .expect("response");
+                socket.shutdown().await.expect("shutdown");
+            };
+            let _ = tokio::join!(respond(first), respond(second));
+        });
+        let engine = HttpEngine::new(&EngineOptions {
+            timeout: Duration::from_secs(2),
+            ..EngineOptions::default()
+        })
+        .expect("engine");
+        let requests = [
+            (
+                PathBuf::from("first.postly.toml"),
+                Request::new("First", "GET", format!("http://{address}/first")),
+            ),
+            (
+                PathBuf::from("second.postly.toml"),
+                Request::new("Second", "GET", format!("http://{address}/second")),
+            ),
+        ];
+        let summary = tokio::time::timeout(
+            Duration::from_secs(3),
+            run_requests(
+                &engine,
+                &requests,
+                &VariableContext::default(),
+                &RunnerOptions {
+                    concurrency: 2,
+                    ..RunnerOptions::default()
+                },
+            ),
+        )
+        .await
+        .expect("concurrent runner should complete");
+        server.await.expect("server");
+
+        assert!(summary.succeeded());
+        assert_eq!(summary.requests, 2);
+        assert_eq!(summary.results[0].name, "First");
+        assert_eq!(summary.results[1].name, "Second");
+        assert_eq!(summary.status_distribution.get(&200), Some(&2));
     }
 
     #[tokio::test]
