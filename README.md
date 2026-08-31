@@ -125,6 +125,13 @@ The [documentation hub](https://othmaneblial.github.io/Postly/docs.html)
 organizes the guides for setup, migration, protocols, scripting, privacy and
 compatibility.
 
+## Download
+
+The first technical preview is available for macOS Apple Silicon:
+[`v0.1.0`](https://github.com/OthmaneBlial/Postly/releases/tag/v0.1.0). Verify
+the included `SHA256SUMS` file before running the binaries. Cross-platform
+installers, notarization and production release validation remain open.
+
 ## Quick start
 
 ### 1. Clone and create a local workspace

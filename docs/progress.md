@@ -193,6 +193,11 @@ The release packaging gate has since been validated locally with the macOS
 ARM64 archive, internal SHA256 manifest and packaged CLI smoke checks. External
 review, public distribution and manual desktop QA remain separate gates.
 
+The first public `v0.1.0` macOS Apple Silicon technical preview is now
+published as a GitHub Release with the validated archive and installation
+notes. It is intentionally not presented as notarized, cross-platform or
+production-ready; those release gates remain explicit.
+
 The OpenAPI export slice is covered by a native JSON/YAML serialization test
 and a real CLI smoke run from a temporary workspace; operation paths, server
 variables, security metadata and request/response examples were inspected.
