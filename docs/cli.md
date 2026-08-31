@@ -135,10 +135,14 @@ batch. Scripts and delays keep the safer sequential behavior. Pretty output
 includes a status distribution, while JSON exposes it as
 `status_distribution` for automation.
 
-Iteration data is a JSON object or an array of objects:
+Iteration data accepts a JSON object, an array of JSON objects, or a CSV file.
+For CSV, the first row is the variable header; quoted fields support commas,
+embedded line breaks and escaped quotes, and missing trailing columns resolve to
+an empty string. Duplicate/empty headers and extra values are rejected.
 
 ~~~bash
 postly run ./my-api --data-file compat/runner/iterations.json --reporter json
+postly run ./my-api --data-file compat/runner/iterations.csv --reporter json
 ~~~
 
 Exit status is non-zero when a request, explicit assertion, script test or

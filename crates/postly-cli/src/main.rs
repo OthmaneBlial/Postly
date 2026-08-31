@@ -4076,6 +4076,12 @@ fn load_iteration_data(path: Option<&Path>) -> Result<Vec<postly_core::Variables
     };
     let text = fs::read_to_string(path)
         .with_context(|| format!("could not read iteration data file {}", path.display()))?;
+    if path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
+    {
+        return load_csv_iteration_data(&text, path);
+    }
     let value: serde_json::Value = serde_json::from_str(&text)
         .with_context(|| format!("iteration data file is not valid JSON: {}", path.display()))?;
     let rows = match value {
@@ -4095,6 +4101,130 @@ fn load_iteration_data(path: Option<&Path>) -> Result<Vec<postly_core::Variables
                 .collect())
         })
         .collect()
+}
+
+fn load_csv_iteration_data(text: &str, path: &Path) -> Result<Vec<postly_core::Variables>> {
+    let mut rows = parse_csv_rows(text)
+        .with_context(|| format!("iteration data CSV is invalid: {}", path.display()))?;
+    let Some(mut headers) = rows.first().cloned() else {
+        bail!(
+            "iteration data CSV must contain a header row: {}",
+            path.display()
+        );
+    };
+    if let Some(first) = headers.first_mut() {
+        *first = first.trim_start_matches('\u{feff}').to_owned();
+    }
+    if headers.iter().any(|header| header.trim().is_empty()) {
+        bail!(
+            "iteration data CSV contains an empty header: {}",
+            path.display()
+        );
+    }
+    if headers
+        .iter()
+        .enumerate()
+        .any(|(index, header)| headers[..index].contains(header))
+    {
+        bail!(
+            "iteration data CSV contains duplicate headers: {}",
+            path.display()
+        );
+    }
+
+    rows.remove(0);
+    rows.into_iter()
+        .filter(|row| !(row.len() == 1 && row[0].is_empty()))
+        .enumerate()
+        .map(|(index, row)| {
+            if row.len() > headers.len() {
+                bail!(
+                    "iteration CSV row {} has {} values but the header has {} columns: {}",
+                    index + 2,
+                    row.len(),
+                    headers.len(),
+                    path.display()
+                );
+            }
+            Ok(headers
+                .iter()
+                .enumerate()
+                .map(|(column, header)| {
+                    (header.clone(), row.get(column).cloned().unwrap_or_default())
+                })
+                .collect())
+        })
+        .collect()
+}
+
+fn parse_csv_rows(text: &str) -> Result<Vec<Vec<String>>> {
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut field = String::new();
+    let mut in_quotes = false;
+    let mut quote_closed = false;
+    let mut field_started = false;
+    let mut chars = text.chars().peekable();
+
+    while let Some(character) = chars.next() {
+        if in_quotes {
+            match character {
+                '"' if chars.peek() == Some(&'"') => {
+                    chars.next();
+                    field.push('"');
+                }
+                '"' => {
+                    in_quotes = false;
+                    quote_closed = true;
+                }
+                _ => field.push(character),
+            }
+            continue;
+        }
+
+        match character {
+            ',' => {
+                row.push(std::mem::take(&mut field));
+                field_started = false;
+                quote_closed = false;
+            }
+            '\n' | '\r' => {
+                if character == '\r' && chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                row.push(std::mem::take(&mut field));
+                rows.push(std::mem::take(&mut row));
+                field_started = false;
+                quote_closed = false;
+            }
+            '"' if !field_started && field.is_empty() => {
+                in_quotes = true;
+                field_started = true;
+            }
+            '"' if quote_closed => {
+                bail!("characters follow a closed quoted CSV field");
+            }
+            '"' => {
+                bail!("unexpected quote in an unquoted CSV field");
+            }
+            _ if quote_closed => {
+                bail!("characters follow a closed quoted CSV field");
+            }
+            _ => {
+                field.push(character);
+                field_started = true;
+            }
+        }
+    }
+
+    if in_quotes {
+        bail!("unterminated quoted CSV field");
+    }
+    if field_started || !field.is_empty() || !row.is_empty() {
+        row.push(field);
+        rows.push(row);
+    }
+    Ok(rows)
 }
 
 fn iteration_value(value: &serde_json::Value) -> String {
@@ -4786,6 +4916,35 @@ mod tests {
             Command::Run { max_redirects, .. } => assert_eq!(max_redirects, 0),
             command => panic!("unexpected command: {command:?}"),
         }
+    }
+
+    #[test]
+    fn loads_csv_iteration_data_with_quoted_values_and_short_rows() {
+        let directory = tempfile::tempdir().expect("iteration directory");
+        let path = directory.path().join("iterations.csv");
+        std::fs::write(
+            &path,
+            "\u{feff}name,role,notes\r\nAda,admin,\"hello, world\"\r\nGrace,developer,\"line one\nline two\"\r\nLin,\r\n",
+        )
+        .expect("CSV");
+
+        let rows = load_iteration_data(Some(&path)).expect("CSV iteration data");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0]["name"], "Ada");
+        assert_eq!(rows[0]["notes"], "hello, world");
+        assert_eq!(rows[1]["notes"], "line one\nline two");
+        assert_eq!(rows[2]["role"], "");
+        assert_eq!(rows[2]["notes"], "");
+    }
+
+    #[test]
+    fn rejects_malformed_csv_iteration_data() {
+        let directory = tempfile::tempdir().expect("iteration directory");
+        let path = directory.path().join("iterations.csv");
+        std::fs::write(&path, "name,role\n\"Ada,admin\n").expect("CSV");
+
+        let error = load_iteration_data(Some(&path)).expect_err("malformed CSV");
+        assert!(format!("{error:#}").contains("unterminated quoted CSV field"));
     }
 
     #[test]

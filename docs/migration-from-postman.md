@@ -28,6 +28,10 @@ The importer preserves collection metadata, folders, request URLs, query paramet
 
 Collection and folder pre-request/test events are preserved into the native collection/request files in execution order, whether Postman exports `script.exec` as a line array or a single source string. With `--scripts`, the current local Node.js bridge executes the preserved source and reports basic assertions; without that explicit flag, scripts remain source-only.
 
+Postman collection-runner data can be supplied as either JSON or CSV when using
+`postly run --data-file`. CSV headers become iteration-data keys and quoted
+fields are parsed locally without shell execution.
+
 Postly can also export the native collection and environment back to Postman
 JSON:
 

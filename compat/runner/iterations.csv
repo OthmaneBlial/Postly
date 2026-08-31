@@ -1,0 +1,3 @@
+baseUrl,username,role
+https://api.example.test,Ada,admin
+https://api.example.test,Grace,"developer,maintainer"

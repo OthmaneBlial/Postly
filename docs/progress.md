@@ -169,7 +169,8 @@ Implemented:
   configured delays retain sequential execution.
 - runner summaries now expose a deterministic HTTP status distribution in JSON
   and the pretty reporter.
-- runner iteration data from JSON objects/arrays plus pretty, JSON and JUnit reporters.
+- runner iteration data from JSON objects/arrays and RFC 4180 CSV files with
+  quoted fields, plus pretty, JSON and JUnit reporters.
 - Pretty and JUnit runner reporters now surface each script test's pass/fail state,
   duration and bounded error detail, while retaining request-level result counts.
 - `postly run` now propagates Ctrl-C through the runner cancellation token,
@@ -362,7 +363,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`6201207a8fa4bf178796f85bb957cb8617b1709f3740650ca218132c7556bc0d`.
+`ee7667129d251634afecbbb753b8bec514e0d09bd49f3e2dff2a1bfdb53d5910`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
