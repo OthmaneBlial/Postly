@@ -13,9 +13,9 @@
     { "api": "pm.variables.get", "status": "supported", "note": "Reads the documented iteration/runtime/request/environment/collection precedence." },
     { "api": "pm.variables.set/unset/clear/has/replaceIn", "status": "partial", "note": "Runtime session mutations and request header changes are supported; broader scope semantics remain limited." },
     { "api": "pm.request", "status": "partial", "note": "Postman-shaped URL host/path/query access, method, headers, cookies and raw/JSON/form body facades are supported; broader URL object parity remains limited." },
-    { "api": "pm.response", "status": "partial", "note": "Status, timing, text, JSON, header and response Set-Cookie access are exposed." },
+    { "api": "pm.response", "status": "partial", "note": "Status, timing, raw text/body, JSON, header/cookie access, header value matching, jsonBody path checks and header/cookie toObject helpers are exposed." },
     { "api": "pm.test", "status": "supported", "note": "Assertions are collected and affect runner/send exit status when scripts are enabled." },
-    { "api": "pm.expect", "status": "partial", "note": "Equality, stable deep equality, inclusion, property, keys, length, oneOf, empty, numeric range, type and boolean checks are implemented." },
+    { "api": "pm.expect", "status": "partial", "note": "Equality, stable deep equality, inclusion/contain, deep property, exact/all/any keys, length, oneOf, empty, numeric comparisons, type, boolean and regex checks are implemented." },
     { "api": "pm.sendRequest", "status": "partial", "note": "Opt-in callback requests support bounded HTTP(S) subrequests, headers, raw bodies, response text/JSON and response assertions; proxy/TLS parity and broader request options remain limited." },
     { "api": "console.log", "status": "partial", "note": "Logs are captured locally but not printed by the CLI to avoid accidental secret disclosure." }
   ]

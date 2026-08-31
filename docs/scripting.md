@@ -34,13 +34,16 @@ The supported compatibility slice includes:
 - `pm.sendRequest` callback requests for bounded HTTP(S) subrequests with
   headers, raw bodies and response text/JSON
 - `pm.test` and `pm.expect` equality, inclusion, property, boolean, numeric, type, regex and negated checks
-- `pm.response.to.be.ok`, response header checks and `pm.response.cookies.get`
+- `pm.response.to.be.ok/withBody`, response header checks with optional value
+  matching, `jsonBody` path checks, header/cookie `toObject` helpers and
+  `pm.response.cookies.get/has`
 - `console.log`, `console.warn` and `console.error` capture
 
 The tested expectation subset also includes deep equality with stable object-key
-comparison, lengthOf, keys, oneOf, empty, numeric at.least/at.most/within and
-the a/an type aliases. This remains a compatibility slice rather than a claim
-of complete Chai or Postman assertion parity.
+comparison, lengthOf, exact/all/any keys, oneOf, empty, numeric
+at.least/at.most/within/greaterThan/lessThan, contain, property deep equality
+and the a/an type aliases. This remains a compatibility slice rather than a
+claim of complete Chai or Postman assertion parity.
 
 Script output is kept local. CLI output reports assertions but deliberately
 does not print captured console logs, because a script can log a secret. The

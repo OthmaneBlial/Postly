@@ -782,6 +782,16 @@ function expect(value) {
         "expected " + JSON.stringify(value) + " to" + prefix + " have keys " + JSON.stringify(expectedKeys)
       );
     };
+    const anyKeys = function (...expected) {
+      const expectedKeys = expected.length === 1 && Array.isArray(expected[0]) ? expected[0] : expected;
+      const actualKeys = value !== null && value !== undefined && typeof value === "object"
+        ? Object.keys(value)
+        : [];
+      check(
+        expectedKeys.some((key) => actualKeys.includes(text(key))),
+        "expected " + JSON.stringify(value) + " to" + prefix + " have any of keys " + JSON.stringify(expectedKeys)
+      );
+    };
     const to = {
       equal: (expected) => check(value === expected, "expected " + JSON.stringify(value) + " to" + prefix + " equal " + JSON.stringify(expected)),
       eql: (expected) => check(deepEqual(value, expected), "expected " + JSON.stringify(value) + " to" + prefix + " deeply equal " + JSON.stringify(expected)),
@@ -791,15 +801,23 @@ function expect(value) {
           : value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, expected);
         check(included, "expected " + JSON.stringify(value) + " to" + prefix + " include " + JSON.stringify(expected));
       },
+      contain: (expected) => {
+        const included = typeof value === "string" || Array.isArray(value)
+          ? value.includes(expected)
+          : value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, expected);
+        check(included, "expected " + JSON.stringify(value) + " to" + prefix + " contain " + JSON.stringify(expected));
+      },
       match: (pattern) => check(typeof value === "string" && pattern.test(value), "expected " + JSON.stringify(value) + " to" + prefix + " match the pattern"),
       have: {
         property: function (name, expected) {
           const present = value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, name);
           check(present, "expected property " + name);
-          if (arguments.length > 1 && present) check(value[name] === expected, "expected property " + name + " to" + prefix + " equal " + JSON.stringify(expected));
+          if (arguments.length > 1 && present) check(deepEqual(value[name], expected), "expected property " + name + " to" + prefix + " equal " + JSON.stringify(expected));
         },
         lengthOf,
-        keys
+        keys,
+        all: { keys },
+        any: { keys: anyKeys }
       }
     };
     Object.defineProperty(to, "deep", {
@@ -814,6 +832,8 @@ function expect(value) {
         get ok() { check(Boolean(value), "expected " + JSON.stringify(value) + " to" + prefix + " be truthy"); return true; },
         above: (expected) => check(value > expected, "expected " + JSON.stringify(value) + " to" + prefix + " be above " + expected),
         below: (expected) => check(value < expected, "expected " + JSON.stringify(value) + " to" + prefix + " be below " + expected),
+        greaterThan: (expected) => check(value > expected, "expected " + JSON.stringify(value) + " to" + prefix + " be greater than " + expected),
+        lessThan: (expected) => check(value < expected, "expected " + JSON.stringify(value) + " to" + prefix + " be less than " + expected),
         at: {
           least: (expected) => check(value >= expected, "expected " + JSON.stringify(value) + " to" + prefix + " be at least " + expected),
           most: (expected) => check(value <= expected, "expected " + JSON.stringify(value) + " to" + prefix + " be at most " + expected)
@@ -840,19 +860,46 @@ function expect(value) {
 
 function decorateHeaders(responseHeaders) {
   responseHeaders.get = (name) => {
-    const found = responseHeaders.find((header) => header.key.toLowerCase() === text(name).toLowerCase() && header.enabled !== false);
+    const found = responseHeaders.find((header) => text(header && header.key).toLowerCase() === text(name).toLowerCase() && header.enabled !== false);
     return found ? found.value : undefined;
   };
   responseHeaders.has = (name) => responseHeaders.get(name) !== undefined;
+  responseHeaders.toObject = () => responseHeaders.reduce((object, header) => {
+    if (header && header.key && header.enabled !== false) object[header.key] = text(header.value);
+    return object;
+  }, {});
+  responseHeaders.each = (callback) => responseHeaders.forEach(callback);
   return responseHeaders;
 }
 
 function decorateCookies(responseCookies) {
   responseCookies.get = (name) => {
-    const found = responseCookies.find((cookie) => cookie.name.toLowerCase() === text(name).toLowerCase());
+    const found = responseCookies.find((cookie) => text(cookie && cookie.name).toLowerCase() === text(name).toLowerCase());
     return found ? found.value : undefined;
   };
+  responseCookies.has = (name) => responseCookies.get(name) !== undefined;
+  responseCookies.toObject = () => responseCookies.reduce((object, cookie) => {
+    if (cookie && cookie.name) object[cookie.name] = text(cookie.value);
+    return object;
+  }, {});
+  responseCookies.each = (callback) => responseCookies.forEach(callback);
   return responseCookies;
+}
+
+function readJsonPath(value, path) {
+  if (path === undefined || path === null || text(path) === "") return { found: true, value };
+  const segments = text(path)
+    .replace(/\[(\w+)\]/g, ".$1")
+    .split(".")
+    .filter(Boolean);
+  let current = value;
+  for (const segment of segments) {
+    if (current === null || current === undefined || !Object.prototype.hasOwnProperty.call(current, segment)) {
+      return { found: false, value: undefined };
+    }
+    current = current[segment];
+  }
+  return { found: true, value: current };
 }
 
 function makeScriptResponse(responseData) {
@@ -863,13 +910,34 @@ function makeScriptResponse(responseData) {
   const responseTo = {
     have: {
       status: (expected) => assert(responseData.status === expected, "expected status " + responseData.status + " to equal " + expected),
-      header: (name) => assert(responseHeaders.get(name) !== undefined, "expected response header " + name)
+      header: function (name, expected) {
+        const actual = responseHeaders.get(name);
+        assert(actual !== undefined, "expected response header " + name);
+        if (arguments.length > 1) {
+          const matches = expected && typeof expected.test === "function"
+            ? expected.test(actual)
+            : actual === text(expected);
+          assert(matches, "expected response header " + name + " to equal " + text(expected));
+        }
+      },
+      jsonBody: function (path, expected) {
+        let parsed;
+        try { parsed = JSON.parse(responseData.body_text); } catch (_) { throw new Error("expected a JSON response body"); }
+        const result = readJsonPath(parsed, path);
+        assert(result.found, "expected JSON body property " + text(path));
+        if (arguments.length > 1) assert(deepEqual(result.value, expected), "expected JSON body property " + text(path) + " to equal " + JSON.stringify(expected));
+        return result.value;
+      }
     }
   };
   Object.defineProperty(responseTo, "be", {
     value: {
       get ok() {
         assert(responseData.status >= 200 && responseData.status < 400, "expected response to be ok");
+        return true;
+      },
+      get withBody() {
+        assert(responseData.body_text.length > 0, "expected response to have a body");
         return true;
       }
     }
@@ -878,6 +946,7 @@ function makeScriptResponse(responseData) {
     code: responseData.status,
     status: responseData.status_text,
     responseTime: responseData.duration_ms,
+    body: responseData.body_text,
     headers: responseHeaders,
     cookies: responseCookies,
     text: () => responseData.body_text,
@@ -1113,10 +1182,15 @@ mod tests {
                     pm.expect({ b: [2], a: 1 }).to.deep.equal({ a: 1, b: [2] });
                     pm.expect([1, 2, 3]).to.have.lengthOf(3);
                     pm.expect({ ready: true }).to.have.keys(["ready"]);
+                    pm.expect({ ready: true, pending: false }).to.have.all.keys("ready", "pending");
+                    pm.expect({ ready: true }).to.have.any.keys("missing", "ready");
+                    pm.expect("ready").to.contain("ead");
                     pm.expect("ready").to.be.oneOf(["ready", "done"]);
                     pm.expect(3).to.be.at.least(2);
                     pm.expect(3).to.be.at.most(4);
                     pm.expect(3).to.be.within(3, 3);
+                    pm.expect(3).to.be.greaterThan(2);
+                    pm.expect(3).to.be.lessThan(4);
                     pm.expect([]).to.be.empty;
                     pm.expect({}).to.be.empty;
                     pm.expect([]).to.be.an("array");
@@ -1330,9 +1404,14 @@ mod tests {
                 });
                 pm.test("common matchers", function () {
                     pm.response.to.be.ok;
+                    pm.response.to.be.withBody;
                     pm.response.to.have.header("content-type");
+                    pm.response.to.have.header("content-type", /json/);
+                    pm.response.to.have.jsonBody("ok", true);
                     pm.expect(pm.response.headers.get("content-type")).to.include("json");
+                    pm.expect(pm.response.headers.toObject()).to.have.property("Content-Type", "application/json");
                     pm.expect(pm.response.cookies.get("SESSION")).to.eql("abc");
+                    pm.expect(pm.response.cookies.toObject()).to.have.property("session", "abc");
                     pm.expect(pm.response.responseTime).to.be.below(10);
                     pm.expect(pm.response.status).to.match(/Created/);
                     pm.expect(pm.response.code).to.not.equal(200);
@@ -1349,7 +1428,7 @@ mod tests {
         assert!(!result.tests[0].passed);
         assert!(result.tests[1].passed);
         assert!(result.tests[2].passed);
-        assert!(result.tests[3].passed);
+        assert!(result.tests[3].passed, "{:?}", result.tests[3].error);
         assert_eq!(result.request["name"], "Scripted");
     }
 
