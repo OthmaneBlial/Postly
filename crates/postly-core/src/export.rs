@@ -481,6 +481,22 @@ fn postman_auth(auth: &Auth) -> Option<Value> {
                 { "key": "scope", "value": scope.clone().unwrap_or_default(), "type": "string" },
             ],
         }),
+        Auth::AwsSignatureV4 {
+            access_key_id,
+            secret_access_key,
+            region,
+            service,
+            session_token,
+        } => json!({
+            "type": "awsv4",
+            "awsv4": [
+                { "key": "accessKey", "value": access_key_id, "type": "string" },
+                { "key": "secretKey", "value": secret_access_key, "type": "string" },
+                { "key": "region", "value": region, "type": "string" },
+                { "key": "service", "value": service, "type": "string" },
+                { "key": "sessionToken", "value": session_token.clone().unwrap_or_default(), "type": "string" },
+            ],
+        }),
     };
     Some(value)
 }
@@ -759,6 +775,25 @@ mod tests {
         assert_eq!(oauth[0]["value"], "refresh_token");
         assert_eq!(oauth[1]["value"], "https://auth.example.test/token");
         assert_eq!(oauth[4]["value"], "refresh-123");
+    }
+
+    #[test]
+    fn exports_aws_signature_v4_for_postman() {
+        let auth = Auth::AwsSignatureV4 {
+            access_key_id: "AKIDEXAMPLE".to_owned(),
+            secret_access_key: "{{awsSecret}}".to_owned(),
+            region: "us-east-1".to_owned(),
+            service: "execute-api".to_owned(),
+            session_token: Some("{{awsSession}}".to_owned()),
+        };
+        let document = postman_auth(&auth).expect("Postman auth");
+        assert_eq!(document["type"], "awsv4");
+        let aws = &document["awsv4"];
+        assert_eq!(aws[0]["value"], "AKIDEXAMPLE");
+        assert_eq!(aws[1]["value"], "{{awsSecret}}");
+        assert_eq!(aws[2]["value"], "us-east-1");
+        assert_eq!(aws[3]["value"], "execute-api");
+        assert_eq!(aws[4]["value"], "{{awsSession}}");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs,
     hash::{Hash, Hasher},
     io::BufReader,
@@ -9,6 +9,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use chrono::Utc;
 use cookie_store::{CookieStore as StoredCookieStore, RawCookie};
 use quick_xml::{events::Event, Reader, Writer};
 use reqwest::{
@@ -122,6 +123,8 @@ pub enum HttpError {
     CookieJar { path: String, message: String },
     #[error("OAuth 2.0 token request failed: {0}")]
     OAuthToken(String),
+    #[error("AWS Signature V4 signing failed: {0}")]
+    AwsSignature(String),
 }
 
 #[derive(Debug, Clone)]
@@ -534,7 +537,13 @@ impl HttpEngine {
             .prepare_builder_with_device_code_prompt(request, context, &on_device_code)
             .await?;
         let started = std::time::Instant::now();
-        let response = builder.send().await.map_err(HttpError::Request)?;
+        let mut http_request = builder.build().map_err(HttpError::Request)?;
+        sign_aws_request(&mut http_request, &request.auth, context)?;
+        let response = self
+            .client
+            .execute(http_request)
+            .await
+            .map_err(HttpError::Request)?;
         let status = response.status();
         let protocol = format!("{:?}", response.version());
         let content_type = response
@@ -714,7 +723,13 @@ impl HttpEngine {
         let builder = self
             .prepare_builder_with_device_code_prompt(request, context, &|_| {})
             .await?;
-        let response = builder.send().await.map_err(HttpError::Request)?;
+        let mut http_request = builder.build().map_err(HttpError::Request)?;
+        sign_aws_request(&mut http_request, &request.auth, context)?;
+        let response = self
+            .client
+            .execute(http_request)
+            .await
+            .map_err(HttpError::Request)?;
         let status = response.status();
         let protocol = format!("{:?}", response.version());
         let content_type = response
@@ -1277,6 +1292,260 @@ fn secret_fingerprint(secret: &str) -> u64 {
     hasher.finish()
 }
 
+fn sign_aws_request(
+    request: &mut reqwest::Request,
+    auth: &Auth,
+    context: &VariableContext,
+) -> Result<(), HttpError> {
+    let Auth::AwsSignatureV4 {
+        access_key_id,
+        secret_access_key,
+        region,
+        service,
+        session_token,
+    } = auth
+    else {
+        return Ok(());
+    };
+    let access_key_id = resolve_aws_value(context, access_key_id, "access key ID")?;
+    let secret_access_key = resolve_aws_value(context, secret_access_key, "secret access key")?;
+    let region = resolve_aws_value(context, region, "region")?.to_ascii_lowercase();
+    let service = resolve_aws_value(context, service, "service")?.to_ascii_lowercase();
+    if region.is_empty() || service.is_empty() {
+        return Err(HttpError::AwsSignature(
+            "AWS Signature V4 region and service cannot be empty".to_owned(),
+        ));
+    }
+    let session_token = session_token
+        .as_deref()
+        .map(|value| resolve_aws_value(context, value, "session token"))
+        .transpose()?;
+
+    let now = Utc::now();
+    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let date = now.format("%Y%m%d").to_string();
+    request.headers_mut().insert(
+        HeaderName::from_static("x-amz-date"),
+        HeaderValue::from_str(&amz_date).map_err(|source| HttpError::InvalidHeaderValue {
+            name: "x-amz-date".to_owned(),
+            source,
+        })?,
+    );
+    if let Some(session_token) = session_token.filter(|value| !value.is_empty()) {
+        request.headers_mut().insert(
+            HeaderName::from_static("x-amz-security-token"),
+            HeaderValue::from_str(&session_token).map_err(|source| {
+                HttpError::InvalidHeaderValue {
+                    name: "x-amz-security-token".to_owned(),
+                    source,
+                }
+            })?,
+        );
+    }
+    if !request.headers().contains_key("host") {
+        let host = aws_host(request.url());
+        request.headers_mut().insert(
+            HeaderName::from_static("host"),
+            HeaderValue::from_str(&host).map_err(|source| HttpError::InvalidHeaderValue {
+                name: "host".to_owned(),
+                source,
+            })?,
+        );
+    }
+
+    let payload_hash = request
+        .body()
+        .and_then(|body| body.as_bytes())
+        .map(sha256_hex_bytes)
+        .unwrap_or_else(|| sha256_hex_bytes(&[]));
+    let mut query = request
+        .url()
+        .query_pairs()
+        .map(|(key, value)| (aws_uri_encode(&key, false), aws_uri_encode(&value, false)))
+        .collect::<Vec<_>>();
+    query.sort();
+    let canonical_query = query
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    let mut canonical_headers = BTreeMap::<String, Vec<String>>::new();
+    for (name, value) in request.headers() {
+        if name == "authorization" {
+            continue;
+        }
+        let value = value.to_str().map_err(|_| {
+            HttpError::AwsSignature(format!(
+                "AWS Signature V4 cannot sign non-UTF-8 header {}",
+                name.as_str()
+            ))
+        })?;
+        canonical_headers
+            .entry(name.as_str().to_ascii_lowercase())
+            .or_default()
+            .push(canonical_header_value(value));
+    }
+    let signed_headers = canonical_headers
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(";");
+    let canonical_headers_text = canonical_headers
+        .iter()
+        .map(|(name, values)| format!("{name}:{}\n", values.join(",")))
+        .collect::<String>();
+    let canonical_request = format!(
+        "{}\n{}\n{}\n{}\n{}\n{}",
+        request.method().as_str(),
+        aws_canonical_path(request.url()),
+        canonical_query,
+        canonical_headers_text,
+        signed_headers,
+        payload_hash
+    );
+    let credential_scope = format!("{date}/{region}/{service}/aws4_request");
+    let string_to_sign = format!(
+        "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{}",
+        sha256_hex_bytes(canonical_request.as_bytes())
+    );
+    let date_key = hmac_sha256(
+        format!("AWS4{secret_access_key}").as_bytes(),
+        date.as_bytes(),
+    );
+    let region_key = hmac_sha256(&date_key, region.as_bytes());
+    let service_key = hmac_sha256(&region_key, service.as_bytes());
+    let signing_key = hmac_sha256(&service_key, b"aws4_request");
+    let signature = hex_bytes(&hmac_sha256(&signing_key, string_to_sign.as_bytes()));
+    let authorization = format!(
+        "AWS4-HMAC-SHA256 Credential={access_key_id}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
+    );
+    request.headers_mut().insert(
+        HeaderName::from_static("authorization"),
+        HeaderValue::from_str(&authorization).map_err(|source| HttpError::InvalidHeaderValue {
+            name: "authorization".to_owned(),
+            source,
+        })?,
+    );
+    Ok(())
+}
+
+fn resolve_aws_value(
+    context: &VariableContext,
+    value: &str,
+    label: &str,
+) -> Result<String, HttpError> {
+    let resolved = context.resolve(value);
+    if !resolved.diagnostics.is_empty() {
+        return Err(HttpError::VariableResolution(resolved.diagnostics));
+    }
+    if resolved.value.trim().is_empty() {
+        return Err(HttpError::AwsSignature(format!(
+            "AWS Signature V4 {label} cannot be empty"
+        )));
+    }
+    Ok(resolved.value)
+}
+
+fn canonical_header_value(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn aws_host(url: &Url) -> String {
+    let host = url.host_str().unwrap_or_default();
+    let host = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
+    };
+    url.port()
+        .map(|port| format!("{host}:{port}"))
+        .unwrap_or(host)
+}
+
+fn aws_canonical_path(url: &Url) -> String {
+    let path = if url.path().is_empty() {
+        "/"
+    } else {
+        url.path()
+    };
+    let mut encoded = String::with_capacity(path.len());
+    let bytes = path.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'%'
+            && index + 2 < bytes.len()
+            && is_hex(bytes[index + 1])
+            && is_hex(bytes[index + 2])
+        {
+            encoded.push('%');
+            encoded.push((bytes[index + 1] as char).to_ascii_uppercase());
+            encoded.push((bytes[index + 2] as char).to_ascii_uppercase());
+            index += 3;
+        } else {
+            encoded.push_str(&aws_uri_encode(
+                &String::from_utf8_lossy(&[byte]),
+                byte == b'/',
+            ));
+            index += 1;
+        }
+    }
+    encoded
+}
+
+fn aws_uri_encode(value: &str, preserve_slashes: bool) -> String {
+    let mut encoded = String::new();
+    for byte in value.as_bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'-' | b'.' | b'_' | b'~')
+            || (preserve_slashes && *byte == b'/')
+        {
+            encoded.push(*byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push_str(&format!("{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn is_hex(byte: u8) -> bool {
+    byte.is_ascii_hexdigit()
+}
+
+fn sha256_hex_bytes(value: &[u8]) -> String {
+    hex_bytes(&Sha256::digest(value))
+}
+
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    const BLOCK_SIZE: usize = 64;
+    let mut normalized_key = [0_u8; BLOCK_SIZE];
+    if key.len() > BLOCK_SIZE {
+        normalized_key[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        normalized_key[..key.len()].copy_from_slice(key);
+    }
+    let mut inner_pad = [0x36_u8; BLOCK_SIZE];
+    let mut outer_pad = [0x5c_u8; BLOCK_SIZE];
+    for index in 0..BLOCK_SIZE {
+        inner_pad[index] ^= normalized_key[index];
+        outer_pad[index] ^= normalized_key[index];
+    }
+    let mut inner = Sha256::new();
+    inner.update(inner_pad);
+    inner.update(message);
+    let inner_digest = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(outer_pad);
+    outer.update(inner_digest);
+    outer.finalize().into()
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn resolve_oauth_browser_value(
     context: &VariableContext,
     value: &str,
@@ -1596,6 +1865,7 @@ fn apply_auth(
                 format!("{} {}", token.token_type, token.access_token),
             );
         }
+        Auth::AwsSignatureV4 { .. } => {}
     }
     Ok(builder)
 }
@@ -1777,6 +2047,21 @@ fn resolve_auth(diagnostics: &mut Vec<VariableDiagnostic>, auth: &Auth, context:
             }
             if let Some(scope) = scope {
                 diagnostics.extend(context.resolve(scope).diagnostics);
+            }
+        }
+        Auth::AwsSignatureV4 {
+            access_key_id,
+            secret_access_key,
+            region,
+            service,
+            session_token,
+        } => {
+            diagnostics.extend(context.resolve(access_key_id).diagnostics);
+            diagnostics.extend(context.resolve(secret_access_key).diagnostics);
+            diagnostics.extend(context.resolve(region).diagnostics);
+            diagnostics.extend(context.resolve(service).diagnostics);
+            if let Some(session_token) = session_token {
+                diagnostics.extend(context.resolve(session_token).diagnostics);
             }
         }
     }
@@ -2350,6 +2635,66 @@ mod tests {
         }
         token_server.await.expect("token server");
         api_server.await.expect("API server");
+    }
+
+    #[tokio::test]
+    async fn signs_aws_signature_v4_requests_with_runtime_headers() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("AWS connection");
+            let request = read_request_headers(&mut socket).await;
+            assert!(request.contains("POST /iam HTTP/1.1"));
+            let lowercase = request.to_ascii_lowercase();
+            assert!(lowercase.contains("authorization: aws4-hmac-sha256"));
+            assert!(lowercase.contains("credential=akidexample/"));
+            assert!(lowercase.contains("/us-east-1/iam/aws4_request"));
+            assert!(lowercase
+                .contains("signedheaders=content-type;host;x-amz-date;x-amz-security-token"));
+            assert!(lowercase.contains("x-amz-security-token: session-token"));
+            assert!(lowercase.contains("x-amz-date: 20"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"ok\":true}",
+                )
+                .await
+                .expect("AWS response");
+        });
+        let mut request = Request::new("AWS request", "POST", format!("http://{address}/iam"));
+        request.headers.push(HeaderEntry::enabled(
+            "Content-Type",
+            "application/x-www-form-urlencoded",
+        ));
+        request.body = RequestBody::Raw {
+            text: "Action=ListUsers&Version=2010-05-08".to_owned(),
+            content_type: None,
+        };
+        request.auth = Auth::AwsSignatureV4 {
+            access_key_id: "AKIDEXAMPLE".to_owned(),
+            secret_access_key: "secret-key".to_owned(),
+            region: "us-east-1".to_owned(),
+            service: "iam".to_owned(),
+            session_token: Some("session-token".to_owned()),
+        };
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("AWS response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "{\"ok\":true}");
+        server.await.expect("AWS server");
+    }
+
+    #[test]
+    fn computes_hmac_sha256_reference_vector() {
+        assert_eq!(
+            hex_bytes(&hmac_sha256(
+                b"key",
+                b"The quick brown fox jumps over the lazy dog"
+            )),
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+        );
     }
 
     #[tokio::test]

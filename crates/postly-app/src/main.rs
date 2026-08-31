@@ -304,6 +304,7 @@ enum AuthKind {
     OAuth2AuthorizationCodePkce,
     OAuth2RefreshToken,
     OAuth2DeviceCode,
+    AwsSignatureV4,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,6 +359,7 @@ impl AuthKind {
             Self::OAuth2AuthorizationCodePkce => "OAuth 2.0 authorization code + PKCE",
             Self::OAuth2RefreshToken => "OAuth 2.0 refresh token",
             Self::OAuth2DeviceCode => "OAuth 2.0 device code",
+            Self::AwsSignatureV4 => "AWS Signature V4",
         }
     }
 }
@@ -1585,6 +1587,23 @@ impl PostlyApp {
                 self.auth_seventh.clear();
                 self.api_key_location = ApiKeyLocation::Header;
             }
+            Auth::AwsSignatureV4 {
+                access_key_id,
+                secret_access_key,
+                region,
+                service,
+                session_token,
+            } => {
+                self.auth_kind = AuthKind::AwsSignatureV4;
+                self.auth_primary.clone_from(access_key_id);
+                self.auth_secondary.clone_from(secret_access_key);
+                self.auth_tertiary.clone_from(region);
+                self.auth_quaternary.clone_from(service);
+                self.auth_fifth = session_token.clone().unwrap_or_default();
+                self.auth_sixth.clear();
+                self.auth_seventh.clear();
+                self.api_key_location = ApiKeyLocation::Header;
+            }
         }
     }
 
@@ -2010,6 +2029,23 @@ impl PostlyApp {
                     values.push(scope.clone());
                 }
             }
+            Auth::AwsSignatureV4 {
+                access_key_id,
+                secret_access_key,
+                region,
+                service,
+                session_token,
+            } => {
+                values.extend([
+                    access_key_id.clone(),
+                    secret_access_key.clone(),
+                    region.clone(),
+                    service.clone(),
+                ]);
+                if let Some(session_token) = session_token {
+                    values.push(session_token.clone());
+                }
+            }
         }
         if let Ok(body) = serde_json::to_string(&request.body) {
             values.push(body);
@@ -2245,6 +2281,14 @@ impl PostlyApp {
                 client_secret: (!self.auth_quaternary.trim().is_empty())
                     .then(|| self.auth_quaternary.clone()),
                 scope: (!self.auth_fifth.trim().is_empty()).then(|| self.auth_fifth.clone()),
+            },
+            AuthKind::AwsSignatureV4 => Auth::AwsSignatureV4 {
+                access_key_id: self.auth_primary.clone(),
+                secret_access_key: self.auth_secondary.clone(),
+                region: self.auth_tertiary.clone(),
+                service: self.auth_quaternary.clone(),
+                session_token: (!self.auth_fifth.trim().is_empty())
+                    .then(|| self.auth_fifth.clone()),
             },
         };
         if request.grpc.is_some() {
@@ -4782,6 +4826,7 @@ impl PostlyApp {
                     AuthKind::OAuth2AuthorizationCodePkce,
                     AuthKind::OAuth2RefreshToken,
                     AuthKind::OAuth2DeviceCode,
+                    AuthKind::AwsSignatureV4,
                 ] {
                     ui.selectable_value(&mut self.auth_kind, kind, kind.label());
                 }
@@ -5021,6 +5066,50 @@ impl PostlyApp {
                 }
                 ui.label("Scope (optional)");
                 if ui.add(TextEdit::singleline(&mut self.auth_fifth)).changed() {
+                    self.dirty = true;
+                }
+            }
+            AuthKind::AwsSignatureV4 => {
+                ui.label(
+                    RichText::new(
+                        "AWS Signature V4 signs the final HTTP request locally. Credentials and the generated signature are never logged or persisted as runtime state.",
+                    )
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+                );
+                ui.label("Access key ID");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_primary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Secret access key");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_secondary).password(true))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Region");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_tertiary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Service");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_quaternary))
+                    .changed()
+                {
+                    self.dirty = true;
+                }
+                ui.label("Session token (optional)");
+                if ui
+                    .add(TextEdit::singleline(&mut self.auth_fifth).password(true))
+                    .changed()
+                {
                     self.dirty = true;
                 }
             }
@@ -6569,6 +6658,12 @@ fn build_websocket_request(
                     .to_owned(),
             );
         }
+        Auth::AwsSignatureV4 { .. } => {
+            return Err(
+                "AWS Signature V4 is currently supported for HTTP requests, not WebSockets"
+                    .to_owned(),
+            );
+        }
     }
     Ok(websocket_request)
 }
@@ -6662,6 +6757,9 @@ fn apply_grpc_metadata<T>(
             return Err(
                 "OAuth 2.0 device-code auth is not yet supported for native gRPC calls".to_owned(),
             );
+        }
+        Auth::AwsSignatureV4 { .. } => {
+            return Err("AWS Signature V4 is not yet supported for native gRPC calls".to_owned());
         }
     }
     Ok(())
@@ -7834,6 +7932,36 @@ mod tests {
         assert_eq!(reopened.auth_kind, AuthKind::OAuth2DeviceCode);
         assert_eq!(reopened.auth_primary, "https://auth.example.test/device");
         assert_eq!(reopened.auth_quaternary, "client-secret");
+    }
+
+    #[test]
+    fn aws_signature_v4_editor_round_trips_authentication() {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.auth_kind = AuthKind::AwsSignatureV4;
+        app.auth_primary = "AKIDEXAMPLE".to_owned();
+        app.auth_secondary = "{{awsSecret}}".to_owned();
+        app.auth_tertiary = "us-east-1".to_owned();
+        app.auth_quaternary = "execute-api".to_owned();
+        app.auth_fifth = "{{awsSession}}".to_owned();
+
+        let request = app.edited_request().expect("AWS editor state");
+        assert_eq!(
+            request.auth,
+            Auth::AwsSignatureV4 {
+                access_key_id: "AKIDEXAMPLE".to_owned(),
+                secret_access_key: "{{awsSecret}}".to_owned(),
+                region: "us-east-1".to_owned(),
+                service: "execute-api".to_owned(),
+                session_token: Some("{{awsSession}}".to_owned()),
+            }
+        );
+        let mut reopened = app;
+        reopened.request.auth = request.auth;
+        reopened.load_request_editors();
+        assert_eq!(reopened.auth_kind, AuthKind::AwsSignatureV4);
+        assert_eq!(reopened.auth_primary, "AKIDEXAMPLE");
+        assert_eq!(reopened.auth_fifth, "{{awsSession}}");
     }
 
     #[test]

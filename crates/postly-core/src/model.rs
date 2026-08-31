@@ -377,6 +377,19 @@ pub enum Auth {
         #[serde(default)]
         scope: Option<String>,
     },
+    /// AWS Signature Version 4 request signing.
+    ///
+    /// Credentials remain part of the local request model and should normally
+    /// be supplied through variable or OS credential-store references. The
+    /// signature itself is generated only at request time.
+    AwsSignatureV4 {
+        access_key_id: String,
+        secret_access_key: String,
+        region: String,
+        service: String,
+        #[serde(default)]
+        session_token: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

@@ -808,6 +808,34 @@ fn parse_auth(value: Option<&Value>, subject: &str, report: &mut ImportReport) -
                 _ => ApiKeyLocation::Header,
             },
         },
+        "awsv4" | "aws_signature_v4" => {
+            let aws = value.get("awsv4").or_else(|| value.get("aws_signature_v4"));
+            let access_key_id = auth_value_any(aws, &["accessKey", "access_key_id"]);
+            let secret_access_key = auth_value_any(aws, &["secretKey", "secret_access_key"]);
+            let region = auth_value_any(aws, &["region"]);
+            let service = auth_value_any(aws, &["service"]);
+            let session_token = auth_value_any(aws, &["sessionToken", "session_token"]);
+            if access_key_id.is_empty()
+                || secret_access_key.is_empty()
+                || region.is_empty()
+                || service.is_empty()
+            {
+                report.warn(format!(
+                    "{subject} has incomplete AWS Signature V4 fields; authentication requires manual review."
+                ));
+                return ParsedAuth {
+                    auth: Auth::None,
+                    requires_review: true,
+                };
+            }
+            Auth::AwsSignatureV4 {
+                access_key_id,
+                secret_access_key,
+                region,
+                service,
+                session_token: (!session_token.is_empty()).then_some(session_token),
+            }
+        }
         "oauth2" => {
             let oauth = value.get("oauth2");
             let grant_type = auth_value_any(oauth, &["grant_type", "grantType"]);
@@ -1203,8 +1231,8 @@ TOKEN='last value'
             .join("../../compat/postman-import/variants-v2.1.json");
 
         let report = import_postman_collection(&fixture, output.path()).expect("import");
-        assert_eq!(report.imported_requests, 7);
-        assert_eq!(report.fully_supported_requests, 4);
+        assert_eq!(report.imported_requests, 8);
+        assert_eq!(report.fully_supported_requests, 5);
         assert_eq!(report.manual_review_requests, 3);
         assert!(report
             .warnings
@@ -1293,6 +1321,21 @@ TOKEN='last value'
                 ..
             } if content_type == "text/html"
         ));
+
+        let aws = requests
+            .iter()
+            .find(|(_, request)| request.name == "AWS signed request")
+            .expect("AWS request");
+        assert_eq!(
+            aws.1.auth,
+            Auth::AwsSignatureV4 {
+                access_key_id: "AKIDEXAMPLE".to_owned(),
+                secret_access_key: "example-secret".to_owned(),
+                region: "us-east-1".to_owned(),
+                service: "execute-api".to_owned(),
+                session_token: Some("example-session".to_owned()),
+            }
+        );
     }
 
     #[test]
@@ -1381,6 +1424,34 @@ TOKEN='last value'
                 client_id: "postly".to_owned(),
                 client_secret: None,
                 scope: Some("read:users".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn imports_postman_aws_signature_v4() {
+        let mut report = ImportReport::default();
+        let value = serde_json::json!({
+            "type": "awsv4",
+            "awsv4": [
+                { "key": "accessKey", "value": "AKIDEXAMPLE" },
+                { "key": "secretKey", "value": "secret" },
+                { "key": "region", "value": "eu-west-1" },
+                { "key": "service", "value": "execute-api" },
+                { "key": "sessionToken", "value": "session" }
+            ]
+        });
+        let parsed = parse_auth(Some(&value), "AWS request", &mut report);
+        assert!(!parsed.requires_review);
+        assert!(report.warnings.is_empty());
+        assert_eq!(
+            parsed.auth,
+            Auth::AwsSignatureV4 {
+                access_key_id: "AKIDEXAMPLE".to_owned(),
+                secret_access_key: "secret".to_owned(),
+                region: "eu-west-1".to_owned(),
+                service: "execute-api".to_owned(),
+                session_token: Some("session".to_owned()),
             }
         );
     }

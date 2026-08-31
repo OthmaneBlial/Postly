@@ -138,6 +138,12 @@ pub fn export_curl_command(request: &Request) -> CurlExportResult {
                     .to_owned(),
             );
         }
+        Auth::AwsSignatureV4 { .. } => {
+            warnings.push(
+                "AWS Signature V4 was not materialized; run the signed request through Postly or an AWS SDK."
+                    .to_owned(),
+            );
+        }
     }
 
     match &request.body {

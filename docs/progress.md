@@ -14,7 +14,7 @@ Implemented:
 - Variable scopes, precedence and undefined-variable diagnostics.
 - Native async HTTP execution with common body/auth/header/query behavior.
 - Custom PEM CA bundles and combined PEM client identities in the shared HTTP engine and CLI workflows, with actionable file/format diagnostics and local HTTPS/mTLS integration tests.
-- Basic, Bearer, API-key, OAuth 2.0 Client Credentials, Authorization Code + PKCE (explicit exchange and loopback browser callback), Refresh Token and Device Authorization Grant exchanges in the native model, GUI, CLI, Postman import/export and shared HTTP engine, with bounded approval polling, in-memory expiry-aware token caching and local token-exchange/browser-callback integration tests.
+- Basic, Bearer, API-key, OAuth 2.0 Client Credentials, Authorization Code + PKCE (explicit exchange and loopback browser callback), Refresh Token, Device Authorization Grant and buffered AWS Signature V4 signing in the native model, GUI, CLI, Postman import/export and shared HTTP engine, with bounded approval polling, in-memory expiry-aware token caching and local token-exchange/browser-callback/SigV4 integration tests.
 - Explicit HTTP(S)/SOCKS proxy routing in the shared HTTP engine and CLI request/stream/runner workflows, plus CLI WebSocket and gRPC HTTP CONNECT routing, with `--no-proxy` bypass lists, platform/env proxy support, invalid-URL diagnostics and local forwarding/bypass/relay tests.
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
@@ -177,7 +177,9 @@ requests, safe verification prompts in the CLI/GUI, bounded polling with
 pending/slow-down handling, Postman migration/export and local approval
 integration coverage. The Authorization Code + PKCE slice now adds a bounded
 loopback callback with state validation, ephemeral verifier generation and
-explicit CLI / automatic GUI browser opening. AWS Signature V4 remains planned.
+explicit CLI / automatic GUI browser opening. The AWS Signature V4 slice adds
+runtime canonical signing for buffered HTTP requests, temporary session-token
+support, Postman awsv4 import/export and local header-delivery coverage.
 
 The release packaging gate has since been validated locally with the macOS
 ARM64 archive, internal SHA256 manifest and packaged CLI smoke checks. External
@@ -188,11 +190,11 @@ and a real CLI smoke run from a temporary workspace; operation paths, server
 variables, security metadata and request/response examples were inspected.
 
 On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 6
-checked-in fixtures; its separate request-mapping signal was 11/16 (68.75%),
+checked-in fixtures; its separate request-mapping signal was 12/17 (70.59%),
 with the remaining cases retained as explicit manual review. The same
-revision's `cargo xtask bench --json` run reported medians of 5.02 ms for the
-Postman variant import, 202.86 ms to open a generated 1,000-request workspace
-and 175.75 ms to search it. These are local measurements, not competitor
+revision's `cargo xtask bench --json` run reported medians of 5.67 ms for the
+Postman variant import, 161.28 ms to open a generated 1,000-request workspace
+and 161.30 ms to search it. These are local measurements, not competitor
 claims or universal performance guarantees.
 
 ## Next highest-value work

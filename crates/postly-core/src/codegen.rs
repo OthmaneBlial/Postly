@@ -134,6 +134,10 @@ fn snippet_parts(request: &Request) -> SnippetParts {
             "OAuth 2.0 device-code auth is not materialized; complete device authorization in Postly before running the snippet."
                 .to_owned(),
         ),
+        Auth::AwsSignatureV4 { .. } => warnings.push(
+            "AWS Signature V4 is not materialized in generated snippets; run the signed request through Postly or an AWS SDK."
+                .to_owned(),
+        ),
     }
 
     if !cookies.is_empty() && !has_header(&headers, "cookie") {

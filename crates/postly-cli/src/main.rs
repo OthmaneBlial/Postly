@@ -69,6 +69,11 @@ struct ImmediateRequestOptions {
     oauth_code_verifier: Option<String>,
     oauth_refresh_token: Option<String>,
     oauth_browser: bool,
+    aws_access_key_id: Option<String>,
+    aws_secret_access_key: Option<String>,
+    aws_region: Option<String>,
+    aws_service: Option<String>,
+    aws_session_token: Option<String>,
     timeout: u64,
     proxy: Option<String>,
     no_proxy: Option<String>,
@@ -542,6 +547,11 @@ struct NewRequestOptions {
     oauth_code_verifier: Option<String>,
     oauth_refresh_token: Option<String>,
     oauth_browser: bool,
+    aws_access_key_id: Option<String>,
+    aws_secret_access_key: Option<String>,
+    aws_region: Option<String>,
+    aws_service: Option<String>,
+    aws_session_token: Option<String>,
 }
 
 #[derive(Debug, Default, Args)]
@@ -580,6 +590,20 @@ struct OAuthCliArgs {
     oauth_refresh_token: Option<String>,
     #[arg(long, help = "Open a local browser callback for OAuth 2.0 PKCE")]
     oauth_browser: bool,
+    #[arg(long, value_name = "ID", help = "AWS Signature V4 access key ID")]
+    aws_access_key_id: Option<String>,
+    #[arg(
+        long,
+        value_name = "SECRET",
+        help = "AWS Signature V4 secret access key"
+    )]
+    aws_secret_access_key: Option<String>,
+    #[arg(long, value_name = "REGION", help = "AWS Signature V4 region")]
+    aws_region: Option<String>,
+    #[arg(long, value_name = "SERVICE", help = "AWS Signature V4 service name")]
+    aws_service: Option<String>,
+    #[arg(long, value_name = "TOKEN", help = "Optional AWS session token")]
+    aws_session_token: Option<String>,
 }
 
 struct HistoryOptions {
@@ -1299,6 +1323,11 @@ async fn main() -> Result<()> {
                 oauth_code_verifier: oauth.oauth_code_verifier,
                 oauth_refresh_token: oauth.oauth_refresh_token,
                 oauth_browser: oauth.oauth_browser,
+                aws_access_key_id: oauth.aws_access_key_id,
+                aws_secret_access_key: oauth.aws_secret_access_key,
+                aws_region: oauth.aws_region,
+                aws_service: oauth.aws_service,
+                aws_session_token: oauth.aws_session_token,
             }),
         },
         Command::Request {
@@ -1341,6 +1370,11 @@ async fn main() -> Result<()> {
                 oauth_code_verifier: oauth.oauth_code_verifier,
                 oauth_refresh_token: oauth.oauth_refresh_token,
                 oauth_browser: oauth.oauth_browser,
+                aws_access_key_id: oauth.aws_access_key_id,
+                aws_secret_access_key: oauth.aws_secret_access_key,
+                aws_region: oauth.aws_region,
+                aws_service: oauth.aws_service,
+                aws_session_token: oauth.aws_session_token,
                 timeout,
                 proxy,
                 no_proxy,
@@ -1975,6 +2009,11 @@ fn create_request(options: NewRequestOptions) -> Result<()> {
             oauth_code_verifier: options.oauth_code_verifier,
             oauth_refresh_token: options.oauth_refresh_token,
             oauth_browser: options.oauth_browser,
+            aws_access_key_id: options.aws_access_key_id,
+            aws_secret_access_key: options.aws_secret_access_key,
+            aws_region: options.aws_region,
+            aws_service: options.aws_service,
+            aws_session_token: options.aws_session_token,
         },
     )?;
     request.body = parse_cli_body(options.data, options.json_body)?;
@@ -2003,6 +2042,11 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
             oauth_code_verifier: options.oauth_code_verifier,
             oauth_refresh_token: options.oauth_refresh_token,
             oauth_browser: options.oauth_browser,
+            aws_access_key_id: options.aws_access_key_id,
+            aws_secret_access_key: options.aws_secret_access_key,
+            aws_region: options.aws_region,
+            aws_service: options.aws_service,
+            aws_session_token: options.aws_session_token,
         },
     )?;
     request.body = parse_cli_body(options.data, options.json_body)?;
@@ -2827,6 +2871,9 @@ fn build_websocket_request(
         }
         Auth::OAuth2DeviceCode { .. } => {
             unreachable!("CLI auth flags do not create OAuth 2.0 credentials")
+        }
+        Auth::AwsSignatureV4 { .. } => {
+            unreachable!("CLI auth flags do not create AWS Signature V4 credentials")
         }
     }
     Ok(websocket_request)
@@ -3760,7 +3807,44 @@ fn parse_auth_flags_with_oauth(
         oauth_code_verifier,
         oauth_refresh_token,
         oauth_browser,
+        aws_access_key_id,
+        aws_secret_access_key,
+        aws_region,
+        aws_service,
+        aws_session_token,
     } = oauth;
+    let has_aws = aws_access_key_id.is_some()
+        || aws_secret_access_key.is_some()
+        || aws_region.is_some()
+        || aws_service.is_some()
+        || aws_session_token.is_some();
+    if has_aws {
+        if oauth_token_url.is_some()
+            || oauth_client_id.is_some()
+            || oauth_client_secret.is_some()
+            || oauth_scope.is_some()
+            || oauth_authorization_url.is_some()
+            || oauth_device_authorization_url.is_some()
+            || oauth_redirect_uri.is_some()
+            || oauth_code.is_some()
+            || oauth_code_verifier.is_some()
+            || oauth_refresh_token.is_some()
+            || oauth_browser
+        {
+            bail!("choose either AWS Signature V4 or OAuth 2.0 authentication");
+        }
+        if bearer.is_some() || basic_user.is_some() || basic_password.is_some() {
+            bail!("choose either AWS Signature V4 or bearer/basic authentication");
+        }
+        return Ok(Auth::AwsSignatureV4 {
+            access_key_id: aws_access_key_id.context("--aws-access-key-id is required")?,
+            secret_access_key: aws_secret_access_key
+                .context("--aws-secret-access-key is required")?,
+            region: aws_region.context("--aws-region is required")?,
+            service: aws_service.context("--aws-service is required")?,
+            session_token: aws_session_token,
+        });
+    }
     if oauth_token_url.is_some()
         || oauth_client_id.is_some()
         || oauth_client_secret.is_some()
@@ -4068,6 +4152,34 @@ mod tests {
                 code_verifier: String::new(),
                 client_secret: None,
                 scope: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_aws_signature_v4_flags() {
+        let auth = parse_auth_flags_with_oauth(
+            None,
+            None,
+            None,
+            OAuthCliArgs {
+                aws_access_key_id: Some("AKIDEXAMPLE".to_owned()),
+                aws_secret_access_key: Some("secret".to_owned()),
+                aws_region: Some("eu-west-1".to_owned()),
+                aws_service: Some("execute-api".to_owned()),
+                aws_session_token: Some("session".to_owned()),
+                ..OAuthCliArgs::default()
+            },
+        )
+        .expect("AWS Signature V4 flags");
+        assert_eq!(
+            auth,
+            Auth::AwsSignatureV4 {
+                access_key_id: "AKIDEXAMPLE".to_owned(),
+                secret_access_key: "secret".to_owned(),
+                region: "eu-west-1".to_owned(),
+                service: "execute-api".to_owned(),
+                session_token: Some("session".to_owned()),
             }
         );
     }

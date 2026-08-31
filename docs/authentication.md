@@ -11,6 +11,7 @@ references only when a request runs. Current HTTP authentication includes:
 - OAuth 2.0 Authorization Code + PKCE (loopback browser callback or explicit/manual code exchange)
 - OAuth 2.0 Refresh Token
 - OAuth 2.0 Device Authorization Grant (RFC 8628)
+- AWS Signature Version 4
 
 ## OAuth 2.0 Client Credentials
 
@@ -82,6 +83,30 @@ postly request https://api.example.test/profile \
 The PKCE verifier must be 43–128 RFC 7636 unreserved characters. Tokens are
 cached only in memory for the current HTTP engine, keyed to the explicit code
 exchange inputs, and never written to the workspace, history or logs.
+
+## AWS Signature Version 4
+
+Postly can sign the final HTTP request locally with AWS Signature Version 4.
+The signer canonicalizes the method, URI, query, headers and buffered payload,
+derives the date/region/service signing key, and adds the standard
+`Authorization`, `x-amz-date` and optional `x-amz-security-token` headers. The
+access key and secret should normally be variable or OS credential-store
+references; the generated signature is never saved to the workspace or logs.
+
+In the CLI, provide the credentials and target scope explicitly:
+
+~~~bash
+postly request https://api.example.test/resource \
+  --aws-access-key-id AKIDEXAMPLE \
+  --aws-secret-access-key '{{awsSecret}}' \
+  --aws-region eu-west-1 \
+  --aws-service execute-api \
+  --aws-session-token '{{awsSession}}'
+~~~
+
+This is header-based SigV4 for buffered HTTP requests. Presigned URLs,
+SigV4a, event-stream signing and protocol-specific AWS extensions remain out
+of scope until they have separate request models and verification coverage.
 
 ## OAuth 2.0 Refresh Token
 

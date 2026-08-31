@@ -156,6 +156,29 @@
           "options": { "raw": { "language": "html" } }
         }
       }
+    },
+    {
+      "name": "AWS signed request",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/aws",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "auth": {
+          "type": "awsv4",
+          "awsv4": [
+            { "key": "accessKey", "value": "AKIDEXAMPLE" },
+            { "key": "secretKey", "value": "example-secret" },
+            { "key": "region", "value": "us-east-1" },
+            { "key": "service", "value": "execute-api" },
+            { "key": "sessionToken", "value": "example-session" }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\"hello\":\"world\"}",
+          "options": { "raw": { "language": "json" } }
+        }
+      }
     }
   ]
 }

@@ -9,7 +9,7 @@ cargo xtask bench
 cargo xtask bench --json > bench-generated/local.json
 ```
 
-The command currently covers a seven-request Postman import and generated
+The command currently covers an eight-request Postman import and generated
 1,000-request workspace open/search paths. Each operation runs five samples and
 prints median, minimum and maximum duration. Temporary benchmark workspaces are
 created outside the repository; only the ignored `bench-generated/` destination

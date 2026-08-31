@@ -702,6 +702,16 @@ fn security_scheme_for_auth(
             );
             ("bearerAuth", json!({ "type": "http", "scheme": "bearer" }))
         }
+        Auth::AwsSignatureV4 { .. } => {
+            warnings.push(
+                "AWS Signature V4 is represented as an Authorization header; signing details are kept in x-postly-auth."
+                    .to_owned(),
+            );
+            (
+                "awsSignatureV4",
+                json!({ "type": "apiKey", "name": "Authorization", "in": "header" }),
+            )
+        }
     };
     schemes.entry(name.to_owned()).or_insert(scheme);
     Some(name.to_owned())
@@ -750,6 +760,17 @@ fn auth_extension(auth: &Auth) -> Option<Value> {
             "tokenUrl": token_url,
             "clientId": client_id,
             "scope": scope,
+        })),
+        Auth::AwsSignatureV4 {
+            access_key_id,
+            region,
+            service,
+            ..
+        } => Some(json!({
+            "type": "aws_signature_v4",
+            "accessKeyId": access_key_id,
+            "region": region,
+            "service": service,
         })),
         _ => None,
     }

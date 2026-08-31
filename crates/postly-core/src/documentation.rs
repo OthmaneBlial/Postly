@@ -252,6 +252,7 @@ fn auth_label(auth: &Auth) -> &'static str {
         Auth::OAuth2AuthorizationCodePkce { .. } => "OAuth 2.0 authorization code + PKCE",
         Auth::OAuth2RefreshToken { .. } => "OAuth 2.0 refresh token",
         Auth::OAuth2DeviceCode { .. } => "OAuth 2.0 device code",
+        Auth::AwsSignatureV4 { .. } => "AWS Signature V4",
     }
 }
 
