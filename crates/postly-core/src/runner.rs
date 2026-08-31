@@ -14,7 +14,7 @@ use tokio::sync::Notify;
 
 use crate::{
     http::{HttpEngine, HttpResponse},
-    model::{Assertion, Request, Variables},
+    model::{Assertion, JsonValueType, Request, Variables},
     scripting::{run_script_with_cancellation, ScriptResult, ScriptTestResult},
     variables::VariableContext,
 };
@@ -254,6 +254,21 @@ fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<
                 ))
             }
         }
+        Assertion::JsonPointerType { pointer, expected } => {
+            let body = serde_json::from_slice::<serde_json::Value>(&response.body)
+                .map_err(|error| format!("response body is not JSON: {error}"))?;
+            let actual = body
+                .pointer(pointer)
+                .ok_or_else(|| format!("JSON Pointer {pointer:?} was not found"))?;
+            if json_value_type_matches(actual, *expected) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected JSON Pointer {pointer:?} to be a {}, received {actual}",
+                    expected.label()
+                ))
+            }
+        }
     }
 }
 
@@ -285,6 +300,18 @@ fn json_value_contains(actual: &serde_json::Value, expected: &serde_json::Value)
         }
         _ => actual == expected,
     }
+}
+
+fn json_value_type_matches(value: &serde_json::Value, expected: JsonValueType) -> bool {
+    matches!(
+        (value, expected),
+        (serde_json::Value::Null, JsonValueType::Null)
+            | (serde_json::Value::Bool(_), JsonValueType::Boolean)
+            | (serde_json::Value::Number(_), JsonValueType::Number)
+            | (serde_json::Value::String(_), JsonValueType::String)
+            | (serde_json::Value::Array(_), JsonValueType::Array)
+            | (serde_json::Value::Object(_), JsonValueType::Object)
+    )
 }
 
 fn evaluate_assertions(assertions: &[Assertion], response: &HttpResponse) -> Vec<String> {
@@ -781,6 +808,10 @@ mod tests {
                 pointer: "/message".to_owned(),
                 expected: serde_json::json!("postly"),
             },
+            Assertion::JsonPointerType {
+                pointer: "/ok".to_owned(),
+                expected: JsonValueType::Boolean,
+            },
         ];
         let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
         let summary = run_requests(
@@ -793,10 +824,10 @@ mod tests {
         server.await.expect("server");
 
         assert!(summary.succeeded());
-        assert_eq!(summary.assertions, 14);
+        assert_eq!(summary.assertions, 15);
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.status_distribution.get(&200), Some(&1));
-        assert_eq!(summary.results[0].assertions, 14);
+        assert_eq!(summary.results[0].assertions, 15);
     }
 
     #[test]
@@ -820,6 +851,25 @@ mod tests {
         assert!(!json_value_contains(
             &actual,
             &serde_json::json!({"profile": {"role": "owner"}})
+        ));
+    }
+
+    #[test]
+    fn json_value_type_matching_covers_all_native_json_kinds() {
+        let cases = [
+            (serde_json::Value::Null, JsonValueType::Null),
+            (serde_json::json!(true), JsonValueType::Boolean),
+            (serde_json::json!(3), JsonValueType::Number),
+            (serde_json::json!("postly"), JsonValueType::String),
+            (serde_json::json!([1]), JsonValueType::Array),
+            (serde_json::json!({"ok": true}), JsonValueType::Object),
+        ];
+        for (value, expected) in cases {
+            assert!(json_value_type_matches(&value, expected));
+        }
+        assert!(!json_value_type_matches(
+            &serde_json::json!("3"),
+            JsonValueType::Number
         ));
     }
 

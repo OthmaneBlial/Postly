@@ -21,8 +21,8 @@ use postly_core::{
     parse_curl_command, parse_graphql_response, parse_graphql_schema, run_script_with_cancellation,
     schema_introspection_query, ApiKeyLocation, Assertion, Auth, CancellationToken,
     CollectionFiles, EngineOptions, Environment, EnvironmentVariable, GraphqlSchema, GrpcRequest,
-    GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, KeyValue,
-    MultipartPart, OAuthDeviceCodePrompt, Request, RequestBody, RequestSearchResult,
+    GrpcSchema, HeaderEntry, HistoryEntry, HistoryFilter, HttpEngine, HttpResponse, JsonValueType,
+    KeyValue, MultipartPart, OAuthDeviceCodePrompt, Request, RequestBody, RequestSearchResult,
     ResponseExample, ResponseView, ScriptResult, SecretStore, SseEvent, SseParser, VariableContext,
     WebSocketMessage, Workspace,
 };
@@ -359,6 +359,7 @@ enum AssertionKind {
     JsonPointerPresent,
     JsonPointerEquals,
     JsonPointerContains,
+    JsonPointerType,
 }
 
 impl AssertionKind {
@@ -377,6 +378,7 @@ impl AssertionKind {
             Self::JsonPointerPresent => "JSON Pointer exists",
             Self::JsonPointerEquals => "JSON Pointer equals",
             Self::JsonPointerContains => "JSON Pointer contains",
+            Self::JsonPointerType => "JSON Pointer type",
         }
     }
 
@@ -417,6 +419,10 @@ impl AssertionKind {
             Self::JsonPointerContains => Assertion::JsonPointerContains {
                 pointer: "/data".to_owned(),
                 expected: serde_json::json!({}),
+            },
+            Self::JsonPointerType => Assertion::JsonPointerType {
+                pointer: "/status".to_owned(),
+                expected: JsonValueType::String,
             },
         }
     }
@@ -6215,6 +6221,28 @@ impl PostlyApp {
                             }
                         }
                     }
+                    Assertion::JsonPointerType { pointer, expected } => {
+                        changed |= labeled_singleline(ui, "JSON Pointer", pointer);
+                        ui.horizontal(|ui| {
+                            ui.label("Expected JSON type");
+                            egui::ComboBox::from_id_salt(format!("assertion-json-type-{index}"))
+                                .selected_text(expected.label())
+                                .show_ui(ui, |ui| {
+                                    for kind in [
+                                        JsonValueType::Null,
+                                        JsonValueType::Boolean,
+                                        JsonValueType::Number,
+                                        JsonValueType::String,
+                                        JsonValueType::Array,
+                                        JsonValueType::Object,
+                                    ] {
+                                        changed |= ui
+                                            .selectable_value(expected, kind, kind.label())
+                                            .changed();
+                                    }
+                                });
+                        });
+                    }
                 }
             });
             ui.add_space(5.0);
@@ -6244,6 +6272,7 @@ impl PostlyApp {
                         AssertionKind::JsonPointerPresent,
                         AssertionKind::JsonPointerEquals,
                         AssertionKind::JsonPointerContains,
+                        AssertionKind::JsonPointerType,
                     ] {
                         ui.selectable_value(&mut self.new_assertion_kind, kind, kind.label());
                     }
@@ -8648,9 +8677,13 @@ mod tests {
                 pointer: "/data".to_owned(),
                 expected: serde_json::json!({"active": false}),
             },
+            Assertion::JsonPointerType {
+                pointer: "/data/active".to_owned(),
+                expected: JsonValueType::Boolean,
+            },
         ];
         app.load_request_editors();
-        assert_eq!(app.assertion_json_text.len(), 13);
+        assert_eq!(app.assertion_json_text.len(), 14);
         app.assertion_json_text[11] = "false".to_owned();
         app.assertion_json_text[12] = r#"{"active":false}"#.to_owned();
 
@@ -8670,6 +8703,13 @@ mod tests {
                 expected: serde_json::json!({"active": false}),
             }
         );
+        assert_eq!(
+            edited.assertions[13],
+            Assertion::JsonPointerType {
+                pointer: "/data/active".to_owned(),
+                expected: JsonValueType::Boolean,
+            }
+        );
 
         app.save_current().expect("save assertions");
         let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
@@ -8680,6 +8720,7 @@ mod tests {
                 .expect("reopened JSON assertion"),
             serde_json::json!({"active": false})
         );
+        assert_eq!(reopened.request.assertions[13], edited.assertions[13]);
     }
 
     #[test]

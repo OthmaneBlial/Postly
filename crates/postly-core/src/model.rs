@@ -229,6 +229,30 @@ impl GrpcRequest {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JsonValueType {
+    Null,
+    Boolean,
+    Number,
+    String,
+    Array,
+    Object,
+}
+
+impl JsonValueType {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Null => "null",
+            Self::Boolean => "boolean",
+            Self::Number => "number",
+            Self::String => "string",
+            Self::Array => "array",
+            Self::Object => "object",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Assertion {
@@ -274,6 +298,10 @@ pub enum Assertion {
     JsonPointerContains {
         pointer: String,
         expected: serde_json::Value,
+    },
+    JsonPointerType {
+        pointer: String,
+        expected: JsonValueType,
     },
 }
 
