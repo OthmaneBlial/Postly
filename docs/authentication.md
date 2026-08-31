@@ -92,6 +92,8 @@ derives the date/region/service signing key, and adds the standard
 `Authorization`, `x-amz-date` and optional `x-amz-security-token` headers. The
 access key and secret should normally be variable or OS credential-store
 references; the generated signature is never saved to the workspace or logs.
+The canonicalization and HMAC path is regression-tested against AWS's published
+S3 GET-object calculation example.
 
 In the CLI, provide the credentials and target scope explicitly:
 

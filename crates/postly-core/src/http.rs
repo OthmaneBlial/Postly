@@ -9,7 +9,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use cookie_store::{CookieStore as StoredCookieStore, RawCookie};
 use quick_xml::{events::Event, Reader, Writer};
 use reqwest::{
@@ -1297,6 +1297,15 @@ fn sign_aws_request(
     auth: &Auth,
     context: &VariableContext,
 ) -> Result<(), HttpError> {
+    sign_aws_request_at(request, auth, context, Utc::now())
+}
+
+fn sign_aws_request_at(
+    request: &mut reqwest::Request,
+    auth: &Auth,
+    context: &VariableContext,
+    now: DateTime<Utc>,
+) -> Result<(), HttpError> {
     let Auth::AwsSignatureV4 {
         access_key_id,
         secret_access_key,
@@ -1321,7 +1330,6 @@ fn sign_aws_request(
         .map(|value| resolve_aws_value(context, value, "session token"))
         .transpose()?;
 
-    let now = Utc::now();
     let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
     let date = now.format("%Y%m%d").to_string();
     request.headers_mut().insert(
@@ -2694,6 +2702,35 @@ mod tests {
                 b"The quick brown fox jumps over the lazy dog"
             )),
             "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+        );
+    }
+
+    #[test]
+    fn matches_aws_s3_signature_calculation_example() {
+        let mut request = reqwest::Client::new()
+            .get("https://examplebucket.s3.amazonaws.com/test.txt")
+            .header("Range", "bytes=0-9")
+            .header(
+                "x-amz-content-sha256",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            )
+            .build()
+            .expect("request");
+        let auth = Auth::AwsSignatureV4 {
+            access_key_id: "AKIAIOSFODNN7EXAMPLE".to_owned(),
+            secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_owned(),
+            region: "us-east-1".to_owned(),
+            service: "s3".to_owned(),
+            session_token: None,
+        };
+        let timestamp = chrono::DateTime::parse_from_rfc3339("2013-05-24T00:00:00Z")
+            .expect("timestamp")
+            .with_timezone(&Utc);
+        sign_aws_request_at(&mut request, &auth, &VariableContext::default(), timestamp)
+            .expect("signed request");
+        assert_eq!(
+            request.headers().get("authorization").unwrap(),
+            "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
         );
     }
 

@@ -184,7 +184,8 @@ integration coverage. The Authorization Code + PKCE slice now adds a bounded
 loopback callback with state validation, ephemeral verifier generation and
 explicit CLI / automatic GUI browser opening. The AWS Signature V4 slice adds
 runtime canonical signing for buffered HTTP requests, temporary session-token
-support, Postman awsv4 import/export and local header-delivery coverage.
+support, Postman awsv4 import/export, local header-delivery coverage and a
+deterministic AWS S3 signature-calculation regression vector.
 
 The release packaging gate has since been validated locally with the macOS
 ARM64 archive, internal SHA256 manifest and packaged CLI smoke checks. External
