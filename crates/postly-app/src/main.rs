@@ -4050,13 +4050,14 @@ impl PostlyApp {
                     {
                         self.dirty = true;
                     }
+                    let common_methods =
+                        ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+                    let method_is_common = common_methods.contains(&self.request.method.as_str());
                     egui::ComboBox::from_id_salt("method")
                         .selected_text(&self.request.method)
                         .width(92.0)
                         .show_ui(ui, |ui| {
-                            for method in
-                                ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
-                            {
+                            for method in common_methods {
                                 if ui
                                     .selectable_value(
                                         &mut self.request.method,
@@ -4068,7 +4069,29 @@ impl PostlyApp {
                                     self.dirty = true;
                                 }
                             }
+                            ui.separator();
+                            if ui
+                                .selectable_label(!method_is_common, "Custom method")
+                                .clicked()
+                                && method_is_common
+                            {
+                                self.request.method = "CUSTOM".to_owned();
+                                self.dirty = true;
+                            }
                         });
+                    if !common_methods.contains(&self.request.method.as_str()) {
+                        let response = ui.add(
+                            TextEdit::singleline(&mut self.request.method)
+                                .desired_width(110.0)
+                                .font(TextStyle::Monospace)
+                                .hint_text("CUSTOM")
+                                .char_limit(32),
+                        );
+                        if response.changed() {
+                            self.dirty = true;
+                        }
+                        response.on_hover_text("Any valid HTTP method token");
+                    }
                     if ui
                         .add(
                             TextEdit::singleline(&mut self.request.url)
@@ -7069,6 +7092,17 @@ mod tests {
         assert_eq!(request.method, "POST");
         assert!(matches!(request.body, RequestBody::Json { .. }));
         assert!(matches!(request.auth, Auth::Bearer { .. }));
+    }
+
+    #[test]
+    fn editor_state_preserves_custom_http_methods() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.method = "PROPFIND".to_owned();
+
+        let request = app.edited_request().expect("custom method editor state");
+
+        assert_eq!(request.method, "PROPFIND");
     }
 
     #[test]
