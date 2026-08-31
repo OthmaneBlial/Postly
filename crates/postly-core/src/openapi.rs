@@ -1525,6 +1525,36 @@ fn sample_from_schema(schema: &Value) -> Option<Value> {
     {
         return Some(value.clone());
     }
+    if let Some(composition) = schema
+        .get("allOf")
+        .and_then(Value::as_array)
+        .filter(|schemas| !schemas.is_empty())
+    {
+        let mut merged = Map::new();
+        let mut fallback = None;
+        for part in composition {
+            match sample_from_schema(part) {
+                Some(Value::Object(object)) => merged.extend(object),
+                Some(value) if fallback.is_none() => fallback = Some(value),
+                _ => {}
+            }
+        }
+        if !merged.is_empty() {
+            return Some(Value::Object(merged));
+        }
+        if fallback.is_some() {
+            return fallback;
+        }
+    }
+    for keyword in ["oneOf", "anyOf"] {
+        if let Some(value) = schema
+            .get(keyword)
+            .and_then(Value::as_array)
+            .and_then(|schemas| schemas.iter().find_map(sample_from_schema))
+        {
+            return Some(value);
+        }
+    }
     let schema_type = match schema.get("type") {
         Some(Value::String(value)) => value.as_str(),
         Some(Value::Array(values)) => values
@@ -1548,10 +1578,32 @@ fn sample_from_schema(schema: &Value) -> Option<Value> {
             }
             Some(Value::Object(object))
         }
-        "array" => Some(Value::Array(Vec::new())),
+        "array" => Some(Value::Array(
+            schema
+                .get("items")
+                .and_then(sample_from_schema)
+                .into_iter()
+                .collect(),
+        )),
         "boolean" => Some(Value::Bool(false)),
         "integer" | "number" => Some(Value::Number(0.into())),
-        "string" => Some(Value::String(String::new())),
+        "string" => Some(Value::String(
+            match schema
+                .get("format")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+            {
+                "date" => "2020-01-01".to_owned(),
+                "date-time" => "2020-01-01T00:00:00Z".to_owned(),
+                "email" => "user@example.invalid".to_owned(),
+                "hostname" => "example.invalid".to_owned(),
+                "ipv4" => "192.0.2.1".to_owned(),
+                "ipv6" => "2001:db8::1".to_owned(),
+                "uuid" => "00000000-0000-0000-0000-000000000000".to_owned(),
+                "uri" | "uri-reference" | "uri-template" => "https://example.invalid".to_owned(),
+                _ => String::new(),
+            },
+        )),
         _ => None,
     }
 }
@@ -1820,6 +1872,48 @@ components:
             other => panic!("expected resolved JSON body, got {other:?}"),
         }
         fs::remove_file(outside).expect("cleanup outside schema");
+    }
+
+    #[test]
+    fn generates_composed_schema_samples_with_arrays_and_formats() {
+        let schema = json!({
+            "allOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "integer", "example": 42 }
+                    }
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "email": { "type": "string", "format": "email" },
+                        "tags": {
+                            "type": "array",
+                            "items": { "type": "string", "example": "api" }
+                        }
+                    }
+                }
+            ]
+        });
+        assert_eq!(
+            sample_from_schema(&schema),
+            Some(json!({
+                "email": "user@example.invalid",
+                "id": 42,
+                "tags": ["api"]
+            }))
+        );
+
+        assert_eq!(
+            sample_from_schema(&json!({
+                "oneOf": [
+                    { "type": "string", "format": "uuid" },
+                    { "type": "string", "example": "ignored" }
+                ]
+            })),
+            Some(json!("00000000-0000-0000-0000-000000000000"))
+        );
     }
 
     #[test]

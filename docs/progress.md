@@ -154,7 +154,7 @@ Not yet implemented:
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
 - transactional workspace restore and broader multi-document crash recovery.
 - Encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association and explicit insecure TLS remain open; gRPC custom PEM CA/client identity and SOCKS5 routing are now available in CLI and GUI.
-- OpenAPI cyclic/remote references, richer schema generation and deeper protocol-specific GUI tooling.
+- OpenAPI cyclic/remote references, richer schema generation beyond the current composed/format-aware samples and deeper protocol-specific GUI tooling.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
   cross-client/memory benchmarks and deeper packaging/release validation.
 
