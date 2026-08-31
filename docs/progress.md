@@ -131,7 +131,8 @@ Implemented:
   sends newly entered secret values through the OS credential store.
 - Workspace TOML writes now replace canonical files through same-directory
   temporary files, with coverage that no temporary destination remains after a
-  replacement.
+  replacement; request and environment relocations roll back their newly
+  written destination if the old path cannot be removed.
 - `postly validate` provides a read-only canonical workspace integrity scan with
   text and JSON output, aggregates malformed collection/request/environment
   files and returns a failing exit status without inspecting ignored `.postly/`
@@ -168,10 +169,10 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
-- Multi-file transactional restore for canonical workspace files remains open;
-  individual TOML writes now use unique flushed temporary files, and failed
-  request relocation rolls back its newly written destination. Recovery now
-  covers multiple dirty GUI documents.
+- Full multi-file transactional restore for arbitrary canonical workspace
+  batches remains open; individual TOML writes now use unique flushed
+  temporary files, and request/environment relocations roll back their newly
+  written destination. Recovery now covers multiple dirty GUI documents.
 - Encrypted PKCS#12 identities and transient passphrase handling now work for
   the shared HTTP/SSE engine, CLI and native GUI; per-domain certificate
   association, WebSocket certificate routing and gRPC PKCS#12 remain open.

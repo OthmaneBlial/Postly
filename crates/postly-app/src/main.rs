@@ -1160,15 +1160,15 @@ impl PostlyApp {
             name: name.to_owned(),
             variables,
         };
-        let path = self
-            .workspace
-            .save_environment(&environment)
-            .map_err(|error| error.to_string())?;
-        if let Some(previous_path) = self.environment_editor_path.as_ref() {
-            if previous_path != &path {
-                fs::remove_file(previous_path).map_err(|error| error.to_string())?;
-            }
-        }
+        let path = if let Some(previous_path) = self.environment_editor_path.as_ref() {
+            self.workspace
+                .relocate_environment(previous_path, &environment)
+                .map_err(|error| error.to_string())?
+        } else {
+            self.workspace
+                .save_environment(&environment)
+                .map_err(|error| error.to_string())?
+        };
         self.environments = self
             .workspace
             .environments()

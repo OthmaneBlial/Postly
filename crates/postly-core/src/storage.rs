@@ -548,13 +548,34 @@ impl Workspace {
     }
 
     pub fn save_environment(&self, environment: &Environment) -> Result<PathBuf, WorkspaceError> {
-        let path = self.root.join("environments").join(format!(
-            "{}{}",
-            slugify(&environment.name)?,
-            ENVIRONMENT_SUFFIX
-        ));
+        let path = self.environment_path(environment)?;
         self.write_toml(&path, environment)?;
         Ok(path)
+    }
+
+    /// Save an environment under its new canonical path and roll back the new
+    /// file if removing the previous path fails.
+    pub fn relocate_environment(
+        &self,
+        path: impl AsRef<Path>,
+        environment: &Environment,
+    ) -> Result<PathBuf, WorkspaceError> {
+        let old_path = path.as_ref();
+        if !is_environment_path(&self.root, old_path) {
+            return Err(WorkspaceError::InvalidName(old_path.display().to_string()));
+        }
+        let new_path = self.environment_path(environment)?;
+        self.write_toml(&new_path, environment)?;
+        if new_path != old_path {
+            if let Err(source) = fs::remove_file(old_path) {
+                let _ = fs::remove_file(&new_path);
+                return Err(WorkspaceError::Io {
+                    path: old_path.to_path_buf(),
+                    source,
+                });
+            }
+        }
+        Ok(new_path)
     }
 
     pub fn environments(&self) -> Result<Vec<(PathBuf, Environment)>, WorkspaceError> {
@@ -661,6 +682,14 @@ impl Workspace {
 
     fn manifest_path(&self) -> PathBuf {
         self.root.join(MANIFEST_FILE)
+    }
+
+    fn environment_path(&self, environment: &Environment) -> Result<PathBuf, WorkspaceError> {
+        Ok(self.root.join("environments").join(format!(
+            "{}{}",
+            slugify(&environment.name)?,
+            ENVIRONMENT_SUFFIX
+        )))
     }
 
     fn compact_history(&self, path: &Path) -> Result<(), WorkspaceError> {
@@ -815,6 +844,21 @@ fn is_request_path(root: &Path, path: &Path) -> bool {
             .is_some_and(|name| name.to_string_lossy().ends_with(REQUEST_SUFFIX))
 }
 
+fn is_environment_path(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let components = relative.components().collect::<Vec<_>>();
+    components.len() == 2
+        && components
+            .iter()
+            .all(|component| matches!(component, Component::Normal(_)))
+        && components[0].as_os_str() == "environments"
+        && path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().ends_with(ENVIRONMENT_SUFFIX))
+}
+
 fn slugify(value: &str) -> Result<String, WorkspaceError> {
     let slug = value
         .trim()
@@ -923,6 +967,27 @@ mod tests {
         assert!(!collection
             .directory
             .join("requests/renamed-users.postly.toml")
+            .exists());
+    }
+
+    #[test]
+    fn failed_environment_relocation_rolls_back_the_new_destination() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = Workspace::init(directory.path(), "Demo API").expect("init");
+        let environment = Environment::new("Staging");
+        let old_path = workspace
+            .save_environment(&environment)
+            .expect("environment");
+
+        std::fs::remove_file(&old_path).expect("remove environment for failure setup");
+        std::fs::create_dir(&old_path).expect("replace old path with directory");
+        let renamed = Environment::new("Production");
+
+        assert!(workspace.relocate_environment(&old_path, &renamed).is_err());
+        assert!(old_path.is_dir());
+        assert!(!directory
+            .path()
+            .join("environments/production.postly-env.toml")
             .exists());
     }
 
