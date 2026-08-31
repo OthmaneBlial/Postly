@@ -1100,6 +1100,24 @@ function makeUrlFacade(rawValue, structuredQuery) {
   url.query = query;
   Object.defineProperties(url, {
     toString: { value: () => (usesStructuredQuery || queryDirty || hasVariableChanges()) ? serializeQuery() : text(url.raw) },
+    toObject: { value: () => {
+      const parsed = parsedUrl();
+      const object = {
+        raw: url.toString(),
+        protocol: parsed ? parsed.protocol.replace(/:$/, "") : undefined,
+        host: parsed ? parsed.hostname.split(".").filter(Boolean) : [],
+        path: parsed ? parsed.pathname.split("/").filter(Boolean) : [],
+        query: query.map((entry) => ({
+          key: text(entry && entry.key),
+          value: text(entry && entry.value),
+          disabled: entry && entry.disabled === true
+        })),
+        variable: variables.toObject()
+      };
+      if (parsed && parsed.port) object.port = parsed.port;
+      if (parsed && parsed.hash) object.hash = parsed.hash.replace(/^#/, "");
+      return object;
+    }},
     getPath: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.pathname : text(url.raw).split("?")[0]; } },
     getHost: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.hostname : undefined; } },
     getProtocol: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.protocol.replace(/:$/, "") : undefined; } },
@@ -2939,6 +2957,14 @@ mod tests {
                     pm.expect(pm.request.url.hash).to.eql("#details");
                     pm.expect(pm.request.url.variables.get("userId").value).to.eql("42");
                     pm.expect(pm.request.url.variable.toObject()).to.eql({ userId: "42" });
+                    pm.expect(pm.request.url.toObject()).to.have.deep.include({
+                        protocol: "https",
+                        host: ["api", "example", "test"],
+                        path: ["users", "42"],
+                        query: [{ key: "include", value: "profile", disabled: false }],
+                        variable: { userId: "42" },
+                        hash: "details"
+                    });
                 });
                 pm.request.url.variables.replace("userId", "99");
                 pm.request.url.variables.get("userId").value = "100";

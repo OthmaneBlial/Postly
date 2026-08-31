@@ -130,8 +130,9 @@ Implemented:
   back into the native request model through dedicated regression tests;
   `pm.request.body.update(...)` replaces supported Postman body modes and is
   serialized back to the native request model; URL
-  protocol/host/port/path/hash metadata and mutable path-variable helpers are
-  also exposed and materialized back into the request URL.
+  protocol/host/port/path/hash metadata, `toObject()` serialization and mutable
+  path-variable helpers are also exposed and materialized back into the request
+  URL.
 - Common response-side Postman assertions now include optional header values,
   JSON body path checks, non-empty body and cookie checks, negated header presence/value checks, and header/cookie object views;
   matcher coverage includes exact/all/any keys, contain, deep properties and
