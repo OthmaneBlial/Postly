@@ -112,9 +112,10 @@ Implemented:
 - postly snippet generates reviewable cURL, JavaScript, Python, Rust, Go, Java,
   C# and PHP source from the saved request model while preserving placeholders
   and warning when credentials or unsupported body semantics need review.
-- A local `cargo xtask bench` harness measures real Postman import and generated
-  1,000-request workspace open/search operations plus macOS CLI startup peak
-  RSS without publishing invented competitor comparisons.
+- A local `cargo xtask bench` harness measures real Postman import, generated
+  1,000-request workspace open/search operations, a deterministic 100-request
+  loopback runner workload and macOS CLI startup peak RSS without publishing
+  invented competitor comparisons.
 - `cargo xtask compat` executes checked-in Postman collection/environment and
   OpenAPI fixtures, reporting fixture execution separately from manual-review
   request mapping instead of claiming full behavioral parity.
@@ -214,10 +215,10 @@ On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 6
 checked-in fixtures; its separate request-mapping signal was 12/17 (70.59%),
 with the remaining cases retained as explicit manual review. The latest local
 `cargo xtask bench --json` run on macOS arm64 reported a CLI `--help` startup
-median of 11.96 ms and median peak RSS of 12,176 KiB, 5.69 ms for the Postman
-variant import, 151.49 ms to open a generated 1,000-request workspace and
-151.22 ms to search it. These are local measurements rather than competitor
-claims or universal performance guarantees.
+median of 11.28 ms and median peak RSS of 12,192 KiB, 5.54 ms for the Postman
+variant import, 140.62 ms to open a generated 1,000-request workspace, 141.61
+ms to search it and 27.90 ms for 100 local runner requests. These are local
+measurements rather than competitor claims or universal performance guarantees.
 
 The latest local validation also passed `cargo xtask fuzz`: the three checked-in
 targets (`curl_command`, `variables` and `postman_import`) each completed 256

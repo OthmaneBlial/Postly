@@ -6,13 +6,19 @@ use std::{
 };
 
 use postly_core::{
-    import_environment, import_openapi, import_postman_collection, Collection, Request, Workspace,
+    import_environment, import_openapi, import_postman_collection, run_requests, Collection,
+    EngineOptions, HttpEngine, Request, RunnerOptions, VariableContext, Workspace,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+};
 
 const BENCHMARK_ITERATIONS: usize = 5;
 const WORKSPACE_REQUESTS: usize = 1_000;
+const RUNNER_REQUESTS: usize = 100;
 
 fn main() -> ExitCode {
     let mut arguments = env::args().skip(1);
@@ -672,7 +678,90 @@ fn collect_benchmarks() -> Result<Vec<BenchmarkResult>, String> {
         }
         Ok(())
     })?;
-    Ok(vec![cli_startup, import, load, search])
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("could not create benchmark runtime: {error}"))?;
+    let runner = measure("runner_local_100_requests", || {
+        runtime.block_on(run_local_runner_benchmark())
+    })?;
+    Ok(vec![cli_startup, import, load, search, runner])
+}
+
+async fn run_local_runner_benchmark() -> Result<(), String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|error| format!("could not bind runner benchmark server: {error}"))?;
+    let address = listener
+        .local_addr()
+        .map_err(|error| format!("could not read runner benchmark address: {error}"))?;
+    let server = tokio::spawn(async move {
+        for _ in 0..RUNNER_REQUESTS {
+            let (mut socket, _) = listener
+                .accept()
+                .await
+                .map_err(|error| format!("runner benchmark accept failed: {error}"))?;
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket
+                    .read(&mut chunk)
+                    .await
+                    .map_err(|error| format!("runner benchmark read failed: {error}"))?;
+                if read == 0 {
+                    return Err("runner benchmark client closed before headers".to_owned());
+                }
+                request.extend_from_slice(&chunk[..read]);
+                if request.len() > 16 * 1024 {
+                    return Err(
+                        "runner benchmark request headers exceeded the safety limit".to_owned()
+                    );
+                }
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok")
+                .await
+                .map_err(|error| format!("runner benchmark write failed: {error}"))?;
+        }
+        Ok::<(), String>(())
+    });
+
+    let engine = HttpEngine::new(&EngineOptions::default())
+        .map_err(|error| format!("could not create runner benchmark engine: {error}"))?;
+    let requests = (0..RUNNER_REQUESTS)
+        .map(|index| {
+            (
+                std::path::PathBuf::from(format!("request-{index}.postly.toml")),
+                Request::new(
+                    format!("Runner request {index}"),
+                    "GET",
+                    format!("http://{address}/{index}"),
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    let summary = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        run_requests(
+            &engine,
+            &requests,
+            &VariableContext::default(),
+            &RunnerOptions::default(),
+        ),
+    )
+    .await
+    .map_err(|_| "runner benchmark timed out".to_owned())?;
+    let server_result = server
+        .await
+        .map_err(|error| format!("runner benchmark server task failed: {error}"))?;
+    server_result?;
+    if summary.requests != RUNNER_REQUESTS || !summary.succeeded() {
+        return Err(format!(
+            "runner benchmark expected {RUNNER_REQUESTS} successful requests, got {}",
+            summary.requests
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_cli_binary(root: &Path) -> Result<std::path::PathBuf, String> {

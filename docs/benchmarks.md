@@ -10,12 +10,13 @@ cargo xtask bench --json > bench-generated/local.json
 ```
 
 The command currently covers a CLI `--help` startup, an eight-request Postman
-import and generated 1,000-request workspace open/search paths. Each operation
-runs five samples and prints median, minimum and maximum duration. On macOS,
-the startup measurement also records the median peak resident set size reported
-by `/usr/bin/time -l`; other platforms omit that optional field until a
-platform-specific process measurement is added. The startup measurement
-launches the already-built local CLI; it does not include a build.
+import, generated 1,000-request workspace open/search paths and a deterministic
+100-request local HTTP runner workload. Each operation runs five samples and
+prints median, minimum and maximum duration. On macOS, the startup measurement
+also records the median peak resident set size reported by `/usr/bin/time -l`;
+other platforms omit that optional field until a platform-specific process
+measurement is added. The startup measurement launches the already-built local
+CLI; it does not include a build.
 Temporary benchmark workspaces are created outside the repository; only the
 ignored `bench-generated/` destination may contain output.
 
@@ -25,7 +26,7 @@ Postly to Postman, Bruno or any other client. Add a controlled competitor
 version and methodology before publishing a comparison.
 
 The benchmark suite is still a foundation. Idle memory, large response
-rendering, runner throughput and cross-platform runs remain future additions;
-the HTTP engine nevertheless enforces a configurable 100 MiB default cap for
-buffered response bodies so malformed or unbounded endpoints cannot grow the
-process without limit.
+rendering, larger runner-throughput matrices and cross-platform runs remain
+future additions; the HTTP engine nevertheless enforces a configurable 100 MiB
+default cap for buffered response bodies so malformed or unbounded endpoints
+cannot grow the process without limit.
