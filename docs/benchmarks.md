@@ -22,4 +22,7 @@ Postly to Postman, Bruno or any other client. Add a controlled competitor
 version and methodology before publishing a comparison.
 
 The benchmark suite is still a foundation. Idle memory, large response
-rendering, runner throughput and cross-platform runs remain future additions.
+rendering, runner throughput and cross-platform runs remain future additions;
+the HTTP engine nevertheless enforces a configurable 100 MiB default cap for
+buffered response bodies so malformed or unbounded endpoints cannot grow the
+process without limit.

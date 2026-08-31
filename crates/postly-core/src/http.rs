@@ -31,11 +31,15 @@ use crate::{
     variables::{VariableContext, VariableDiagnostic},
 };
 
+const DEFAULT_MAX_RESPONSE_BYTES: usize = 100 * 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
     pub timeout: Duration,
     pub accept_invalid_certs: bool,
     pub max_redirects: usize,
+    /// Maximum buffered response body size for regular HTTP requests.
+    pub max_response_bytes: usize,
     pub proxy: Option<String>,
     /// Optional comma-separated host/IP bypass list for an explicit proxy.
     pub no_proxy: Option<String>,
@@ -53,6 +57,7 @@ impl Default for EngineOptions {
             timeout: Duration::from_secs(30),
             accept_invalid_certs: false,
             max_redirects: 10,
+            max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             proxy: None,
             no_proxy: None,
             ca_cert: None,
@@ -115,6 +120,8 @@ pub enum HttpError {
     },
     #[error("HTTP request failed: {0}")]
     Request(#[source] reqwest::Error),
+    #[error("response body exceeds the configured limit of {limit} bytes")]
+    ResponseBodyTooLarge { limit: usize },
     #[error("variable resolution failed")]
     VariableResolution(Vec<VariableDiagnostic>),
     #[error("invalid JSON body: {0}")]
@@ -275,6 +282,7 @@ pub struct HttpEngine {
     client: Client,
     cookie_jar: Arc<PersistentCookieJar>,
     oauth_tokens: Arc<Mutex<HashMap<OAuthTokenKey, CachedOAuthToken>>>,
+    max_response_bytes: usize,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -625,6 +633,7 @@ impl HttpEngine {
             client,
             cookie_jar,
             oauth_tokens: Arc::new(Mutex::new(HashMap::new())),
+            max_response_bytes: options.max_response_bytes,
         })
     }
 
@@ -708,7 +717,7 @@ impl HttpEngine {
             .filter_map(parse_set_cookie)
             .collect();
         let final_url = response.url().to_string();
-        let body = response.bytes().await.map_err(HttpError::Request)?.to_vec();
+        let body = read_bounded_response_body(response, self.max_response_bytes).await?;
         let response_size = body.len();
 
         Ok(HttpResponse {
@@ -1873,6 +1882,26 @@ async fn read_bounded_oauth_body(mut response: reqwest::Response) -> Result<Vec<
             return Err(HttpError::OAuthToken(format!(
                 "OAuth response exceeds {MAX_OAUTH_RESPONSE_BYTES} bytes"
             )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+async fn read_bounded_response_body(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, HttpError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(HttpError::ResponseBodyTooLarge { limit });
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(HttpError::Request)? {
+        if body.len().saturating_add(chunk.len()) > limit {
+            return Err(HttpError::ResponseBodyTooLarge { limit });
         }
         body.extend_from_slice(&chunk);
     }
@@ -3081,6 +3110,41 @@ mod tests {
             "{\n  \"ok\": true,\n  \"source\": \"local\"\n}"
         );
         assert!(response.duration_ms < 5_000);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_response_that_exceeds_the_configured_body_limit() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("connection");
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await.expect("read");
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 16\r\n\r\n0123456789abcdef",
+                )
+                .await
+                .expect("write");
+        });
+
+        let engine = HttpEngine::new(&EngineOptions {
+            max_response_bytes: 8,
+            ..EngineOptions::default()
+        })
+        .expect("engine");
+        let request = Request::new("Oversized", "GET", format!("http://{address}/oversized"));
+        let error = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect_err("oversized response must be rejected");
+
+        server.await.expect("server");
+        assert!(matches!(
+            error,
+            HttpError::ResponseBodyTooLarge { limit: 8 }
+        ));
+        assert!(error.to_string().contains("8 bytes"));
     }
 
     #[test]
