@@ -28,7 +28,7 @@ and manual-review cases remain visible in the report.
 | Postman environment export | working slice; secure references require explicit secret-resolving export | export serialization fixture and secure export boundary |
 | Postman scripts | opt-in basic execution in CLI and GUI send flow, native source editing and explicit GUI preview | Node bridge tests, GUI persistence/preview/send tests and migration docs |
 | Postman pm.* runtime | partial tested subset, including scoped variables, iteration data, request headers, common response matchers and bounded `pm.sendRequest` callbacks | compatibility matrix, bridge tests and runner integration test |
-| Explicit response assertions | working core/runner and native GUI editor slice | exact/ranged status, present/equal/containing headers, body/JSON Pointer runner integration test and GUI editor round-trip |
+| Explicit response assertions | working core/runner and native GUI editor slice | exact/ranged status, present/equal/containing headers, body, response-time threshold, JSON Pointer presence/equality runner integration test and GUI editor round-trip |
 | Native response viewer | working GUI slice with JSON/XML formatting and detected lightweight JSON/XML/HTML/JavaScript/Text previews | virtualized line rows, format detection, search, copy, local save and wrapping |
 | collection runner | sequential HTTP slice with iteration data, reporters and folder selection | CLI run |
 | Local API documentation | deterministic Markdown generator with default redaction | core documentation tests and CLI command |

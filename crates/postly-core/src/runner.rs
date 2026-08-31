@@ -174,6 +174,25 @@ fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<
                 Err(format!("expected response body to contain {value:?}"))
             }
         }
+        Assertion::ResponseTimeUnder { max_ms } => {
+            if response.duration_ms <= u128::from(*max_ms) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected response time to be at most {max_ms} ms, received {} ms",
+                    response.duration_ms
+                ))
+            }
+        }
+        Assertion::JsonPointerPresent { pointer } => {
+            let body = serde_json::from_slice::<serde_json::Value>(&response.body)
+                .map_err(|error| format!("response body is not JSON: {error}"))?;
+            if body.pointer(pointer).is_some() {
+                Ok(())
+            } else {
+                Err(format!("JSON Pointer {pointer:?} was not found"))
+            }
+        }
         Assertion::JsonPointerEquals { pointer, expected } => {
             let body = serde_json::from_slice::<serde_json::Value>(&response.body)
                 .map_err(|error| format!("response body is not JSON: {error}"))?;
@@ -480,6 +499,10 @@ mod tests {
             Assertion::BodyContains {
                 value: "\"ok\":true".to_owned(),
             },
+            Assertion::ResponseTimeUnder { max_ms: 5_000 },
+            Assertion::JsonPointerPresent {
+                pointer: "/ok".to_owned(),
+            },
             Assertion::JsonPointerEquals {
                 pointer: "/count".to_owned(),
                 expected: serde_json::json!(3),
@@ -496,10 +519,10 @@ mod tests {
         server.await.expect("server");
 
         assert!(summary.succeeded());
-        assert_eq!(summary.assertions, 6);
+        assert_eq!(summary.assertions, 8);
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.status_distribution.get(&200), Some(&1));
-        assert_eq!(summary.results[0].assertions, 6);
+        assert_eq!(summary.results[0].assertions, 8);
     }
 
     #[tokio::test]

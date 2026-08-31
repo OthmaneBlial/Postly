@@ -253,6 +253,12 @@ pub enum Assertion {
     BodyContains {
         value: String,
     },
+    ResponseTimeUnder {
+        max_ms: u64,
+    },
+    JsonPointerPresent {
+        pointer: String,
+    },
     JsonPointerEquals {
         pointer: String,
         expected: serde_json::Value,

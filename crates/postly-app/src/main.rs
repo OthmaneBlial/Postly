@@ -349,6 +349,8 @@ enum AssertionKind {
     HeaderEquals,
     HeaderContains,
     BodyContains,
+    ResponseTimeUnder,
+    JsonPointerPresent,
     JsonPointerEquals,
 }
 
@@ -361,6 +363,8 @@ impl AssertionKind {
             Self::HeaderEquals => "Header equals",
             Self::HeaderContains => "Header contains",
             Self::BodyContains => "Body contains",
+            Self::ResponseTimeUnder => "Response time is under",
+            Self::JsonPointerPresent => "JSON Pointer exists",
             Self::JsonPointerEquals => "JSON Pointer equals",
         }
     }
@@ -382,6 +386,10 @@ impl AssertionKind {
             },
             Self::BodyContains => Assertion::BodyContains {
                 value: String::new(),
+            },
+            Self::ResponseTimeUnder => Assertion::ResponseTimeUnder { max_ms: 1000 },
+            Self::JsonPointerPresent => Assertion::JsonPointerPresent {
+                pointer: "/status".to_owned(),
             },
             Self::JsonPointerEquals => Assertion::JsonPointerEquals {
                 pointer: "/status".to_owned(),
@@ -6110,6 +6118,15 @@ impl PostlyApp {
                     Assertion::BodyContains { value } => {
                         changed |= labeled_singleline(ui, "Text", value);
                     }
+                    Assertion::ResponseTimeUnder { max_ms } => {
+                        ui.horizontal(|ui| {
+                            ui.label("Maximum response time (ms)");
+                            changed |= ui.add(egui::DragValue::new(max_ms)).changed();
+                        });
+                    }
+                    Assertion::JsonPointerPresent { pointer } => {
+                        changed |= labeled_singleline(ui, "JSON Pointer", pointer);
+                    }
                     Assertion::JsonPointerEquals { pointer, .. } => {
                         changed |= labeled_singleline(ui, "JSON Pointer", pointer);
                         if let Some(value) = self.assertion_json_text.get_mut(index) {
@@ -6149,6 +6166,8 @@ impl PostlyApp {
                         AssertionKind::HeaderEquals,
                         AssertionKind::HeaderContains,
                         AssertionKind::BodyContains,
+                        AssertionKind::ResponseTimeUnder,
+                        AssertionKind::JsonPointerPresent,
                         AssertionKind::JsonPointerEquals,
                     ] {
                         ui.selectable_value(&mut self.new_assertion_kind, kind, kind.label());
@@ -8416,19 +8435,23 @@ mod tests {
             Assertion::BodyContains {
                 value: "created".to_owned(),
             },
+            Assertion::ResponseTimeUnder { max_ms: 1_000 },
+            Assertion::JsonPointerPresent {
+                pointer: "/data/active".to_owned(),
+            },
             Assertion::JsonPointerEquals {
                 pointer: "/data/active".to_owned(),
                 expected: serde_json::Value::Bool(false),
             },
         ];
         app.load_request_editors();
-        assert_eq!(app.assertion_json_text.len(), 7);
-        app.assertion_json_text[6] = "false".to_owned();
+        assert_eq!(app.assertion_json_text.len(), 9);
+        app.assertion_json_text[8] = "false".to_owned();
 
         let edited = app.edited_request().expect("valid assertion editor state");
         assert_eq!(edited.assertions, app.request.assertions);
         assert_eq!(
-            edited.assertions[6],
+            edited.assertions[8],
             Assertion::JsonPointerEquals {
                 pointer: "/data/active".to_owned(),
                 expected: serde_json::Value::Bool(false),
@@ -8438,7 +8461,7 @@ mod tests {
         app.save_current().expect("save assertions");
         let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
         assert_eq!(reopened.request.assertions, edited.assertions);
-        assert_eq!(reopened.assertion_json_text[6], "false");
+        assert_eq!(reopened.assertion_json_text[8], "false");
     }
 
     #[test]
