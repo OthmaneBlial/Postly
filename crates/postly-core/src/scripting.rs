@@ -1574,6 +1574,52 @@ function decorateCookies(responseCookies) {
   return responseCookies;
 }
 
+function splitSetCookieHeader(value) {
+  return text(value).split(/,\s*(?=[^;,=\s]+=[^;,]*)/);
+}
+
+function parseSetCookie(value) {
+  const parts = text(value).split(";").map((part) => part.trim());
+  const pair = parts.shift() || "";
+  const separator = pair.indexOf("=");
+  if (separator <= 0) return null;
+  const cookie = {
+    name: pair.slice(0, separator).trim(),
+    value: pair.slice(separator + 1),
+    domain: undefined,
+    path: undefined,
+    secure: false,
+    httpOnly: false,
+    sameSite: undefined,
+    expires: undefined,
+    maxAge: undefined
+  };
+  if (!cookie.name) return null;
+  parts.forEach((attribute) => {
+    const separator = attribute.indexOf("=");
+    const key = (separator >= 0 ? attribute.slice(0, separator) : attribute).trim().toLowerCase();
+    const attributeValue = separator >= 0 ? attribute.slice(separator + 1).trim() : "";
+    if (key === "domain") cookie.domain = attributeValue;
+    else if (key === "path") cookie.path = attributeValue;
+    else if (key === "secure") cookie.secure = true;
+    else if (key === "httponly") cookie.httpOnly = true;
+    else if (key === "samesite") cookie.sameSite = attributeValue;
+    else if (key === "expires") cookie.expires = attributeValue;
+    else if (key === "max-age" && /^-?\d+$/.test(attributeValue)) cookie.maxAge = Number(attributeValue);
+  });
+  return cookie;
+}
+
+function responseCookiesFromHeaders(headers) {
+  let values = [];
+  if (headers && typeof headers.getSetCookie === "function") {
+    values = headers.getSetCookie();
+  } else if (headers && typeof headers.get === "function") {
+    values = splitSetCookieHeader(headers.get("set-cookie"));
+  }
+  return values.map(parseSetCookie).filter(Boolean);
+}
+
 function makeRequestCookieSnapshot(requestCookies) {
   const cookies = (Array.isArray(requestCookies) ? requestCookies : [])
     .filter((cookie) => cookie && cookie.enabled !== false && cookie.disabled !== true)
@@ -2034,7 +2080,7 @@ async function performSendRequest(inputRequest) {
       status: nativeResponse.status,
       status_text: nativeResponse.statusText,
       headers,
-      cookies: [],
+      cookies: responseCookiesFromHeaders(nativeResponse.headers),
       body_text: bodyText,
       duration_ms: Date.now() - started
     });
@@ -2355,7 +2401,7 @@ mod tests {
             assert!(request.contains("x-script: yes"));
             let body = r#"{"ok":true}"#;
             let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-request-id: script\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nx-request-id: script\r\nset-cookie: sid=script-cookie; Path=/; HttpOnly\r\nset-cookie: theme=dark; Path=/; SameSite=Lax\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
                 body
             );
@@ -2378,6 +2424,18 @@ mod tests {
                             response.to.have.status(200);
                             pm.expect(response.headers.get("x-request-id")).to.eql("script");
                             pm.expect(response.json()).to.have.property("ok", true);
+                            pm.expect(response.cookies.get("sid")).to.eql("script-cookie");
+                            pm.expect(response.cookies.has("theme")).to.eql(true);
+                            pm.expect(response.cookies.toObject()).to.deep.include({{ sid: "script-cookie" }});
+                            pm.expect(response.cookies.all()).to.have.lengthOf(2);
+                            const sid = response.cookies.all().find((cookie) => cookie.name === "sid");
+                            const theme = response.cookies.all().find((cookie) => cookie.name === "theme");
+                            pm.expect(sid.httpOnly).to.eql(true);
+                            pm.expect(sid.path).to.eql("/");
+                            pm.expect(theme.sameSite).to.eql("Lax");
+                            const cookieNames = [];
+                            response.cookies.each((cookie) => cookieNames.push(cookie.name));
+                            pm.expect(cookieNames).to.include("theme");
                         }});
                     }});
                 "#

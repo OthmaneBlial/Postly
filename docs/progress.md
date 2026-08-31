@@ -132,10 +132,10 @@ Implemented:
   GUI and CLI show the same per-test timing.
 - `pm.sendRequest` now has a tested, opt-in callback slice for bounded HTTP(S)
   subrequests with headers, raw bodies, Basic/Bearer/Digest/API-key auth,
-  response text/JSON and response assertions; Digest challenge negotiation is
-  bounded to one retry and covered by a local loopback test. Direct bridge and
-  collection-runner integration are covered, and this intentionally does not
-  claim Postly transport parity.
+  response text/JSON, bounded response-cookie parsing and response assertions;
+  Digest challenge negotiation is bounded to one retry and covered by a local
+  loopback test. Direct bridge and collection-runner integration are covered,
+  and this intentionally does not claim Postly transport parity.
 - The script bridge now exposes Postman-shaped request URL, query, cookie and
   body facades, with URL/query mutations and raw/JSON/form body edits converted
   back into the native request model through dedicated regression tests;
@@ -375,14 +375,16 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`7725727569a3270836d9ce5ed169969d13ff52f6c0080b65d7806382c908725d`.
+`b9464e2f2febb1cda6c3426159be47894d3936659499037ca796c19fa15c78f4`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
 retry in the opt-in `pm.sendRequest` bridge and runner-provided `pm.info`
 execution metadata plus the request-cookie `pm.cookies` snapshot, iteration data
-object view and bounded JSON Schema assertions; the CLI, HTTP core, runner and
-script loopback tests remain covered in the workspace suite.
+object view and bounded JSON Schema assertions. The `pm.sendRequest` bridge now
+also exposes bounded `Set-Cookie` response parsing to callback scripts; the CLI,
+HTTP core, runner and script loopback tests remain covered in the workspace
+suite.
 
 The latest native GUI response slice adds a safe HTML `Preview` tab with bounded
 text extraction, entity decoding, block formatting and explicit omission of

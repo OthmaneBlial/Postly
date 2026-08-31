@@ -52,8 +52,9 @@ The supported compatibility slice includes:
 - `pm.response.code/status/responseTime/text/json/headers/cookies`
 - `pm.sendRequest` callback requests for bounded HTTP(S) subrequests with
   URL query parameters, headers, Basic/Bearer/Digest/API-key auth, one bounded
-  Digest challenge retry, raw/urlencoded/form-data/GraphQL bodies and response
-  text/JSON; file bodies remain rejected explicitly
+  Digest challenge retry, raw/urlencoded/form-data/GraphQL bodies, response
+  text/JSON and bounded response-cookie parsing; file bodies remain rejected
+  explicitly
 - `pm.test` and `pm.expect` equality, inclusion, property, boolean, numeric,
   `closeTo`, predicate `satisfy`, type, regex and negated checks; each collected
   test reports pass/fail, callback duration and a bounded error stack when
