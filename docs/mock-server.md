@@ -8,6 +8,13 @@ API is unavailable or should not receive test traffic.
 postly mock ./my-api --port 3000
 ```
 
+Use `--environment NAME` to resolve the selected environment's placeholders in
+route paths, response headers and response bodies before serving the examples:
+
+```bash
+postly mock ./my-api --environment Local --port 3000
+```
+
 The command accepts a workspace directory or one collection directory. It
 loads every saved response example below that scope and derives one route from
 the request method and URL path. Query parameters are ignored when matching, so
@@ -27,6 +34,9 @@ If no content type is saved, Postly sends `text/plain; charset=utf-8`. A saved
 `delay_ms` makes the mock wait before responding. Header names and values that
 contain CR/LF are skipped to avoid response-header injection. Unknown routes
 return a generic `404` JSON response and do not echo the requested URL.
+Without `--environment`, collection variables are still used and unresolved
+placeholders remain literal; the selected environment adds the local values
+without writing to the workspace.
 
 After sending a saved request in the desktop app, use **Save as example** in the
 response toolbar to add or replace a named fixture in that request. The app

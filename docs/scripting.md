@@ -54,7 +54,7 @@ The supported compatibility slice includes:
   Digest challenge retry, raw/urlencoded/form-data/GraphQL bodies and response
   text/JSON; file bodies remain rejected explicitly
 - `pm.test` and `pm.expect` equality, inclusion, property, boolean, numeric, type, regex and negated checks; each collected test reports pass/fail, callback duration and a bounded error stack when available
-- `pm.response.to.be.ok/success/redirection/clientError/serverError/error/withBody`,
+- `pm.response.to.be.ok/success/redirection/clientError/serverError/error/withBody/json`,
   `pm.response.to.have.body/cookie/status/header/jsonBody` and negated header
   presence/value checks, header/cookie
   `toObject` helpers and `pm.response.cookies.get/has/each/forEach`

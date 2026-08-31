@@ -1585,7 +1585,10 @@ function makeScriptResponse(responseData) {
     clientError: () => responseData.status >= 400 && responseData.status < 500,
     serverError: () => responseData.status >= 500 && responseData.status < 600,
     error: () => responseData.status >= 400,
-    withBody: () => responseData.body_text.length > 0
+    withBody: () => responseData.body_text.length > 0,
+    json: () => {
+      try { JSON.parse(responseData.body_text); return true; } catch (_) { return false; }
+    }
   };
   const makeResponseCategories = (negated) => {
     const categories = {};
@@ -3274,6 +3277,7 @@ mod tests {
                     pm.response.to.not.be.serverError;
                     pm.response.to.not.be.error;
                     pm.response.to.be.withBody;
+                    pm.response.to.be.json;
                     pm.response.to.have.body;
                     pm.response.to.have.cookie("session");
                     pm.response.to.not.have.cookie("missing");
@@ -3341,6 +3345,7 @@ mod tests {
             r#"
                 pm.test("redirection", function () {
                     pm.response.to.be.redirection;
+                    pm.response.to.not.be.json;
                     pm.response.to.not.be.success;
                     pm.response.to.not.be.error;
                 });

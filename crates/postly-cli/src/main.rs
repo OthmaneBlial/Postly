@@ -1094,6 +1094,11 @@ enum Command {
     Mock {
         #[arg(default_value = ".")]
         path: PathBuf,
+        #[arg(
+            long,
+            help = "Resolve mock route and response placeholders from this environment"
+        )]
+        environment: Option<String>,
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
         #[arg(long, default_value_t = 3000)]
@@ -1792,10 +1797,11 @@ async fn main() -> Result<()> {
         } => print_snippet(&file, language.into(), output_json),
         Command::Mock {
             path,
+            environment,
             host,
             port,
             once,
-        } => run_mock_server(&path, &host, port, once).await,
+        } => run_mock_server(&path, environment.as_deref(), &host, port, once).await,
         Command::Run {
             path,
             environment,
@@ -2010,7 +2016,7 @@ fn mock_workspace_and_filter(path: &Path) -> Result<(Workspace, Option<PathBuf>)
     )
 }
 
-fn load_mock_routes(path: &Path) -> Result<Vec<MockRoute>> {
+fn load_mock_routes(path: &Path, environment_name: Option<&str>) -> Result<Vec<MockRoute>> {
     let (workspace, collection_filter) = mock_workspace_and_filter(path)?;
     let mut routes = Vec::new();
     for collection in workspace.collections()? {
@@ -2023,15 +2029,17 @@ fn load_mock_routes(path: &Path) -> Result<Vec<MockRoute>> {
         }) {
             continue;
         }
+        let context =
+            context_for_collection(&workspace, Some(&collection.collection), environment_name)?;
         for (_, request) in workspace.requests(&collection)? {
-            let Some(route_path) = mock_route_path(&request.url) else {
+            let Some(route_path) = mock_route_path(&context.resolve(&request.url).value) else {
                 continue;
             };
             for example in request.examples {
                 routes.push(MockRoute {
                     method: request.method.to_ascii_uppercase(),
                     path: route_path.clone(),
-                    example,
+                    example: resolve_mock_example(example, &context),
                 });
             }
         }
@@ -2043,6 +2051,19 @@ fn load_mock_routes(path: &Path) -> Result<Vec<MockRoute>> {
         );
     }
     Ok(routes)
+}
+
+fn resolve_mock_example(
+    mut example: ResponseExample,
+    context: &VariableContext,
+) -> ResponseExample {
+    for header in &mut example.headers {
+        header.value = context.resolve(&header.value).value;
+    }
+    if let Some(body) = &mut example.body {
+        *body = context.resolve(body).value;
+    }
+    example
 }
 
 fn mock_route_path(raw_url: &str) -> Option<String> {
@@ -2185,8 +2206,14 @@ async fn write_mock_response(
     Ok(())
 }
 
-async fn run_mock_server(path: &Path, host: &str, port: u16, once: bool) -> Result<()> {
-    let routes = load_mock_routes(path)?;
+async fn run_mock_server(
+    path: &Path,
+    environment_name: Option<&str>,
+    host: &str,
+    port: u16,
+    once: bool,
+) -> Result<()> {
+    let routes = load_mock_routes(path, environment_name)?;
     let listener = tokio::net::TcpListener::bind((host, port))
         .await
         .with_context(|| format!("could not bind mock server to {host}:{port}"))?;
@@ -5077,6 +5104,31 @@ mod tests {
         assert_eq!(response.body, br#"{"ok":true}"#);
         assert_eq!(response.delay_ms, 7);
         assert_eq!(response.headers.len(), 1);
+    }
+
+    #[test]
+    fn mock_examples_resolve_selected_environment_placeholders() {
+        let context = VariableContext::default().with_environment(
+            [
+                ("apiToken".to_owned(), "local-token".to_owned()),
+                ("name".to_owned(), "Ada".to_owned()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let resolved = resolve_mock_example(
+            ResponseExample {
+                name: "Greeting".to_owned(),
+                status: Some(200),
+                headers: vec![HeaderEntry::enabled("x-api-token", "{{apiToken}}")],
+                body: Some(r#"{"hello":"{{name}}"}"#.to_owned()),
+                delay_ms: 0,
+            },
+            &context,
+        );
+
+        assert_eq!(resolved.headers[0].value, "local-token");
+        assert_eq!(resolved.body.as_deref(), Some(r#"{"hello":"Ada"}"#));
     }
 
     #[test]

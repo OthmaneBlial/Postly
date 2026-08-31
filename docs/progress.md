@@ -137,9 +137,10 @@ Implemented:
   path-variable helpers are also exposed and materialized back into the request
   URL.
 - Common response-side Postman assertions now include optional header values,
-  JSON body path checks, non-empty body and cookie checks, negated header presence/value checks, and header/cookie object views;
-  matcher coverage includes exact/all/any keys, contain, deep properties and
-  common numeric aliases with regression coverage.
+  JSON body path checks, non-empty body and cookie checks, negated header
+  presence/value checks, JSON response categories and header/cookie object
+  views; matcher coverage includes exact/all/any keys, contain, deep properties
+  and common numeric aliases with regression coverage.
 - Native JSON Pointer assertions now support deterministic deep inclusion for
   object subsets, array members and string substrings in the runner and GUI.
 - Native JSON Pointer assertions can also validate the JSON type at a path
@@ -215,7 +216,8 @@ Implemented:
   local mocks, with a bounded UTF-8 body check and explicit secret-data warning.
 - `postly mock` serves saved response examples through a deterministic local HTTP
   server, with method/path routing, response headers and bodies, status codes,
-  bounded request-header parsing, optional per-example delay and `--once` mode.
+  bounded request-header parsing, selected-environment placeholder resolution,
+  optional per-example delay and `--once` mode.
 - `postly docs` generates deterministic local Markdown for collections while
   omitting header/auth values and response bodies by default; example bodies
   require an explicit opt-in.
@@ -349,7 +351,7 @@ checked-in targets (`curl_command`, `variables` and `postman_import`) each
 completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`e0403185b0b538219c99c7890f0099c20a00cf85be8b7bfe0ef2445e192b91db`.
+`7a15fd0ddff416556657e8471143272ae3e15b6f8f39c85b98c2839d0d68e72b`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
