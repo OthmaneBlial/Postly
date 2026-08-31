@@ -49,10 +49,10 @@ retained in x-postly-* extensions instead of being silently rewritten.
 
 ## Search the workspace
 
-Search covers collection names, request names, folders, methods, URLs and
-descriptions across every collection. Headers, cookies, bodies,
-authentication and scripts are intentionally excluded from the index and
-output:
+Search covers collection names, request names, folders, methods, URLs,
+descriptions, header/cookie names and script source across every collection.
+Header/cookie values, bodies and authentication material are intentionally
+excluded from both the index and output:
 
 ~~~bash
 postly search payments --workspace ./my-api
@@ -63,7 +63,8 @@ The result paths are relative to the workspace root and deterministic. An
 empty query is rejected; a valid query with no matches exits successfully and
 prints an explicit no-match message. Matching can use the saved URL, but output
 URLs are sanitized to remove credentials, query strings and fragments; header,
-cookie, body, auth and script values are never included in search results.
+cookie, body and auth values, and script contents, are never included in search
+results.
 
 ## Send requests
 

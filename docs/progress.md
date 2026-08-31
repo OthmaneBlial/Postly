@@ -139,6 +139,8 @@ Implemented:
 - Workspace search now sanitizes emitted URLs, removing credentials, query
   strings and fragments while retaining source-URL matching; a regression test
   ensures search cannot print a URL token or header secret.
+- Workspace search also indexes header/cookie names and script source without
+  returning their values or contents, covering the safe global-search slice.
 - Native GUI saved-request tabs support dirty indicators, activation,
   close-others, reordering and restoration from ignored local path-only state.
 - Native GUI developer console retains bounded execution, protocol and script

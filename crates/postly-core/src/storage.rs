@@ -140,11 +140,12 @@ impl WorkspaceValidationReport {
 
 /// A secret-free index entry for a request found by workspace search.
 ///
-/// Search deliberately covers navigational metadata only. Headers, cookies,
-/// bodies, authentication and scripts are never loaded into the result so a
-/// search command cannot accidentally turn sensitive request data into output.
-/// URL matching uses the saved URL, while emitted URLs remove credentials,
-/// query strings and fragments.
+/// Search deliberately returns navigational metadata only. Header and cookie
+/// names plus script source can participate in matching, but their values and
+/// contents are never loaded into the result so a search command cannot
+/// accidentally turn sensitive request data into output. URL matching uses
+/// the saved URL, while emitted URLs remove credentials, query strings and
+/// fragments.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestSearchResult {
     pub collection_id: uuid::Uuid,
@@ -508,10 +509,24 @@ impl Workspace {
                     request.url.as_str(),
                     request.description.as_deref().unwrap_or_default(),
                 ];
-                if fields
+                let metadata_match = fields
                     .iter()
-                    .any(|field| field.to_ascii_lowercase().contains(&query))
-                {
+                    .any(|field| field.to_ascii_lowercase().contains(&query));
+                let header_or_cookie_name_match = request
+                    .headers
+                    .iter()
+                    .any(|header| header.key.to_ascii_lowercase().contains(&query))
+                    || request
+                        .cookies
+                        .iter()
+                        .any(|cookie| cookie.key.to_ascii_lowercase().contains(&query));
+                let script_match = [
+                    request.pre_request_script.as_deref().unwrap_or_default(),
+                    request.test_script.as_deref().unwrap_or_default(),
+                ]
+                .iter()
+                .any(|script| script.to_ascii_lowercase().contains(&query));
+                if metadata_match || header_or_cookie_name_match || script_match {
                     let relative_path = path
                         .strip_prefix(&self.root)
                         .map(Path::to_path_buf)
@@ -1097,6 +1112,7 @@ mod tests {
             "Authorization",
             "Bearer secret",
         ));
+        users_request.test_script = Some("pm.test('health', () => {})".to_owned());
         workspace
             .save_request(&users, &users_request)
             .expect("users request");
@@ -1116,6 +1132,20 @@ mod tests {
             workspace
                 .search_requests("token")
                 .expect("query search")
+                .len(),
+            1
+        );
+        assert_eq!(
+            workspace
+                .search_requests("authorization")
+                .expect("header-name search")
+                .len(),
+            1
+        );
+        assert_eq!(
+            workspace
+                .search_requests("pm.test")
+                .expect("script search")
                 .len(),
             1
         );
