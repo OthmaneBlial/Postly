@@ -880,18 +880,28 @@ fn form_example<'a>(fields: impl Iterator<Item = (&'a String, &'a String)>) -> V
 
 fn schema_for_example(value: &Value) -> Value {
     match value {
-        Value::Null => json!({}),
-        Value::Bool(_) => json!({ "type": "boolean" }),
+        Value::Null => json!({ "nullable": true, "example": null }),
+        Value::Bool(value) => json!({ "type": "boolean", "example": value }),
         Value::Number(number) => json!({
-            "type": if number.is_i64() || number.is_u64() { "integer" } else { "number" }
+            "type": if number.is_i64() || number.is_u64() { "integer" } else { "number" },
+            "example": number,
         }),
-        Value::String(_) => json!({ "type": "string" }),
+        Value::String(value) => {
+            let mut schema = Map::new();
+            schema.insert("type".to_owned(), json!("string"));
+            schema.insert("example".to_owned(), json!(value));
+            if let Some(format) = inferred_string_format(value) {
+                schema.insert("format".to_owned(), json!(format));
+            }
+            Value::Object(schema)
+        }
         Value::Array(values) => {
             let mut schema = Map::new();
             schema.insert("type".to_owned(), json!("array"));
             if let Some(first) = values.first() {
                 schema.insert("items".to_owned(), schema_for_example(first));
             }
+            schema.insert("example".to_owned(), value.clone());
             Value::Object(schema)
         }
         Value::Object(object) => {
@@ -899,8 +909,50 @@ fn schema_for_example(value: &Value) -> Value {
                 .iter()
                 .map(|(key, value)| (key.clone(), schema_for_example(value)))
                 .collect::<Map<String, Value>>();
-            json!({ "type": "object", "properties": properties })
+            json!({ "type": "object", "properties": properties, "example": value })
         }
+    }
+}
+
+fn inferred_string_format(value: &str) -> Option<&'static str> {
+    if value.len() == 36
+        && value.as_bytes().iter().enumerate().all(|(index, byte)| {
+            matches!(index, 8 | 13 | 18 | 23) && *byte == b'-'
+                || !matches!(index, 8 | 13 | 18 | 23) && byte.is_ascii_hexdigit()
+        })
+    {
+        return Some("uuid");
+    }
+    if value.len() == 10
+        && value.as_bytes().get(4) == Some(&b'-')
+        && value.as_bytes().get(7) == Some(&b'-')
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+    {
+        return Some("date");
+    }
+    if value.contains('T')
+        && (value.ends_with('Z') || value.contains('+') || value.rsplit_once('-').is_some())
+        && value.len() >= 20
+    {
+        return Some("date-time");
+    }
+    if let Ok(url) = Url::parse(value) {
+        if !url.scheme().is_empty() && url.host_str().is_some() {
+            return Some("uri");
+        }
+    }
+    let (local, domain) = value.split_once('@')?;
+    if !local.is_empty()
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+    {
+        Some("email")
+    } else {
+        None
     }
 }
 
@@ -2533,6 +2585,27 @@ paths:
             })),
             Some(json!("00000000-0000-0000-0000-000000000000"))
         );
+    }
+
+    #[test]
+    fn generates_export_schemas_with_examples_and_safe_string_formats() {
+        let schema = schema_for_example(&json!({
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "createdAt": "2024-01-02T03:04:05Z",
+            "homepage": "https://api.example.test/users/1",
+            "email": "ada@example.test",
+            "deletedAt": null,
+            "tags": ["api"]
+        }));
+
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["properties"]["id"]["format"], "uuid");
+        assert_eq!(schema["properties"]["createdAt"]["format"], "date-time");
+        assert_eq!(schema["properties"]["homepage"]["format"], "uri");
+        assert_eq!(schema["properties"]["email"]["format"], "email");
+        assert_eq!(schema["properties"]["deletedAt"]["nullable"], true);
+        assert_eq!(schema["properties"]["tags"]["items"]["example"], "api");
+        assert_eq!(schema["properties"]["tags"]["example"][0], "api");
     }
 
     #[test]

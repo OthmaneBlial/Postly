@@ -245,7 +245,9 @@ Not yet implemented:
   gRPC PKCS#12 remains open.
   gRPC custom PEM CA/client identity and SOCKS5 routing are available in CLI
   and GUI.
-- OpenAPI richer schema generation beyond the current composed/format-aware samples and deeper protocol-specific GUI tooling; remote references are bounded but still need broader corpus coverage.
+- OpenAPI schema generation beyond the current nested-example/nullable/format-aware
+  slice and deeper protocol-specific GUI tooling; remote references are bounded
+  but still need broader corpus coverage.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
   cross-client/memory benchmarks and production release validation beyond the
   local package smoke checks.
@@ -313,9 +315,10 @@ including `replace`/`upsert` and direct value edits, plus
 materialized URL and body round-tripped through the native request model. The
 OpenAPI import slice now also resolves bounded remote references from local
 files and URL documents, with local loopback server tests covering relative and
-absolute HTTP references. The OpenAPI export slice is covered by a native JSON/YAML serialization test
-and a real CLI smoke run from a temporary workspace; operation paths, server
-variables, security metadata and request/response examples were inspected.
+absolute HTTP references. The OpenAPI export slice is covered by native JSON/YAML
+serialization tests and a real CLI smoke run from a temporary workspace;
+operation paths, server variables, security metadata, request/response examples
+and nested inferred schemas were inspected.
 
 On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 9
 checked-in fixtures; its separate request-mapping signal was 21/25 (84.0%),

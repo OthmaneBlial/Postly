@@ -50,9 +50,12 @@ postly export openapi ./my-api --collection "My API" --output ./openapi.yaml
 
 The exporter maps HTTP operations, path/query/header/cookie parameters,
 request bodies, common authentication schemes, response examples and
-collection server variables. Auth-field secrets and file contents are not
-embedded, while request and response examples remain user data and should be
-reviewed before sharing. GraphQL bodies are represented as JSON envelopes,
-while refresh-token-only OAuth, binary file paths and custom HTTP methods
-receive explicit x-postly-* metadata and warnings. gRPC requests are preserved
-in x-postly-unmapped-requests because they are not standard OpenAPI operations.
+collection server variables. JSON request and response examples now produce
+schemas with nested examples, nullable values and conservative string formats
+such as `uuid`, `date`, `date-time`, `email` and `uri`. Auth-field secrets and
+file contents are not embedded, while request and response examples remain
+user data and should be reviewed before sharing. GraphQL bodies are represented
+as JSON envelopes, while refresh-token-only OAuth, binary file paths and custom
+HTTP methods receive explicit x-postly-* metadata and warnings. gRPC requests
+are preserved in x-postly-unmapped-requests because they are not standard
+OpenAPI operations.
