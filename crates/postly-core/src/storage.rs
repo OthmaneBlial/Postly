@@ -299,7 +299,7 @@ impl Workspace {
                         Ok(_) => report.collections += 1,
                         Err(error) => report.issues.push(WorkspaceValidationIssue {
                             path: relative_path(&self.root, &collection_path),
-                            message: error.to_string(),
+                            message: validation_message(&error),
                         }),
                     }
                 }
@@ -312,7 +312,7 @@ impl Workspace {
                         Ok(_) => report.requests += 1,
                         Err(error) => report.issues.push(WorkspaceValidationIssue {
                             path: relative_path(&self.root, &request_path),
-                            message: error.to_string(),
+                            message: validation_message(&error),
                         }),
                     }
                 }
@@ -340,7 +340,7 @@ impl Workspace {
                     Ok(_) => report.environments += 1,
                     Err(error) => report.issues.push(WorkspaceValidationIssue {
                         path: relative_path(&self.root, &path),
-                        message: error.to_string(),
+                        message: validation_message(&error),
                     }),
                 }
             }
@@ -728,6 +728,22 @@ fn relative_path(root: &Path, path: &Path) -> PathBuf {
         .unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn validation_message(error: &WorkspaceError) -> String {
+    match error {
+        WorkspaceError::Io { source, .. } => format!("filesystem error: {source}"),
+        WorkspaceError::Toml { source, .. } => format!("invalid TOML: {source}"),
+        WorkspaceError::TomlSerialize { source, .. } => {
+            format!("could not serialize TOML: {source}")
+        }
+        WorkspaceError::Json { source, .. } => format!("invalid JSON: {source}"),
+        WorkspaceError::MissingManifest(_) => "workspace manifest is missing".to_owned(),
+        WorkspaceError::UnsupportedFormat(format) => {
+            format!("workspace format is unsupported: {format}")
+        }
+        WorkspaceError::InvalidName(name) => format!("invalid name: {name}"),
+    }
+}
+
 fn read_dir_sorted(directory: &Path) -> Result<Vec<fs::DirEntry>, WorkspaceError> {
     let entries = fs::read_dir(directory).map_err(|source| WorkspaceError::Io {
         path: directory.to_path_buf(),
@@ -931,6 +947,11 @@ mod tests {
         assert!(invalid.issues.iter().any(|issue| {
             issue.path == environment_path.strip_prefix(directory.path()).unwrap()
         }));
+        let root_string = directory.path().display().to_string();
+        assert!(invalid
+            .issues
+            .iter()
+            .all(|issue| !issue.message.contains(&root_string)));
     }
 
     #[test]
