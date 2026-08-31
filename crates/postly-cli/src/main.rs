@@ -18,11 +18,11 @@ use postly_core::{
     export_postman_environment_with_store, generate_code_snippet, generate_markdown_docs,
     import_curl_command, import_dotenv, import_environment, import_postman_collection,
     message_from_json, message_to_json, parse_graphql_response, parse_graphql_schema,
-    parse_variables_json, run_requests, schema_introspection_query, Auth, Collection,
-    EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, GrpcSchema, HeaderEntry,
-    HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody, ResponseExample,
-    RunnerOptions, ScriptResult, ScriptTestResult, SecretStore, SnippetLanguage, SseParser,
-    VariableContext, Workspace,
+    parse_variables_json, run_requests, schema_introspection_query, Auth, CancellationToken,
+    Collection, EngineOptions, Environment, EnvironmentVariable, GraphqlRequest, GrpcSchema,
+    HeaderEntry, HistoryEntry, HistoryFilter, HistoryOutcome, HttpEngine, Request, RequestBody,
+    ResponseExample, RunnerOptions, ScriptResult, ScriptTestResult, SecretStore, SnippetLanguage,
+    SseParser, VariableContext, Workspace,
 };
 use prost::Message as ProstMessage;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
@@ -3634,6 +3634,23 @@ fn list_history(path: &Path, options: HistoryOptions) -> Result<()> {
 }
 
 async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
+    let cancellation = CancellationToken::default();
+    let signal_cancellation = cancellation.clone();
+    let signal_task = tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            eprintln!("Postly run cancellation requested");
+            signal_cancellation.cancel();
+        }
+    });
+    let result = run_workspace_with_cancellation(options, cancellation).await;
+    signal_task.abort();
+    result
+}
+
+async fn run_workspace_with_cancellation(
+    options: RunOptions<'_>,
+    cancellation: CancellationToken,
+) -> Result<()> {
     let workspace = if options.path.join("postly.toml").is_file() {
         Workspace::open(options.path)?
     } else {
@@ -3684,6 +3701,7 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
                 concurrency: options.concurrency,
                 scripts: options.scripts,
                 iterations: iterations.clone(),
+                cancellation: cancellation.clone(),
                 ..RunnerOptions::default()
             },
         )
@@ -3741,8 +3759,9 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
             );
         }
         let should_stop = options.fail_fast && summary.failed > 0;
+        let cancelled = summary.cancelled;
         summaries.push(summary);
-        if should_stop {
+        if should_stop || cancelled {
             break;
         }
     }
@@ -3755,6 +3774,9 @@ async fn run_workspace(options: RunOptions<'_>) -> Result<()> {
         Reporter::Pretty => {}
         Reporter::Json => println!("{}", serde_json::to_string_pretty(&summaries)?),
         Reporter::Junit => println!("{}", render_junit(&summaries)),
+    }
+    if summaries.iter().any(|summary| summary.cancelled) {
+        bail!("collection run cancelled");
     }
     if summaries.iter().any(|summary| !summary.succeeded()) {
         bail!("collection run failed");
@@ -5644,6 +5666,46 @@ paths:
             .contains("<system-out>FAIL response body (7 ms): expected &lt;ok&gt;</system-out>"));
         assert!(report
             .contains("<failure message=\"1 assertion failed\">status: expected 200</failure>"));
+    }
+
+    #[tokio::test]
+    async fn run_workspace_honors_a_pre_cancelled_token_without_network_work() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = Workspace::init(directory.path(), "Cancelled run").expect("workspace");
+        let collection = workspace
+            .create_collection(&Collection::new("API"))
+            .expect("collection");
+        workspace
+            .save_request(
+                &collection,
+                &Request::new("Never sent", "GET", "http://127.0.0.1:1/never"),
+            )
+            .expect("request");
+
+        let cancellation = CancellationToken::default();
+        cancellation.cancel();
+        let error = run_workspace_with_cancellation(
+            RunOptions {
+                path: directory.path(),
+                environment_name: None,
+                folder: None,
+                fail_fast: false,
+                scripts: false,
+                concurrency: 1,
+                timeout: 10,
+                proxy: None,
+                no_proxy: None,
+                ca_cert: None,
+                client_identity: None,
+                reporter: Reporter::Json,
+                data_file: None,
+            },
+            cancellation,
+        )
+        .await
+        .expect_err("cancelled run should fail explicitly");
+
+        assert_eq!(error.to_string(), "collection run cancelled");
     }
 
     #[tokio::test]

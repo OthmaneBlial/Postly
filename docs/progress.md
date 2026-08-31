@@ -125,6 +125,8 @@ Implemented:
 - runner iteration data from JSON objects/arrays plus pretty, JSON and JUnit reporters.
 - Pretty and JUnit runner reporters now surface each script test's pass/fail state,
   duration and bounded error detail, while retaining request-level result counts.
+- `postly run` now propagates Ctrl-C through the runner cancellation token,
+  stops active work and prevents later collections from starting.
 - CLI collection runs can target an exact folder and its nested request folders.
 - A dedicated CLI reference documents headless requests, folder runs, reports,
   transport flags, protocol commands and exit-status behavior.

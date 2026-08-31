@@ -148,6 +148,10 @@ and individual script tests with pass/fail state, duration and bounded errors.
 JUnit keeps request-level counts and includes the same script-test detail in
 `system-out`, with failure messages and assertion details XML-escaped.
 
+Press `Ctrl-C` during `postly run` to cancel the active HTTP request or script.
+The cancellation token is propagated to the runner, no later collection is
+started, and the command exits with an explicit cancellation error.
+
 ## Environments and transport
 
 ~~~bash
