@@ -478,6 +478,7 @@ fn join_pipe(reader: thread::JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8>,
 const NODE_HARNESS: &str = r##"
 const vm = require("node:vm");
 const fs = require("node:fs");
+const nodeCrypto = require("node:crypto");
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
 async function main() {
 const changes = { environment: {}, collection: {}, runtime: {} };
@@ -1491,6 +1492,7 @@ const nativeFetch = globalThis.fetch;
 const pendingRequests = new Set();
 const asyncErrors = [];
 let sendRequestCount = 0;
+const MAX_DIGEST_CHALLENGE_BYTES = 16 * 1024;
 
 function normalizeHeaders(inputHeaders) {
   const headers = {};
@@ -1558,6 +1560,18 @@ function applySendRequestAuth(auth, headers) {
     }
     return null;
   }
+  if (type === "digest") {
+    const username = parameter("digest", ["username", "user"]);
+    const password = parameter("digest", ["password", "passwd"]);
+    if (username === undefined || password === undefined) {
+      throw new Error("pm.sendRequest digest auth requires username and password");
+    }
+    return {
+      type: "digest",
+      username: replaceIn(username),
+      password: replaceIn(password)
+    };
+  }
   if (type === "apikey" || type === "api_key") {
     const key = parameter("apikey", "key");
     const value = parameter("apikey", "value");
@@ -1572,6 +1586,126 @@ function applySendRequestAuth(auth, headers) {
     return null;
   }
   throw new Error("pm.sendRequest auth type is not supported: " + type);
+}
+
+function parseDigestChallenge(value) {
+  const source = text(value).trim();
+  if (Buffer.byteLength(source, "utf8") > MAX_DIGEST_CHALLENGE_BYTES) {
+    throw new Error("pm.sendRequest Digest challenge exceeded the " + MAX_DIGEST_CHALLENGE_BYTES + "-byte limit");
+  }
+  const scheme = source.match(/^Digest\s+/i);
+  if (!scheme) return null;
+  const parameters = {};
+  let index = scheme[0].length;
+  while (index < source.length) {
+    while (index < source.length && (source[index] === "," || /\s/.test(source[index]))) index += 1;
+    if (index >= source.length) break;
+    const keyStart = index;
+    while (index < source.length && /[A-Za-z0-9_-]/.test(source[index])) index += 1;
+    if (keyStart === index) return null;
+    const key = source.slice(keyStart, index).toLowerCase();
+    while (index < source.length && /\s/.test(source[index])) index += 1;
+    if (source[index] !== "=") return null;
+    index += 1;
+    while (index < source.length && /\s/.test(source[index])) index += 1;
+    let parsed;
+    if (source[index] === '"') {
+      index += 1;
+      let result = "";
+      let closed = false;
+      while (index < source.length) {
+        const character = source[index++];
+        if (character === "\\" && index < source.length) {
+          result += source[index++];
+        } else if (character === '"') {
+          closed = true;
+          break;
+        } else {
+          result += character;
+        }
+      }
+      if (!closed) return null;
+      parsed = result;
+    } else {
+      const valueStart = index;
+      while (index < source.length && source[index] !== ",") index += 1;
+      parsed = source.slice(valueStart, index).trim();
+    }
+    parameters[key] = parsed;
+    while (index < source.length && /\s/.test(source[index])) index += 1;
+    if (index < source.length && source[index] !== ",") return null;
+  }
+  if (!parameters.realm || !parameters.nonce) return null;
+  return parameters;
+}
+
+function digestAlgorithm(value) {
+  const normalized = text(value).trim().toUpperCase() || "MD5";
+  if (!["MD5", "MD5-SESS", "SHA-256", "SHA-256-SESS"].includes(normalized)) {
+    throw new Error("pm.sendRequest Digest algorithm is not supported: " + normalized);
+  }
+  return normalized;
+}
+
+function digestHash(algorithm, value) {
+  const hashName = algorithm.startsWith("SHA-256") ? "sha256" : "md5";
+  return nodeCrypto.createHash(hashName).update(value, "utf8").digest("hex");
+}
+
+function digestEntityHash(algorithm, body) {
+  if (body === undefined || body === null) return digestHash(algorithm, "");
+  if (typeof body === "string") return digestHash(algorithm, body);
+  if (Buffer.isBuffer(body)) return nodeCrypto.createHash(algorithm.startsWith("SHA-256") ? "sha256" : "md5").update(body).digest("hex");
+  throw new Error("pm.sendRequest Digest auth-int requires a replayable text or Buffer body");
+}
+
+function quoteDigest(value) {
+  return '"' + text(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+
+function digestAuthorization(request, credentials, challenge) {
+  const algorithm = digestAlgorithm(challenge.algorithm);
+  const qops = text(challenge.qop).split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
+  const qop = qops.includes("auth") ? "auth" : qops.includes("auth-int") ? "auth-int" : null;
+  if (text(challenge.qop) && !qop) {
+    throw new Error("pm.sendRequest Digest challenge has no supported qop");
+  }
+  const parsed = new URL(request.url);
+  const uri = parsed.pathname + parsed.search;
+  const cnonce = nodeCrypto.randomBytes(12).toString("hex");
+  const ha1Value = credentials.username + ":" + challenge.realm + ":" + credentials.password;
+  let ha1 = digestHash(algorithm, ha1Value);
+  if (algorithm.endsWith("-SESS")) ha1 = digestHash(algorithm, ha1 + ":" + challenge.nonce + ":" + cnonce);
+  const entityHash = qop === "auth-int" ? digestEntityHash(algorithm, request.body) : null;
+  const ha2 = digestHash(
+    algorithm,
+    request.method + ":" + uri + (qop === "auth-int" ? ":" + entityHash : "")
+  );
+  const nonceCount = "00000001";
+  const response = qop
+    ? digestHash(algorithm, ha1 + ":" + challenge.nonce + ":" + nonceCount + ":" + cnonce + ":" + qop + ":" + ha2)
+    : digestHash(algorithm, ha1 + ":" + challenge.nonce + ":" + ha2);
+  const fields = [
+    "username=" + quoteDigest(credentials.username),
+    "realm=" + quoteDigest(challenge.realm),
+    "nonce=" + quoteDigest(challenge.nonce),
+    "uri=" + quoteDigest(uri),
+    "response=" + quoteDigest(response)
+  ];
+  if (challenge.algorithm) fields.push("algorithm=" + algorithm);
+  if (qop) fields.push("qop=" + qop, "nc=" + nonceCount, "cnonce=" + quoteDigest(cnonce));
+  else if (algorithm.endsWith("-SESS")) fields.push("cnonce=" + quoteDigest(cnonce));
+  if (challenge.opaque) fields.push("opaque=" + quoteDigest(challenge.opaque));
+  return "Digest " + fields.join(", ");
+}
+
+function headersWithAuthorization(headers, authorization) {
+  const next = {};
+  Object.entries(headers).forEach(([key, value]) => {
+    if (key.toLowerCase() !== "authorization") next[key] = value;
+  });
+  next.authorization = authorization;
+  return next;
 }
 
 function normalizeSendRequestBody(inputBody, headers) {
@@ -1619,14 +1753,15 @@ function normalizeSendRequest(inputRequest) {
   if (!url) throw new Error("pm.sendRequest requires a URL");
   const method = text(options.method || "GET").toUpperCase();
   const headers = normalizeHeaders(options.header || options.headers);
-  const authQuery = applySendRequestAuth(options.auth, headers);
-  if (authQuery) url = appendQueryParameters(url, [authQuery]);
+  const authResult = applySendRequestAuth(options.auth, headers);
+  const digestAuth = authResult && authResult.type === "digest" ? authResult : null;
+  if (authResult && !digestAuth) url = appendQueryParameters(url, [authResult]);
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("pm.sendRequest only permits http and https URLs");
   }
   const body = normalizeSendRequestBody(options.body, headers);
-  return { url, method, headers, body };
+  return { url, method, headers, body, digestAuth };
 }
 
 async function performSendRequest(inputRequest) {
@@ -1636,12 +1771,34 @@ async function performSendRequest(inputRequest) {
   const timer = setTimeout(() => controller.abort(), SEND_REQUEST_TIMEOUT_MS);
   const started = Date.now();
   try {
-    const nativeResponse = await nativeFetch(request.url, {
+    let nativeResponse = await nativeFetch(request.url, {
       method: request.method,
       headers: request.headers,
       body: request.body,
       signal: controller.signal
     });
+    if (request.digestAuth && nativeResponse.status === 401) {
+      const challengeHeader = nativeResponse.headers.get("www-authenticate");
+      const digestStart = text(challengeHeader).search(/Digest\s+/i);
+      const challenge = digestStart >= 0
+        ? parseDigestChallenge(text(challengeHeader).slice(digestStart))
+        : null;
+      if (challenge) {
+        if (request.body !== undefined && typeof request.body !== "string" && !Buffer.isBuffer(request.body)) {
+          throw new Error("pm.sendRequest Digest retry requires a replayable text or Buffer body");
+        }
+        if (nativeResponse.body && typeof nativeResponse.body.cancel === "function") await nativeResponse.body.cancel();
+        nativeResponse = await nativeFetch(request.url, {
+          method: request.method,
+          headers: headersWithAuthorization(
+            request.headers,
+            digestAuthorization(request, request.digestAuth, challenge)
+          ),
+          body: request.body,
+          signal: controller.signal
+        });
+      }
+    }
     const bodyText = await nativeResponse.text();
     if (Buffer.byteLength(bodyText, "utf8") > MAX_SEND_RESPONSE_BYTES) {
       throw new Error("pm.sendRequest response exceeded the " + MAX_SEND_RESPONSE_BYTES + "-byte limit");
@@ -2114,6 +2271,108 @@ mod tests {
 
         assert_eq!(result.tests.len(), 3);
         assert!(result.tests.iter().all(|test| test.passed), "{result:?}");
+    }
+
+    #[test]
+    fn supports_pm_send_request_digest_challenge_retry() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+
+            let read_headers = |stream: &mut std::net::TcpStream| {
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                loop {
+                    let read = stream.read(&mut buffer).expect("read request");
+                    assert!(read > 0, "request ended before headers");
+                    request.extend_from_slice(&buffer[..read]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        return String::from_utf8_lossy(&request).to_ascii_lowercase();
+                    }
+                }
+            };
+
+            let (mut first, _) = listener.accept().expect("first connection");
+            let first_request = read_headers(&mut first);
+            assert!(
+                first_request.starts_with("get /digest?source=script http/1.1"),
+                "{first_request}"
+            );
+            assert!(!first_request.contains("authorization: digest"));
+            first
+                .write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\nwww-authenticate: Digest realm=\"local\", nonce=\"nonce-123\", qop=\"auth\"\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .expect("write challenge");
+
+            let (mut second, _) = listener.accept().expect("retry connection");
+            let second_request = read_headers(&mut second);
+            assert!(second_request.starts_with("get /digest?source=script http/1.1"));
+            assert!(
+                second_request.contains("authorization: digest"),
+                "{second_request}"
+            );
+            assert!(
+                second_request.contains("username=\"postly\""),
+                "{second_request}"
+            );
+            assert!(
+                second_request.contains("realm=\"local\""),
+                "{second_request}"
+            );
+            assert!(
+                second_request.contains("nonce=\"nonce-123\""),
+                "{second_request}"
+            );
+            assert!(second_request.contains("qop=auth"), "{second_request}");
+            assert!(second_request.contains("nc=00000001"), "{second_request}");
+            let body = r#"{"ok":true}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            second
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        let request = Request::new("Scripted Digest", "GET", "https://example.test");
+        let result = run_script(
+            &format!(
+                r#"
+                    pm.sendRequest({{
+                        url: "http://{address}/digest?source=script",
+                        method: "GET",
+                        auth: {{
+                            type: "digest",
+                            digest: [
+                                {{ key: "username", value: "postly" }},
+                                {{ key: "password", value: "secret" }}
+                            ]
+                        }}
+                    }}, function (error, response) {{
+                        pm.test("digest challenge retry", function () {{
+                            pm.expect(error).to.eql(null);
+                            response.to.have.status(200);
+                            pm.expect(response.json()).to.have.property("ok", true);
+                        }});
+                    }});
+                "#
+            ),
+            &request,
+            None,
+            &VariableContext::default(),
+        )
+        .expect("script Digest request");
+        server.join().expect("server");
+
+        assert_eq!(result.tests.len(), 1);
+        assert!(result.tests[0].passed, "{result:?}");
     }
 
     #[test]

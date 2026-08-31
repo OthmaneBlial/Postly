@@ -39,11 +39,12 @@ The supported compatibility slice includes:
   the native request model; request headers/cookies/query lists expose bounded
   `get`, `has`, `all`, `count`, `each`, `toObject` and mutation helpers;
   `pm.request.auth` supports parameter access and
-  mutation for no-auth, Basic, Bearer, API key and common OAuth shapes
+  mutation for no-auth, Basic, Digest, Bearer, API key and common OAuth shapes
 - `pm.response.code/status/responseTime/text/json/headers/cookies`
 - `pm.sendRequest` callback requests for bounded HTTP(S) subrequests with
-  URL query parameters, headers, raw/urlencoded/form-data/GraphQL bodies and
-  response text/JSON; file bodies remain rejected explicitly
+  URL query parameters, headers, Basic/Bearer/Digest/API-key auth, one bounded
+  Digest challenge retry, raw/urlencoded/form-data/GraphQL bodies and response
+  text/JSON; file bodies remain rejected explicitly
 - `pm.test` and `pm.expect` equality, inclusion, property, boolean, numeric, type, regex and negated checks; each collected test reports pass/fail, callback duration and a bounded error stack when available
 - `pm.response.to.be.ok/success/redirection/clientError/serverError/error/withBody`,
   `pm.response.to.have.body/cookie/status/header/jsonBody` and negated header
@@ -81,7 +82,10 @@ to eight HTTP(S) callback requests per script, caps each response at 1 MiB and
 uses a two-second request timeout. URL query parameters and common in-memory
 body modes are translated, while file form-data and file bodies are rejected
 explicitly. Those subrequests use Node's native fetch, so Postly proxy,
-custom-CA, mTLS, OAuth and cookie-jar parity does not apply to them yet. OAuth
-helpers, broader Postman parity and an embedded or isolated runtime remain
-planned. The current Node bridge is still intended for source the user
-intentionally runs locally; its VM is not a security boundary.
+custom-CA, mTLS, OAuth and cookie-jar parity does not apply to them yet. Digest
+authentication parses a bounded `WWW-Authenticate` challenge and performs at
+most one retry; the retry requires a replayable text or Buffer body, and
+unsupported algorithms/qop values are reported explicitly. OAuth helpers,
+broader Postman parity and an embedded or isolated runtime remain planned. The
+current Node bridge is still intended for source the user intentionally runs
+locally; its VM is not a security boundary.

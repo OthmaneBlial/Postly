@@ -108,9 +108,11 @@ Implemented:
   state, callback duration and bounded error details in runner JSON; the native
   GUI and CLI show the same per-test timing.
 - `pm.sendRequest` now has a tested, opt-in callback slice for bounded HTTP(S)
-  subrequests with headers, raw bodies, response text/JSON and response
-  assertions; direct bridge and collection-runner integration are covered, and
-  it intentionally does not claim Postly transport parity.
+  subrequests with headers, raw bodies, Basic/Bearer/Digest/API-key auth,
+  response text/JSON and response assertions; Digest challenge negotiation is
+  bounded to one retry and covered by a local loopback test. Direct bridge and
+  collection-runner integration are covered, and this intentionally does not
+  claim Postly transport parity.
 - The script bridge now exposes Postman-shaped request URL, query, cookie and
   body facades, with URL/query mutations and raw/JSON/form body edits converted
   back into the native request model through dedicated regression tests; URL
