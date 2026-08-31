@@ -266,6 +266,9 @@ pub enum Assertion {
     HeaderPresent {
         name: String,
     },
+    HeaderNotPresent {
+        name: String,
+    },
     HeaderEquals {
         name: String,
         expected: String,
@@ -279,6 +282,9 @@ pub enum Assertion {
     },
     BodyIsJson,
     CookiePresent {
+        name: String,
+    },
+    CookieNotPresent {
         name: String,
     },
     CookieEquals {

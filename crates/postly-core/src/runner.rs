@@ -151,6 +151,17 @@ fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<
                 Err(format!("expected response header {name}"))
             }
         }
+        Assertion::HeaderNotPresent { name } => {
+            if response
+                .headers
+                .iter()
+                .all(|header| !header.key.eq_ignore_ascii_case(name))
+            {
+                Ok(())
+            } else {
+                Err(format!("expected response header {name} to be absent"))
+            }
+        }
         Assertion::HeaderEquals { name, expected } => {
             if response
                 .headers
@@ -192,6 +203,13 @@ fn evaluate_assertion(assertion: &Assertion, response: &HttpResponse) -> Result<
                 Ok(())
             } else {
                 Err(format!("expected response cookie {name}"))
+            }
+        }
+        Assertion::CookieNotPresent { name } => {
+            if response.cookies.iter().all(|cookie| cookie.name != *name) {
+                Ok(())
+            } else {
+                Err(format!("expected response cookie {name} to be absent"))
             }
         }
         Assertion::CookieEquals { name, expected } => {
@@ -789,6 +807,9 @@ mod tests {
                 name: "content-type".to_owned(),
                 expected: "application/json".to_owned(),
             },
+            Assertion::HeaderNotPresent {
+                name: "x-missing".to_owned(),
+            },
             Assertion::HeaderContains {
                 name: "content-type".to_owned(),
                 value: "json".to_owned(),
@@ -803,6 +824,9 @@ mod tests {
             Assertion::CookieEquals {
                 name: "session".to_owned(),
                 expected: "abc".to_owned(),
+            },
+            Assertion::CookieNotPresent {
+                name: "missing".to_owned(),
             },
             Assertion::ResponseTimeUnder { max_ms: 5_000 },
             Assertion::JsonPointerPresent {
@@ -843,10 +867,10 @@ mod tests {
         server.await.expect("server");
 
         assert!(summary.succeeded());
-        assert_eq!(summary.assertions, 16);
+        assert_eq!(summary.assertions, 18);
         assert_eq!(summary.assertion_failures, 0);
         assert_eq!(summary.status_distribution.get(&200), Some(&1));
-        assert_eq!(summary.results[0].assertions, 16);
+        assert_eq!(summary.results[0].assertions, 18);
     }
 
     #[test]
