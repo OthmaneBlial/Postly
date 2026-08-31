@@ -305,6 +305,7 @@ pub struct HttpEngine {
     cookie_jar: Arc<PersistentCookieJar>,
     oauth_tokens: Arc<Mutex<HashMap<OAuthTokenKey, CachedOAuthToken>>>,
     max_response_bytes: usize,
+    options: EngineOptions,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -856,113 +857,137 @@ fn format_xml(text: &str) -> Option<String> {
     String::from_utf8(writer.into_inner()).ok()
 }
 
-impl HttpEngine {
-    pub fn new(options: &EngineOptions) -> Result<Self, HttpError> {
-        let cookie_jar = Arc::new(PersistentCookieJar::load(options.cookie_jar.as_deref())?);
-        let ca_cert_path = options
-            .ca_cert
-            .as_deref()
-            .map(|path| path.display().to_string());
-        let client_identity_path = options
-            .client_identity
-            .as_deref()
-            .map(|path| path.display().to_string());
-        let uses_pkcs12_identity = options
-            .client_identity
-            .as_deref()
-            .is_some_and(is_pkcs12_identity_path);
-        let mut builder = Client::builder()
-            .timeout(options.timeout)
-            .danger_accept_invalid_certs(options.accept_invalid_certs)
-            .redirect(if options.max_redirects == 0 {
-                reqwest::redirect::Policy::none()
-            } else {
-                reqwest::redirect::Policy::limited(options.max_redirects)
-            })
-            .cookie_provider(Arc::clone(&cookie_jar));
-        if uses_pkcs12_identity {
-            builder = builder.use_native_tls();
+fn build_http_client(
+    options: &EngineOptions,
+    cookie_jar: Option<Arc<PersistentCookieJar>>,
+) -> Result<Client, HttpError> {
+    let ca_cert_path = options
+        .ca_cert
+        .as_deref()
+        .map(|path| path.display().to_string());
+    let client_identity_path = options
+        .client_identity
+        .as_deref()
+        .map(|path| path.display().to_string());
+    let uses_pkcs12_identity = options
+        .client_identity
+        .as_deref()
+        .is_some_and(is_pkcs12_identity_path);
+    let mut builder = Client::builder()
+        .timeout(options.timeout)
+        .danger_accept_invalid_certs(options.accept_invalid_certs)
+        .redirect(if options.max_redirects == 0 {
+            reqwest::redirect::Policy::none()
         } else {
-            builder = builder.use_rustls_tls();
-        }
-        if let Some(proxy) = options.proxy.as_deref() {
-            let no_proxy = options
-                .no_proxy
-                .as_deref()
-                .and_then(reqwest::NoProxy::from_string);
-            builder = builder.proxy(
-                reqwest::Proxy::all(proxy)
-                    .map_err(HttpError::Proxy)?
-                    .no_proxy(no_proxy),
-            );
-        }
-        if let Some(path) = options.ca_cert.as_deref() {
-            let path_display = path.display().to_string();
-            let pem = fs::read(path).map_err(|source| HttpError::CaCertificateFile {
+            reqwest::redirect::Policy::limited(options.max_redirects)
+        });
+    if let Some(cookie_jar) = cookie_jar {
+        builder = builder.cookie_provider(cookie_jar);
+    }
+    if uses_pkcs12_identity {
+        builder = builder.use_native_tls();
+    } else {
+        builder = builder.use_rustls_tls();
+    }
+    if let Some(proxy) = options.proxy.as_deref() {
+        let no_proxy = options
+            .no_proxy
+            .as_deref()
+            .and_then(reqwest::NoProxy::from_string);
+        builder = builder.proxy(
+            reqwest::Proxy::all(proxy)
+                .map_err(HttpError::Proxy)?
+                .no_proxy(no_proxy),
+        );
+    }
+    if let Some(path) = options.ca_cert.as_deref() {
+        let path_display = path.display().to_string();
+        let pem = fs::read(path).map_err(|source| HttpError::CaCertificateFile {
+            path: path_display.clone(),
+            source,
+        })?;
+        let certificates = reqwest::Certificate::from_pem_bundle(&pem).map_err(|source| {
+            HttpError::CaCertificate {
                 path: path_display.clone(),
                 source,
-            })?;
-            let certificates = reqwest::Certificate::from_pem_bundle(&pem).map_err(|source| {
-                HttpError::CaCertificate {
+            }
+        })?;
+        if certificates.is_empty() {
+            return Err(HttpError::CaCertificateEmpty { path: path_display });
+        }
+        for certificate in certificates {
+            builder = builder.add_root_certificate(certificate);
+        }
+    }
+    if let Some(path) = options.client_identity.as_deref() {
+        let path_display = path.display().to_string();
+        let pem = fs::read(path).map_err(|source| HttpError::ClientIdentityFile {
+            path: path_display.clone(),
+            source,
+        })?;
+        let identity = if uses_pkcs12_identity {
+            let passphrase = options
+                .client_identity_passphrase
+                .as_deref()
+                .ok_or_else(|| HttpError::ClientIdentityPassphraseRequired {
+                    path: path_display.clone(),
+                })?;
+            reqwest::Identity::from_pkcs12_der(&pem, passphrase).map_err(|source| {
+                HttpError::ClientIdentityPassphrase {
                     path: path_display.clone(),
                     source,
                 }
-            })?;
-            if certificates.is_empty() {
-                return Err(HttpError::CaCertificateEmpty { path: path_display });
+            })?
+        } else {
+            if options.client_identity_passphrase.is_some() {
+                return Err(HttpError::ClientIdentityPassphraseUnsupported { path: path_display });
             }
-            for certificate in certificates {
-                builder = builder.add_root_certificate(certificate);
-            }
-        }
-        if let Some(path) = options.client_identity.as_deref() {
-            let path_display = path.display().to_string();
-            let pem = fs::read(path).map_err(|source| HttpError::ClientIdentityFile {
-                path: path_display.clone(),
+            reqwest::Identity::from_pem(&pem).map_err(|source| HttpError::ClientIdentity {
+                path: path_display,
                 source,
-            })?;
-            let identity = if uses_pkcs12_identity {
-                let passphrase =
-                    options
-                        .client_identity_passphrase
-                        .as_deref()
-                        .ok_or_else(|| HttpError::ClientIdentityPassphraseRequired {
-                            path: path_display.clone(),
-                        })?;
-                reqwest::Identity::from_pkcs12_der(&pem, passphrase).map_err(|source| {
-                    HttpError::ClientIdentityPassphrase {
-                        path: path_display.clone(),
-                        source,
-                    }
-                })?
-            } else {
-                if options.client_identity_passphrase.is_some() {
-                    return Err(HttpError::ClientIdentityPassphraseUnsupported {
-                        path: path_display,
-                    });
-                }
-                reqwest::Identity::from_pem(&pem).map_err(|source| HttpError::ClientIdentity {
-                    path: path_display,
-                    source,
-                })?
-            };
-            builder = builder.identity(identity);
+            })?
+        };
+        builder = builder.identity(identity);
+    }
+    builder.build().map_err(|source| {
+        if let Some(path) = client_identity_path {
+            HttpError::ClientIdentity { path, source }
+        } else if let Some(path) = ca_cert_path {
+            HttpError::CaCertificate { path, source }
+        } else {
+            HttpError::Client(source)
         }
-        let client = builder.build().map_err(|source| {
-            if let Some(path) = client_identity_path {
-                HttpError::ClientIdentity { path, source }
-            } else if let Some(path) = ca_cert_path {
-                HttpError::CaCertificate { path, source }
-            } else {
-                HttpError::Client(source)
-            }
-        })?;
+    })
+}
+
+impl HttpEngine {
+    pub fn new(options: &EngineOptions) -> Result<Self, HttpError> {
+        let cookie_jar = Arc::new(PersistentCookieJar::load(options.cookie_jar.as_deref())?);
+        let client = build_http_client(options, Some(Arc::clone(&cookie_jar)))?;
         Ok(Self {
             client,
             cookie_jar,
             oauth_tokens: Arc::new(Mutex::new(HashMap::new())),
             max_response_bytes: options.max_response_bytes,
+            options: options.clone(),
         })
+    }
+
+    fn client_for_request(&self, request: &Request) -> Result<Client, HttpError> {
+        let Some(settings) = request.transport.as_ref() else {
+            return Ok(self.client.clone());
+        };
+        let mut options = self.options.clone();
+        if settings.follow_redirects == Some(false) {
+            options.max_redirects = 0;
+        } else if let Some(max_redirects) = settings.max_redirects {
+            options.max_redirects = max_redirects;
+        }
+        if options.max_redirects == self.options.max_redirects && !settings.disable_cookies {
+            return Ok(self.client.clone());
+        }
+        let cookie_jar = (!settings.disable_cookies).then(|| Arc::clone(&self.cookie_jar));
+        build_http_client(&options, cookie_jar)
     }
 
     /// Add a manually-authored cookie to the jar for a URL.
@@ -1048,8 +1073,9 @@ impl HttpEngine {
     where
         F: Fn(&OAuthDeviceCodePrompt) + Send + Sync,
     {
+        let client = self.client_for_request(request)?;
         let builder = self
-            .prepare_builder_with_device_code_prompt(request, context, &on_device_code)
+            .prepare_builder_with_device_code_prompt(&client, request, context, &on_device_code)
             .await?;
         let started = std::time::Instant::now();
         let mut http_request = builder.build().map_err(HttpError::Request)?;
@@ -1064,8 +1090,7 @@ impl HttpEngine {
             None
         };
         let exchange_started = std::time::Instant::now();
-        let mut response = self
-            .client
+        let mut response = client
             .execute(http_request)
             .await
             .map_err(HttpError::Request)?;
@@ -1086,8 +1111,7 @@ impl HttpEngine {
                     retry_request
                         .headers_mut()
                         .insert(HeaderName::from_static("authorization"), value);
-                    response = self
-                        .client
+                    response = client
                         .execute(retry_request)
                         .await
                         .map_err(HttpError::Request)?;
@@ -1275,13 +1299,13 @@ impl HttpEngine {
         request: &Request,
         context: &VariableContext,
     ) -> Result<HttpStreamResponse, HttpError> {
+        let client = self.client_for_request(request)?;
         let builder = self
-            .prepare_builder_with_device_code_prompt(request, context, &|_| {})
+            .prepare_builder_with_device_code_prompt(&client, request, context, &|_| {})
             .await?;
         let mut http_request = builder.build().map_err(HttpError::Request)?;
         sign_aws_request(&mut http_request, &request.auth, context)?;
-        let response = self
-            .client
+        let response = client
             .execute(http_request)
             .await
             .map_err(HttpError::Request)?;
@@ -1757,6 +1781,7 @@ impl HttpEngine {
 
     async fn prepare_builder_with_device_code_prompt(
         &self,
+        client: &Client,
         request: &Request,
         context: &VariableContext,
         on_device_code: &dyn Fn(&OAuthDeviceCodePrompt),
@@ -1792,7 +1817,7 @@ impl HttpEngine {
 
         let method = Method::from_bytes(request.method.as_bytes())
             .map_err(|_| HttpError::InvalidMethod(request.method.clone()))?;
-        let mut builder = self.client.request(method, url.clone());
+        let mut builder = client.request(method, url.clone());
         for header in request.headers.iter().filter(|header| header.enabled) {
             let name = context.resolve(&header.key).value;
             let value = context.resolve(&header.value).value;
@@ -3094,7 +3119,7 @@ fn resolve_json_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::KeyValue;
+    use crate::model::{KeyValue, RequestTransportSettings};
     use std::{
         io::{Cursor, Write},
         process::Command,
@@ -4160,6 +4185,37 @@ mod tests {
             .expect("stopped redirect response");
         server.await.expect("non-redirecting server");
         assert_eq!(response.status, 302);
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("connection");
+            assert!(read_request_headers(&mut socket)
+                .await
+                .contains("GET /start HTTP/1.1"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nlocation: /final\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await
+                .expect("redirect response");
+        });
+        let mut request = Request::new(
+            "Per-request no redirect",
+            "GET",
+            format!("http://{address}/start"),
+        );
+        request.transport = Some(RequestTransportSettings {
+            follow_redirects: Some(false),
+            ..RequestTransportSettings::default()
+        });
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("default engine");
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("per-request redirect response");
+        server.await.expect("per-request redirect server");
+        assert_eq!(response.status, 302);
     }
 
     #[test]
@@ -4547,6 +4603,59 @@ mod tests {
         assert_eq!(second_response.status, 200);
         assert!(second_response.cookies.is_empty());
         server.await.expect("server");
+    }
+
+    #[tokio::test]
+    async fn disables_the_cookie_jar_for_one_request() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("listener");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.expect("first connection");
+            let first_request = read_request_headers(&mut first).await;
+            assert!(first_request.contains("GET /login HTTP/1.1"));
+            first
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nset-cookie: session=abc; Path=/\r\nconnection: close\r\n\r\n",
+                )
+                .await
+                .expect("first response");
+            drop(first);
+
+            let (mut second, _) = listener.accept().await.expect("second connection");
+            let second_request = read_request_headers(&mut second).await;
+            assert!(!second_request.to_ascii_lowercase().contains("cookie:"));
+            second
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                )
+                .await
+                .expect("second response");
+        });
+
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let login = Request::new("Login", "GET", format!("http://{address}/login"));
+        engine
+            .execute(&login, &VariableContext::default())
+            .await
+            .expect("login response");
+
+        let mut request = Request::new("No cookies", "GET", format!("http://{address}/next"));
+        request.transport = Some(RequestTransportSettings {
+            disable_cookies: true,
+            ..RequestTransportSettings::default()
+        });
+        let response = engine
+            .execute(&request, &VariableContext::default())
+            .await
+            .expect("cookie-disabled response");
+        server.await.expect("cookie-disabled server");
+        assert_eq!(response.status, 204);
+        assert_eq!(
+            engine
+                .cookie_header(&format!("http://{address}/next"))
+                .expect("stored cookie"),
+            Some("session=abc".to_owned())
+        );
     }
 
     #[test]

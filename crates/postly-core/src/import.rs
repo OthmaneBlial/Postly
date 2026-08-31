@@ -11,7 +11,8 @@ use thiserror::Error;
 use crate::{
     model::{
         ApiKeyLocation, Auth, Collection, Environment, EnvironmentVariable, HeaderEntry, KeyValue,
-        MultipartPart, Request, RequestBody, ResponseExample, ResponseExampleCookie,
+        MultipartPart, Request, RequestBody, RequestTransportSettings, ResponseExample,
+        ResponseExampleCookie,
     },
     secrets::{SecretStore, SecretStoreError},
     storage::{CollectionFiles, Workspace, WorkspaceError, WorkspaceTransaction},
@@ -651,18 +652,22 @@ fn parse_request(
         .find(|header| header.key.eq_ignore_ascii_case("content-type"))
         .map(|header| header.value.as_str());
     request.body = parse_body(name, value.get("body"), request_content_type, report);
+    let (transport, transport_requires_review) =
+        parse_request_transport_settings(value.get("protocolProfileBehavior"), name, report);
+    request.transport = transport;
     let unsupported_fields_require_review = warn_unsupported_request_fields(name, value, report);
     (
         request,
         parsed_auth.requires_review
             || unsupported_fields_require_review
+            || transport_requires_review
             || malformed_entries_require_review,
     )
 }
 
 fn warn_unsupported_request_fields(name: &str, value: &Value, report: &mut ImportReport) -> bool {
     let mut requires_review = false;
-    for field in ["protocolProfileBehavior", "proxy", "certificate"] {
+    for field in ["proxy", "certificate"] {
         let Some(field_value) = value.get(field) else {
             continue;
         };
@@ -687,6 +692,63 @@ fn warn_unsupported_request_fields(name: &str, value: &Value, report: &mut Impor
         requires_review = true;
     }
     requires_review
+}
+
+fn parse_request_transport_settings(
+    value: Option<&Value>,
+    name: &str,
+    report: &mut ImportReport,
+) -> (Option<RequestTransportSettings>, bool) {
+    let Some(value) = value else {
+        return (None, false);
+    };
+    let Some(object) = value.as_object() else {
+        report.warn(format!(
+            "Request {name} has a non-object Postman protocolProfileBehavior; it requires manual review."
+        ));
+        return (None, true);
+    };
+    let mut settings = RequestTransportSettings::default();
+    let mut requires_review = false;
+    for (key, value) in object {
+        match key.as_str() {
+            "followRedirects" => match value.as_bool() {
+                Some(value) => settings.follow_redirects = Some(value),
+                None => {
+                    report.warn(format!(
+                        "Request {name} has a non-boolean Postman followRedirects setting; it requires manual review."
+                    ));
+                    requires_review = true;
+                }
+            },
+            "maxRedirects" => match value.as_u64().and_then(|value| usize::try_from(value).ok()) {
+                Some(value) => settings.max_redirects = Some(value),
+                None => {
+                    report.warn(format!(
+                        "Request {name} has an invalid Postman maxRedirects setting; it requires manual review."
+                    ));
+                    requires_review = true;
+                }
+            },
+            "disableCookies" => match value.as_bool() {
+                Some(value) => settings.disable_cookies = value,
+                None => {
+                    report.warn(format!(
+                        "Request {name} has a non-boolean Postman disableCookies setting; it requires manual review."
+                    ));
+                    requires_review = true;
+                }
+            },
+            other => {
+                report.warn(format!(
+                    "Request {name} contains unsupported Postman protocolProfileBehavior field {other}; it requires manual review."
+                ));
+                requires_review = true;
+            }
+        }
+    }
+    let settings = (!settings.is_empty()).then_some(settings);
+    (settings, requires_review)
 }
 
 fn has_meaningful_value(value: &Value) -> bool {
@@ -1649,18 +1711,25 @@ mod tests {
             "url": "https://api.example.test/users",
             "protocolProfileBehavior": {
                 "followRedirects": false,
-                "disableCookies": true
+                "disableCookies": true,
+                "strictSSL": true
             },
             "proxy": { "host": "127.0.0.1", "port": 8080 },
             "certificate": { "matches": ["api.example.test"] }
         });
-        let (_, needs_review) = parse_request("Transport settings", &value, None, &mut report);
+        let (request, needs_review) =
+            parse_request("Transport settings", &value, None, &mut report);
         assert!(needs_review);
-        assert!(report
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("protocolProfileBehavior")
-                && warning.contains("disableCookies, followRedirects")));
+        assert_eq!(
+            request.transport,
+            Some(RequestTransportSettings {
+                follow_redirects: Some(false),
+                max_redirects: None,
+                disable_cookies: true,
+            })
+        );
+        assert!(report.warnings.iter().any(|warning| warning
+            .contains("unsupported Postman protocolProfileBehavior field strictSSL")));
         assert!(report
             .warnings
             .iter()
@@ -1985,6 +2054,14 @@ TOKEN='last value'
                 ..
             }
         ));
+        assert_eq!(
+            search.1.transport,
+            Some(RequestTransportSettings {
+                follow_redirects: Some(false),
+                max_redirects: Some(0),
+                disable_cookies: true,
+            })
+        );
         assert!(matches!(&search.1.body, RequestBody::FormUrlEncoded { .. }));
         assert_eq!(search.1.examples.len(), 1);
         assert_eq!(search.1.examples[0].cookies.len(), 1);

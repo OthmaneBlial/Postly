@@ -211,6 +211,12 @@ fn postman_item(request: &Request) -> Result<Value, ExportError> {
     if let Some(auth) = postman_auth(&request.auth) {
         request_value.insert("auth".to_owned(), auth);
     }
+    if let Some(transport) = &request.transport {
+        let profile = postman_protocol_profile_behavior(transport);
+        if !profile.is_empty() {
+            request_value.insert("protocolProfileBehavior".to_owned(), Value::Object(profile));
+        }
+    }
     if !request.cookies.is_empty() {
         request_value.insert(
             "cookie".to_owned(),
@@ -327,6 +333,22 @@ fn postman_response_cookie(cookie: &ResponseExampleCookie) -> Value {
         value.insert("maxAge".to_owned(), json!(max_age_seconds));
     }
     Value::Object(value)
+}
+
+fn postman_protocol_profile_behavior(
+    settings: &crate::model::RequestTransportSettings,
+) -> Map<String, Value> {
+    let mut profile = Map::new();
+    if let Some(follow_redirects) = settings.follow_redirects {
+        profile.insert("followRedirects".to_owned(), json!(follow_redirects));
+    }
+    if let Some(max_redirects) = settings.max_redirects {
+        profile.insert("maxRedirects".to_owned(), json!(max_redirects));
+    }
+    if settings.disable_cookies {
+        profile.insert("disableCookies".to_owned(), json!(true));
+    }
+    profile
 }
 
 fn body_value(body: &RequestBody) -> Result<Option<Value>, ExportError> {
@@ -585,7 +607,9 @@ mod tests {
     use super::*;
     use crate::{
         import_postman_collection,
-        model::{HeaderEntry, KeyValue, ResponseExample, ResponseExampleCookie},
+        model::{
+            HeaderEntry, KeyValue, RequestTransportSettings, ResponseExample, ResponseExampleCookie,
+        },
         Auth, Collection, EnvironmentVariable, SecretStore,
     };
 
@@ -619,6 +643,11 @@ mod tests {
         request.auth = Auth::Bearer {
             token: "{{token}}".to_owned(),
         };
+        request.transport = Some(RequestTransportSettings {
+            follow_redirects: Some(false),
+            max_redirects: Some(0),
+            disable_cookies: true,
+        });
         request.pre_request_script = Some("pm.variables.set('ready', 'yes');".to_owned());
         request.test_script = Some("pm.test('created', function () {});".to_owned());
         request.examples.push(ResponseExample {
@@ -662,6 +691,21 @@ mod tests {
             "bearer"
         );
         assert_eq!(
+            document["item"][0]["item"][0]["item"][0]["request"]["protocolProfileBehavior"]
+                ["followRedirects"],
+            false
+        );
+        assert_eq!(
+            document["item"][0]["item"][0]["item"][0]["request"]["protocolProfileBehavior"]
+                ["maxRedirects"],
+            0
+        );
+        assert_eq!(
+            document["item"][0]["item"][0]["item"][0]["request"]["protocolProfileBehavior"]
+                ["disableCookies"],
+            true
+        );
+        assert_eq!(
             document["item"][0]["item"][0]["item"][0]["request"]["cookie"][0]["key"],
             "session"
         );
@@ -697,6 +741,14 @@ mod tests {
             RequestBody::Json { .. }
         ));
         assert!(matches!(imported_requests[0].1.auth, Auth::Bearer { .. }));
+        assert_eq!(
+            imported_requests[0].1.transport,
+            Some(RequestTransportSettings {
+                follow_redirects: Some(false),
+                max_redirects: Some(0),
+                disable_cookies: true,
+            })
+        );
         assert_eq!(imported_requests[0].1.cookies[0].key, "session");
         assert_eq!(
             imported_requests[0].1.examples[0].cookies[0].name,

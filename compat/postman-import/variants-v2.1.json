@@ -14,6 +14,11 @@
           "name": "Search users",
           "request": {
             "method": "GET",
+            "protocolProfileBehavior": {
+              "followRedirects": false,
+              "maxRedirects": 0,
+              "disableCookies": true
+            },
             "url": {
               "protocol": "https",
               "host": ["api", "example", "test"],

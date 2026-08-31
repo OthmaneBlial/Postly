@@ -127,6 +127,11 @@ pub struct Request {
     /// old request files remain compact and fully backward-compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grpc: Option<GrpcRequest>,
+    /// Per-request HTTP behavior imported from Postman's
+    /// `protocolProfileBehavior`. Workspace transport settings remain the
+    /// defaults when this is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<RequestTransportSettings>,
     #[serde(default)]
     pub folder: Option<String>,
     #[serde(default)]
@@ -164,6 +169,7 @@ impl Request {
             method: method.into(),
             url: url.into(),
             grpc: None,
+            transport: None,
             folder: None,
             description: None,
             query: Vec::new(),
@@ -177,6 +183,24 @@ impl Request {
             examples: Vec::new(),
             assertions: Vec::new(),
         }
+    }
+}
+
+/// HTTP behavior that can be applied to one saved request without changing
+/// the workspace-wide transport defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RequestTransportSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_redirects: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_redirects: Option<usize>,
+    #[serde(default)]
+    pub disable_cookies: bool,
+}
+
+impl RequestTransportSettings {
+    pub fn is_empty(&self) -> bool {
+        self.follow_redirects.is_none() && self.max_redirects.is_none() && !self.disable_cookies
     }
 }
 

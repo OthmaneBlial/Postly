@@ -32,11 +32,15 @@ Implemented:
   headers, with a dedicated regression covering every entry type.
 - Postman imports now preserve scalar environment values (including numeric and
   boolean values with `currentValue`/`initialValue` fallbacks), and report
-  request-level `protocolProfileBehavior`, proxy/certificate settings and
+  unsupported request-level `protocolProfileBehavior`, proxy/certificate settings and
   response-example `originalRequest` data as explicit manual-review gaps
   instead of silently dropping them. Malformed header, query, cookie and
   urlencoded entries are also reported with deterministic request-level review
   status.
+- The supported Postman `protocolProfileBehavior` subset now round-trips and
+  executes per request: redirect following/limits and cookie-jar disabling are
+  applied by the shared HTTP engine, runner and GUI sends; unknown profile keys
+  remain explicit manual-review warnings.
 - `postly import environment --secure` now moves Postman environment entries
   marked `secret` into the OS credential store and persists only opaque
   workspace-scoped references; the default import warns when those values stay
@@ -390,7 +394,7 @@ checked-in targets (`curl_command`, `variables`, `postman_import` and
 `native_workspace`) each completed 256 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`081363769f4fa6a93f471bbd285b6d1b3fd3ffd67bf7058decab4bfb4c44eaa9`.
+`a70a8c00099beff354e980caba68e834dd760541559e34c8eb141dfa47431c68`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
