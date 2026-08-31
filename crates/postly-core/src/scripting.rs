@@ -1142,6 +1142,31 @@ function makeScriptResponse(responseData) {
   decorateHeaders(responseHeaders);
   const responseCookies = responseData.cookies || [];
   decorateCookies(responseCookies);
+  const responseCategories = {
+    ok: () => responseData.status >= 200 && responseData.status < 400,
+    success: () => responseData.status >= 200 && responseData.status < 300,
+    redirection: () => responseData.status >= 300 && responseData.status < 400,
+    clientError: () => responseData.status >= 400 && responseData.status < 500,
+    serverError: () => responseData.status >= 500 && responseData.status < 600,
+    error: () => responseData.status >= 400,
+    withBody: () => responseData.body_text.length > 0
+  };
+  const makeResponseCategories = (negated) => {
+    const categories = {};
+    Object.entries(responseCategories).forEach(([name, predicate]) => {
+      Object.defineProperty(categories, name, {
+        get: () => {
+          const matches = predicate();
+          assert(
+            negated ? !matches : matches,
+            "expected response to" + (negated ? " not" : "") + " be " + name
+          );
+          return true;
+        }
+      });
+    });
+    return categories;
+  };
   const responseTo = {
     have: {
       status: (expected) => assert(responseData.status === expected, "expected status " + responseData.status + " to equal " + expected),
@@ -1165,16 +1190,13 @@ function makeScriptResponse(responseData) {
       }
     }
   };
-  Object.defineProperty(responseTo, "be", {
+  Object.defineProperty(responseTo, "be", { value: makeResponseCategories(false) });
+  Object.defineProperty(responseTo, "not", {
     value: {
-      get ok() {
-        assert(responseData.status >= 200 && responseData.status < 400, "expected response to be ok");
-        return true;
+      have: {
+        status: (expected) => assert(responseData.status !== expected, "expected status " + responseData.status + " not to equal " + expected)
       },
-      get withBody() {
-        assert(responseData.body_text.length > 0, "expected response to have a body");
-        return true;
-      }
+      be: makeResponseCategories(true)
     }
   });
   return {
@@ -1947,6 +1969,11 @@ mod tests {
                 });
                 pm.test("common matchers", function () {
                     pm.response.to.be.ok;
+                    pm.response.to.be.success;
+                    pm.response.to.not.be.redirection;
+                    pm.response.to.not.be.clientError;
+                    pm.response.to.not.be.serverError;
+                    pm.response.to.not.be.error;
                     pm.response.to.be.withBody;
                     pm.response.to.have.header("content-type");
                     pm.response.to.have.header("content-type", /json/);
@@ -1973,6 +2000,80 @@ mod tests {
         assert!(result.tests[2].passed);
         assert!(result.tests[3].passed, "{:?}", result.tests[3].error);
         assert_eq!(result.request["name"], "Scripted");
+    }
+
+    #[test]
+    fn supports_postman_response_status_categories() {
+        if Command::new("node").arg("--version").output().is_err() {
+            return;
+        }
+        let request = Request::new("Status categories", "GET", "https://example.test");
+        let response = HttpResponse {
+            status: 302,
+            status_text: "Found".to_owned(),
+            headers: Vec::new(),
+            cookies: Vec::new(),
+            body: Vec::new(),
+            response_size: 0,
+            content_type: None,
+            duration_ms: 1,
+            protocol: "HTTP/1.1".to_owned(),
+            url: "https://example.test".to_owned(),
+        };
+        let result = run_script(
+            r#"
+                pm.test("redirection", function () {
+                    pm.response.to.be.redirection;
+                    pm.response.to.not.be.success;
+                    pm.response.to.not.be.error;
+                });
+            "#,
+            &request,
+            Some(&response),
+            &VariableContext::default(),
+        )
+        .expect("redirection script");
+        assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+
+        let response = HttpResponse {
+            status: 503,
+            status_text: "Service Unavailable".to_owned(),
+            ..response
+        };
+        let result = run_script(
+            r#"
+                pm.test("server error", function () {
+                    pm.response.to.be.serverError;
+                    pm.response.to.be.error;
+                    pm.response.to.not.be.clientError;
+                });
+            "#,
+            &request,
+            Some(&response),
+            &VariableContext::default(),
+        )
+        .expect("server error script");
+        assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+
+        let response = HttpResponse {
+            status: 404,
+            status_text: "Not Found".to_owned(),
+            ..response
+        };
+        let result = run_script(
+            r#"
+                pm.test("client error", function () {
+                    pm.response.to.be.clientError;
+                    pm.response.to.be.error;
+                    pm.response.to.not.be.serverError;
+                });
+            "#,
+            &request,
+            Some(&response),
+            &VariableContext::default(),
+        )
+        .expect("client error script");
+        assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
     }
 
     #[test]

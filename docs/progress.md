@@ -82,7 +82,7 @@ Implemented:
   callbacks remain available while filesystem, child-process, worker and addon
   permissions stay disabled by default; the VM is still not a hostile-code
   sandbox.
-- Common response assertions now cover headers, cookies, status health, numeric/type/regex and negated expectations.
+- Common response assertions now cover headers, cookies, status health/categories, numeric/type/regex and negated expectations.
 - The Node bridge now tests a broader explicit expectation subset including
   stable deep equality, keys, length, oneOf, empty and numeric range matchers;
   broad Chai/Postman parity remains intentionally partial.

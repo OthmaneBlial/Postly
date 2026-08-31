@@ -38,9 +38,9 @@ The supported compatibility slice includes:
   URL query parameters, headers, raw/urlencoded/form-data/GraphQL bodies and
   response text/JSON; file bodies remain rejected explicitly
 - `pm.test` and `pm.expect` equality, inclusion, property, boolean, numeric, type, regex and negated checks
-- `pm.response.to.be.ok/withBody`, response header checks with optional value
-  matching, `jsonBody` path checks, header/cookie `toObject` helpers and
-  `pm.response.cookies.get/has`
+- `pm.response.to.be.ok/success/redirection/clientError/serverError/error/withBody`,
+  response header checks with optional value matching, `jsonBody` path checks,
+  header/cookie `toObject` helpers and `pm.response.cookies.get/has`
 - `console.log`, `console.warn` and `console.error` capture
 
 The tested expectation subset also includes deep equality with stable object-key
