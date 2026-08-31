@@ -33,7 +33,8 @@ The supported compatibility slice includes:
 - `pm.iterationData.get/has/replaceIn` (read-only)
 - `pm.variables.get/set/unset/has/clear/replaceIn`, including iteration data precedence
 - `pm.request` URL, method, headers, cookies and Postman-shaped body facades;
-  URL protocol/host/port/path/hash metadata, read-only path variables and
+  URL protocol/host/port/path/hash metadata, path variables with
+  `get/has/all/count/each/toObject/add/upsert/replace/remove/clear` helpers and
   query strings plus query-list mutations are converted back to
   the native request model; request headers/cookies/query lists expose bounded
   `get`, `has`, `all`, `count`, `each`, `toObject` and mutation helpers;

@@ -875,9 +875,9 @@ function postmanBodyToNative(body) {
 
 function makeUrlFacade(rawValue, structuredQuery) {
   const raw = text(rawValue);
+  const variablePattern = /\{\{\s*([^}]+?)\s*\}\}/g;
   const variableNames = [];
   const seenVariables = new Set();
-  const variablePattern = /\{\{\s*([^}]+?)\s*\}\}/g;
   let variableMatch;
   while ((variableMatch = variablePattern.exec(raw)) !== null) {
     const key = text(variableMatch[1]).trim();
@@ -886,28 +886,51 @@ function makeUrlFacade(rawValue, structuredQuery) {
       variableNames.push(key);
     }
   }
-  const variables = variableNames.map((key) => ({
+  let variableDirty = false;
+  const variables = decorateKeyValueList(variableNames.map((key) => ({
     key,
     value: text(visibleGet(key)),
     enabled: true
+  })), (entry) => ({
+    key: text(entry && (entry.key || entry.name)),
+    value: text(entry && entry.value),
+    enabled: entry && entry.disabled !== true && entry.enabled !== false
+  }), () => { variableDirty = true; });
+  const initialVariableState = variables.map((entry) => ({
+    key: text(entry.key), value: text(entry.value), enabled: entry.enabled !== false
   }));
-  const decorateReadOnlyList = (list) => {
-    const keyOf = (entry) => text(entry && entry.key);
-    list.get = (key) => list.find((entry) => keyOf(entry) === text(key));
-    list.has = (key) => list.get(key) !== undefined;
-    list.all = () => list.slice();
-    list.count = () => list.length;
-    list.each = (callback) => list.forEach(callback);
-    list.toObject = () => list.reduce((object, entry) => {
-      if (entry && entry.key) object[entry.key] = text(entry.value);
-      return object;
-    }, {});
-    return list;
+  const hasVariableChanges = () => variableDirty
+    || variables.length !== initialVariableState.length
+    || variables.some((entry, index) => {
+      const initial = initialVariableState[index];
+      return !initial
+        || text(entry && entry.key) !== initial.key
+        || text(entry && entry.value) !== initial.value
+        || (entry && entry.enabled !== false) !== initial.enabled;
+    });
+  const variableEntry = (key) => variables.find((entry) =>
+    entry && text(entry.key).toLowerCase() === text(key).toLowerCase());
+  variables.upsert = (entry) => {
+    const key = text(entry && (entry.key || entry.name)).trim();
+    if (!key) return;
+    const found = variableEntry(key);
+    if (found) {
+      found.value = text(entry.value);
+      found.enabled = entry.disabled !== true && entry.enabled !== false;
+      variableDirty = true;
+    } else {
+      variables.add(entry);
+    }
   };
-  const url = { raw, query: [], variables: decorateReadOnlyList(variables) };
+  variables.replace = (key, value) => variables.upsert({ key, value });
+  const url = { raw, query: [], variables };
   const usesStructuredQuery = Array.isArray(structuredQuery) && structuredQuery.length > 0;
   let queryDirty = false;
-  const resolvedUrl = () => replaceIn(url.raw);
+  const resolvedUrl = () => text(url.raw).replace(variablePattern, (_, key) => {
+    const found = variableEntry(key.trim());
+    if (found && found.enabled !== false && found.disabled !== true) return text(found.value);
+    return replaceIn("{{" + key + "}}");
+  });
   const parsedUrl = () => {
     try { return new URL(resolvedUrl()); } catch (_) { return null; }
   };
@@ -954,7 +977,7 @@ function makeUrlFacade(rawValue, structuredQuery) {
   refreshQuery();
   url.query = query;
   Object.defineProperties(url, {
-    toString: { value: () => (usesStructuredQuery || queryDirty) ? serializeQuery() : text(url.raw) },
+    toString: { value: () => (usesStructuredQuery || queryDirty || hasVariableChanges()) ? serializeQuery() : text(url.raw) },
     getPath: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.pathname : text(url.raw).split("?")[0]; } },
     getHost: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.hostname : undefined; } },
     getProtocol: { value: () => { const parsed = parsedUrl(); return parsed ? parsed.protocol.replace(/:$/, "") : undefined; } },
@@ -973,7 +996,8 @@ function makeUrlFacade(rawValue, structuredQuery) {
     path: { get: () => { const parsed = parsedUrl(); return parsed ? parsed.pathname.split("/").filter(Boolean) : []; } },
     variable: { get: () => url.variables },
     _usesStructuredQuery: { value: usesStructuredQuery, enumerable: false },
-    _queryDirty: { get: () => queryDirty, enumerable: false }
+    _queryDirty: { get: () => queryDirty, enumerable: false },
+    _variableDirty: { get: () => hasVariableChanges(), enumerable: false }
   });
   return url;
 }
@@ -1087,7 +1111,7 @@ function serializeRequest() {
   const serialized = { ...request };
   if (request.url && typeof request.url === "object" && Array.isArray(request.url.query)
       && (request.url._usesStructuredQuery || request.url._queryDirty)) {
-    const rawUrl = text(request.url.raw);
+    const rawUrl = request.url._variableDirty ? request.url.toString() : text(request.url.raw);
     const fragmentIndex = rawUrl.indexOf("#");
     const fragment = fragmentIndex >= 0 ? rawUrl.slice(fragmentIndex) : "";
     serialized.url = rawUrl.split("?")[0] + fragment;
@@ -2228,7 +2252,7 @@ mod tests {
     }
 
     #[test]
-    fn exposes_postman_url_metadata_and_read_only_path_variables() {
+    fn exposes_postman_url_metadata_and_mutable_path_variables() {
         if Command::new("node").arg("--version").output().is_err() {
             return;
         }
@@ -2253,6 +2277,11 @@ mod tests {
                     pm.expect(pm.request.url.variables.get("userId").value).to.eql("42");
                     pm.expect(pm.request.url.variable.toObject()).to.eql({ userId: "42" });
                 });
+                pm.request.url.variables.replace("userId", "99");
+                pm.test("path variable mutations materialize", function () {
+                    pm.expect(pm.request.url.variables.get("userId").value).to.eql("99");
+                    pm.expect(pm.request.url.toString()).to.eql("https://api.example.test/users/99?include=profile#details");
+                });
             "##,
             &request,
             None,
@@ -2261,6 +2290,16 @@ mod tests {
         .expect("URL metadata script");
 
         assert!(result.tests[0].passed, "{:?}", result.tests[0].error);
+        assert!(result.tests[1].passed, "{:?}", result.tests[1].error);
+        let mut applied = request.clone();
+        let mut applied_context = context.clone();
+        result
+            .apply(&mut applied, &mut applied_context)
+            .expect("apply URL variable mutation");
+        assert_eq!(
+            applied.url,
+            "https://api.example.test/users/99?include=profile#details"
+        );
     }
 
     #[test]
