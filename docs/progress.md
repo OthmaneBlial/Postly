@@ -322,14 +322,14 @@ targets (`curl_command`, `variables` and `postman_import`) each completed 256
 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`200697122b59f70809ee66639e43da701799e3967f55e07c438e653803ca86ab`.
+`d266771cae22d34cee33e8263213e6da8fcec67949c8ca780b68e35ecf0fd4f6`.
 
 The same release build includes the local Digest CLI flags and the packaged
 CLI help smoke confirms their presence. It also contains the bounded Digest
 retry in the opt-in `pm.sendRequest` bridge and runner-provided `pm.info`
-execution metadata plus the request-cookie `pm.cookies` snapshot and iteration
-data object view; the CLI, HTTP core, runner and script loopback tests remain
-covered in the workspace suite.
+execution metadata plus the request-cookie `pm.cookies` snapshot, iteration data
+object view and bounded JSON Schema assertions; the CLI, HTTP core, runner and
+script loopback tests remain covered in the workspace suite.
 
 ## Next highest-value work
 
