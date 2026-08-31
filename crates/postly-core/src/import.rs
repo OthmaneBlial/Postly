@@ -526,11 +526,20 @@ fn parse_request(
     if let Some(url_object) = value.get("url").and_then(Value::as_object) {
         request.query = parse_pairs(url_object.get("query"));
         if !request.query.is_empty() {
-            request.url = request
+            let (without_fragment, fragment) = request
                 .url
+                .split_once('#')
+                .map_or((request.url.as_str(), ""), |(base, fragment)| {
+                    (base, fragment)
+                });
+            let base = without_fragment
                 .split_once('?')
-                .map(|(base, _)| base.to_owned())
-                .unwrap_or(request.url);
+                .map_or(without_fragment, |(base, _)| base);
+            request.url = if fragment.is_empty() {
+                base.to_owned()
+            } else {
+                format!("{base}#{fragment}")
+            };
         }
     }
     request.description = value.get("description").and_then(description_text);
@@ -614,7 +623,7 @@ fn parse_url(value: Option<&Value>) -> Option<String> {
             let host = match object.get("host")? {
                 Value::Array(host) => host
                     .iter()
-                    .filter_map(Value::as_str)
+                    .filter_map(|part| string_value(Some(part)))
                     .collect::<Vec<_>>()
                     .join("."),
                 Value::String(host) => host.clone(),
@@ -623,20 +632,42 @@ fn parse_url(value: Option<&Value>) -> Option<String> {
             if host.is_empty() {
                 return None;
             }
+            let host = if host.contains(':') && !host.starts_with('[') {
+                format!("[{host}]")
+            } else {
+                host
+            };
             let mut url = format!("{protocol}://{host}");
+            if let Some(port) = object
+                .get("port")
+                .and_then(|port| string_value(Some(port)))
+                .filter(|port| !port.is_empty())
+            {
+                url.push(':');
+                url.push_str(&port);
+            }
             if let Some(path) = object.get("path") {
-                url.push('/');
-                match path {
-                    Value::Array(path) => url.push_str(
-                        &path
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .collect::<Vec<_>>()
-                            .join("/"),
-                    ),
-                    Value::String(path) => url.push_str(path),
-                    _ => {}
+                let path = match path {
+                    Value::Array(path) => path
+                        .iter()
+                        .filter_map(|part| string_value(Some(part)))
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                    Value::String(path) => path.clone(),
+                    _ => String::new(),
+                };
+                if !path.is_empty() {
+                    url.push('/');
+                    url.push_str(path.trim_start_matches('/'));
                 }
+            }
+            if let Some(hash) = object
+                .get("hash")
+                .and_then(|hash| string_value(Some(hash)))
+                .filter(|hash| !hash.is_empty())
+            {
+                url.push('#');
+                url.push_str(hash.trim_start_matches('#'));
             }
             Some(url)
         }
@@ -1481,6 +1512,46 @@ TOKEN='last value'
                 session_token: Some("example-session".to_owned()),
             }
         );
+    }
+
+    #[test]
+    fn imports_postman_structured_url_port_fragment_and_query() {
+        let output = tempfile::tempdir().expect("output");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../compat/postman-import/body-and-url-variants-v2.1.json");
+
+        let report = import_postman_collection(&fixture, output.path()).expect("import");
+        assert_eq!(report.imported_requests, 5);
+        assert_eq!(report.fully_supported_requests, 5);
+        assert_eq!(report.manual_review_requests, 0);
+
+        let workspace = Workspace::open(output.path()).expect("workspace");
+        let collection = workspace.collections().expect("collections").remove(0);
+        let requests = workspace.requests(&collection).expect("requests");
+        let request = requests
+            .iter()
+            .find(|(_, request)| request.name == "Port and fragment")
+            .expect("port and fragment request");
+        assert_eq!(
+            request.1.url,
+            "https://api.example.test:8443/users/42#details"
+        );
+        assert_eq!(request.1.query, vec![KeyValue::enabled("view", "full")]);
+
+        let mut raw_report = ImportReport::default();
+        let raw_value = serde_json::json!({
+            "method": "GET",
+            "url": {
+                "raw": "https://api.example.test/search?old=1#details",
+                "query": [{ "key": "new", "value": "2" }]
+            }
+        });
+        let (raw_request, needs_review) =
+            parse_request("Raw query and fragment", &raw_value, None, &mut raw_report);
+        assert!(!needs_review);
+        assert!(raw_report.warnings.is_empty());
+        assert_eq!(raw_request.url, "https://api.example.test/search#details");
+        assert_eq!(raw_request.query, vec![KeyValue::enabled("new", "2")]);
     }
 
     #[test]

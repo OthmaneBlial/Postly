@@ -77,6 +77,20 @@
           "options": { "raw": { "language": "json" } }
         }
       }
+    },
+    {
+      "name": "Port and fragment",
+      "request": {
+        "method": "GET",
+        "url": {
+          "protocol": "https",
+          "host": ["api", "example", "test"],
+          "port": "8443",
+          "path": ["users", "42"],
+          "query": [{ "key": "view", "value": "full" }],
+          "hash": "details"
+        }
+      }
     }
   ]
 }
