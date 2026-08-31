@@ -572,16 +572,7 @@ fn parse_event_scripts(item: &Value, subject: &str, report: &mut ImportReport) -
     };
     for event in events {
         let listen = event.get("listen").and_then(Value::as_str);
-        let script = event
-            .pointer("/script/exec")
-            .and_then(Value::as_array)
-            .map(|lines| {
-                lines
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            });
+        let script = event.pointer("/script/exec").and_then(script_text);
         match (listen, script) {
             (Some("prerequest"), Some(script)) => scripts.pre_request.push(script),
             (Some("test"), Some(script)) => scripts.test.push(script),
@@ -594,6 +585,20 @@ fn parse_event_scripts(item: &Value, subject: &str, report: &mut ImportReport) -
         }
     }
     scripts
+}
+
+fn script_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(script) => Some(script.clone()),
+        Value::Array(lines) => Some(
+            lines
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        _ => None,
+    }
 }
 
 fn parse_url(value: Option<&Value>) -> Option<String> {
@@ -1178,7 +1183,11 @@ mod tests {
             .pre_request_script
             .as_deref()
             .is_some_and(|script| script.contains("collection pre-request")));
-        assert!(list.1.test_script.is_some());
+        assert!(list
+            .1
+            .test_script
+            .as_deref()
+            .is_some_and(|script| script.contains("pm.response.to.have.status(200)")));
         assert!(matches!(list.1.auth, Auth::Bearer { .. }));
     }
 

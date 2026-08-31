@@ -26,7 +26,7 @@ does not guess which variables are sensitive.
 
 The importer preserves collection metadata, folders, request URLs, query parameters, headers (including disabled and scalar values), descriptions, raw/JSON/urlencoded/form-data/file bodies, common auth types including OAuth 2.0 Client Credentials, Authorization Code + PKCE, Refresh Token, Device Code and AWS Signature V4, examples, variables and request-level scripts. Collection variables accept scalar values and the `current` fallback; disabled collection variables are not activated and are reported explicitly. Collection and folder auth is materialized into requests that do not override it, so the imported files retain the effective behavior without depending on a hidden runtime tree. Unsupported auth types and other review-worthy fields are reported and counted for manual review rather than silently discarded.
 
-Collection and folder pre-request/test events are preserved into the native collection/request files in execution order. With `--scripts`, the current local Node.js bridge executes the preserved source and reports basic assertions; without that explicit flag, scripts remain source-only.
+Collection and folder pre-request/test events are preserved into the native collection/request files in execution order, whether Postman exports `script.exec` as a line array or a single source string. With `--scripts`, the current local Node.js bridge executes the preserved source and reports basic assertions; without that explicit flag, scripts remain source-only.
 
 Postly can also export the native collection and environment back to Postman
 JSON:

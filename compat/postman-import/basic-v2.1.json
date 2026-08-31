@@ -29,7 +29,7 @@
           "event": [
             {
               "listen": "test",
-              "script": { "type": "text/javascript", "exec": ["pm.test(\"status is 200\", function () {", "  pm.response.to.have.status(200);", "});"] }
+              "script": { "type": "text/javascript", "exec": "pm.test(\"status is 200\", function () {\n  pm.response.to.have.status(200);\n});" }
             }
           ],
           "request": {
