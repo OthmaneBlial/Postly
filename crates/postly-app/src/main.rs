@@ -551,6 +551,29 @@ fn remove_recovery_snapshot(root: &Path) -> Result<(), String> {
     }
 }
 
+fn open_browser_url(url: &str) -> std::result::Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open")
+        .arg(url)
+        .status()
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .status()
+        .map_err(|error| error.to_string())?;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let status = std::process::Command::new("xdg-open")
+        .arg(url)
+        .status()
+        .map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("browser opener exited with {status}"))
+    }
+}
+
 pub struct PostlyApp {
     workspace: Workspace,
     engine: HttpEngine,
@@ -2428,12 +2451,31 @@ impl PostlyApp {
                             });
                         }
                     }
+                    let use_browser_pkce = matches!(
+                        &request_for_send.auth,
+                        Auth::OAuth2AuthorizationCodePkce { code, .. }
+                            if code.trim().is_empty()
+                    );
                     let response = tokio::select! {
-                        result = engine.execute_with_device_code_prompt(
-                            &request_for_send,
-                            &request_context,
-                            |prompt| { let _ = device_code_sender.send(prompt.clone()); },
-                        ) => {
+                        result = async {
+                            if use_browser_pkce {
+                                engine
+                                    .execute_with_pkce_browser(
+                                        &request_for_send,
+                                        &request_context,
+                                        open_browser_url,
+                                    )
+                                    .await
+                            } else {
+                                engine
+                                    .execute_with_device_code_prompt(
+                                        &request_for_send,
+                                        &request_context,
+                                        |prompt| { let _ = device_code_sender.send(prompt.clone()); },
+                                    )
+                                    .await
+                            }
+                        } => {
                             result.map_err(|error| error.to_string())?
                         }
                         _ = worker_cancellation.cancelled() => {
@@ -4849,7 +4891,7 @@ impl PostlyApp {
             AuthKind::OAuth2AuthorizationCodePkce => {
                 ui.label(
                     RichText::new(
-                        "PKCE uses an explicit browser login: paste the returned code and verifier for the local token exchange.",
+                        "PKCE opens your browser when the code is empty, listens only on the configured loopback redirect, and keeps the verifier in memory. Existing code + verifier values still work for imported requests.",
                     )
                     .small()
                     .color(ui.visuals().weak_text_color()),

@@ -8,7 +8,7 @@ references only when a request runs. Current HTTP authentication includes:
 - Bearer token
 - API key in a header or query parameter
 - OAuth 2.0 Client Credentials
-- OAuth 2.0 Authorization Code + PKCE (explicit/manual code exchange)
+- OAuth 2.0 Authorization Code + PKCE (loopback browser callback or explicit/manual code exchange)
 - OAuth 2.0 Refresh Token
 - OAuth 2.0 Device Authorization Grant (RFC 8628)
 
@@ -36,12 +36,12 @@ secret is imported and exported.
 
 ## OAuth 2.0 Authorization Code + PKCE
 
-Postly supports the token-exchange half of Authorization Code + PKCE. Complete
-the provider login in the browser, then save the returned authorization code,
-redirect URI and PKCE verifier in the request. The local HTTP engine exchanges
-those values at the token endpoint and sends the resulting access token. This
-explicit flow avoids embedding a browser callback server or provider login in
-the desktop client.
+Postly supports a local loopback browser flow as well as an explicit/manual
+code exchange. When the authorization code is empty, the shared HTTP engine
+generates a verifier and state in memory, opens the authorization URL through
+the caller's system browser, validates the loopback callback, and exchanges the
+returned code locally. Imported requests with an existing code and verifier
+continue to use the explicit exchange path.
 
 ```toml
 [auth]
@@ -55,6 +55,29 @@ code_verifier = "{{oauthCodeVerifier}}"
 client_secret = "{{oauthClientSecret}}" # optional for confidential clients
 scope = "read:users"
 ```
+
+For the browser flow, use an HTTP loopback redirect on `localhost`,
+`127.0.0.1`, or `::1` with an explicit port. A port of `0` asks Postly to bind
+an ephemeral local port; the provider must support the resulting loopback URI
+and the redirect URI sent to authorization and token endpoints must be
+registered according to that provider's rules. The callback listener accepts a
+single bounded GET request, checks `state`, and returns a static success or
+failure page without exposing codes or verifiers. The CLI opts in with
+`--oauth-browser`; the GUI opts in automatically when the Authorization code
+field is empty. The verifier, state, authorization code and access token are
+memory-only.
+
+Example CLI invocation:
+
+~~~bash
+postly request https://api.example.test/profile \
+  --oauth-token-url https://auth.example.test/token \
+  --oauth-authorization-url https://auth.example.test/authorize \
+  --oauth-client-id postly-local \
+  --oauth-redirect-uri http://127.0.0.1:0/callback \
+  --oauth-scope read:users \
+  --oauth-browser
+~~~
 
 The PKCE verifier must be 43–128 RFC 7636 unreserved characters. Tokens are
 cached only in memory for the current HTTP engine, keyed to the explicit code

@@ -68,6 +68,7 @@ struct ImmediateRequestOptions {
     oauth_code: Option<String>,
     oauth_code_verifier: Option<String>,
     oauth_refresh_token: Option<String>,
+    oauth_browser: bool,
     timeout: u64,
     proxy: Option<String>,
     no_proxy: Option<String>,
@@ -502,6 +503,7 @@ struct SendOptions<'a> {
     client_identity: Option<&'a Path>,
     insecure: bool,
     output_json: bool,
+    oauth_browser: bool,
 }
 
 struct ExecuteOptions<'a> {
@@ -512,6 +514,7 @@ struct ExecuteOptions<'a> {
     client_identity: Option<&'a Path>,
     insecure: bool,
     cookie_jar: Option<&'a Path>,
+    oauth_browser: bool,
 }
 
 struct NewRequestOptions {
@@ -538,6 +541,7 @@ struct NewRequestOptions {
     oauth_code: Option<String>,
     oauth_code_verifier: Option<String>,
     oauth_refresh_token: Option<String>,
+    oauth_browser: bool,
 }
 
 #[derive(Debug, Default, Args)]
@@ -574,6 +578,8 @@ struct OAuthCliArgs {
     oauth_code_verifier: Option<String>,
     #[arg(long, value_name = "TOKEN", help = "OAuth 2.0 refresh token")]
     oauth_refresh_token: Option<String>,
+    #[arg(long, help = "Open a local browser callback for OAuth 2.0 PKCE")]
+    oauth_browser: bool,
 }
 
 struct HistoryOptions {
@@ -867,6 +873,8 @@ enum Command {
         client_identity: Option<PathBuf>,
         #[arg(long)]
         insecure: bool,
+        #[arg(long, help = "Open a local browser callback for OAuth 2.0 PKCE")]
+        oauth_browser: bool,
     },
     /// Import a Postman collection or environment into a local workspace.
     Import {
@@ -1290,6 +1298,7 @@ async fn main() -> Result<()> {
                 oauth_code: oauth.oauth_code,
                 oauth_code_verifier: oauth.oauth_code_verifier,
                 oauth_refresh_token: oauth.oauth_refresh_token,
+                oauth_browser: oauth.oauth_browser,
             }),
         },
         Command::Request {
@@ -1331,6 +1340,7 @@ async fn main() -> Result<()> {
                 oauth_code: oauth.oauth_code,
                 oauth_code_verifier: oauth.oauth_code_verifier,
                 oauth_refresh_token: oauth.oauth_refresh_token,
+                oauth_browser: oauth.oauth_browser,
                 timeout,
                 proxy,
                 no_proxy,
@@ -1503,6 +1513,7 @@ async fn main() -> Result<()> {
             ca_cert,
             client_identity,
             insecure,
+            oauth_browser,
         } => {
             send_saved_request(SendOptions {
                 file: &file,
@@ -1515,6 +1526,7 @@ async fn main() -> Result<()> {
                 client_identity: client_identity.as_deref(),
                 insecure,
                 output_json,
+                oauth_browser,
             })
             .await
         }
@@ -1962,6 +1974,7 @@ fn create_request(options: NewRequestOptions) -> Result<()> {
             oauth_code: options.oauth_code,
             oauth_code_verifier: options.oauth_code_verifier,
             oauth_refresh_token: options.oauth_refresh_token,
+            oauth_browser: options.oauth_browser,
         },
     )?;
     request.body = parse_cli_body(options.data, options.json_body)?;
@@ -1989,6 +2002,7 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
             oauth_code: options.oauth_code,
             oauth_code_verifier: options.oauth_code_verifier,
             oauth_refresh_token: options.oauth_refresh_token,
+            oauth_browser: options.oauth_browser,
         },
     )?;
     request.body = parse_cli_body(options.data, options.json_body)?;
@@ -2003,6 +2017,7 @@ async fn send_unsaved_request(options: ImmediateRequestOptions) -> Result<()> {
             client_identity: options.client_identity.as_deref(),
             insecure: options.insecure,
             cookie_jar: None,
+            oauth_browser: options.oauth_browser,
         },
     )
     .await?;
@@ -2040,6 +2055,7 @@ async fn send_graphql_request(options: GraphqlOptions) -> Result<()> {
             client_identity: options.client_identity.as_deref(),
             insecure: options.insecure,
             cookie_jar: None,
+            oauth_browser: false,
         },
     )
     .await?;
@@ -2094,6 +2110,7 @@ async fn introspect_graphql_schema(options: GraphqlOptions) -> Result<()> {
             client_identity: options.client_identity.as_deref(),
             insecure: options.insecure,
             cookie_jar: None,
+            oauth_browser: false,
         },
     )
     .await?;
@@ -2911,6 +2928,7 @@ async fn send_saved_request(options: SendOptions<'_>) -> Result<()> {
             client_identity: options.client_identity,
             insecure: options.insecure,
             cookie_jar: Some(&workspace.root().join(".postly/cookies.json")),
+            oauth_browser: options.oauth_browser,
         },
     )
     .await;
@@ -3589,20 +3607,50 @@ async fn execute(
         cookie_jar: options.cookie_jar.map(Path::to_path_buf),
         ..EngineOptions::default()
     })?;
-    Ok(engine
-        .execute_with_device_code_prompt(request, &context, |prompt| {
-            eprintln!(
-                "OAuth device authorization required: visit {} and enter {} (expires in {}s).",
-                prompt.verification_uri,
-                prompt.user_code,
-                prompt.expires_in.as_secs()
-            );
-            if let Some(url) = prompt.verification_uri_complete.as_deref() {
-                eprintln!("Direct verification URL: {url}");
-            }
-            eprintln!("Waiting for authorization approval…");
-        })
-        .await?)
+    let response = if options.oauth_browser {
+        engine
+            .execute_with_pkce_browser(request, &context, open_browser_url)
+            .await?
+    } else {
+        engine
+            .execute_with_device_code_prompt(request, &context, |prompt| {
+                eprintln!(
+                    "OAuth device authorization required: visit {} and enter {} (expires in {}s).",
+                    prompt.verification_uri,
+                    prompt.user_code,
+                    prompt.expires_in.as_secs()
+                );
+                if let Some(url) = prompt.verification_uri_complete.as_deref() {
+                    eprintln!("Direct verification URL: {url}");
+                }
+                eprintln!("Waiting for authorization approval…");
+            })
+            .await?
+    };
+    Ok(response)
+}
+
+fn open_browser_url(url: &str) -> std::result::Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open")
+        .arg(url)
+        .status()
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .status()
+        .map_err(|error| error.to_string())?;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let status = std::process::Command::new("xdg-open")
+        .arg(url)
+        .status()
+        .map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("browser opener exited with {status}"))
+    }
 }
 
 async fn run_script_async(
@@ -3711,6 +3759,7 @@ fn parse_auth_flags_with_oauth(
         oauth_code,
         oauth_code_verifier,
         oauth_refresh_token,
+        oauth_browser,
     } = oauth;
     if oauth_token_url.is_some()
         || oauth_client_id.is_some()
@@ -3722,6 +3771,7 @@ fn parse_auth_flags_with_oauth(
         || oauth_code.is_some()
         || oauth_code_verifier.is_some()
         || oauth_refresh_token.is_some()
+        || oauth_browser
     {
         if bearer.is_some() || basic_user.is_some() || basic_password.is_some() {
             bail!("choose either bearer/basic authentication or OAuth 2.0");
@@ -3734,6 +3784,7 @@ fn parse_auth_flags_with_oauth(
                 || oauth_code.is_some()
                 || oauth_code_verifier.is_some()
                 || oauth_refresh_token.is_some()
+                || oauth_browser
             {
                 bail!("choose either OAuth 2.0 device code, PKCE or a refresh token");
             }
@@ -3748,7 +3799,8 @@ fn parse_auth_flags_with_oauth(
         let is_pkce = oauth_authorization_url.is_some()
             || oauth_redirect_uri.is_some()
             || oauth_code.is_some()
-            || oauth_code_verifier.is_some();
+            || oauth_code_verifier.is_some()
+            || oauth_browser;
         if is_pkce {
             if oauth_refresh_token.is_some() {
                 bail!("choose either OAuth 2.0 PKCE or a refresh token");
@@ -3757,9 +3809,17 @@ fn parse_auth_flags_with_oauth(
                 .context("--oauth-authorization-url is required for OAuth 2.0 PKCE")?;
             let redirect_uri = oauth_redirect_uri
                 .context("--oauth-redirect-uri is required for OAuth 2.0 PKCE")?;
-            let code = oauth_code.context("--oauth-code is required for OAuth 2.0 PKCE")?;
-            let code_verifier = oauth_code_verifier
-                .context("--oauth-code-verifier is required for OAuth 2.0 PKCE")?;
+            let code = if oauth_browser {
+                oauth_code.unwrap_or_default()
+            } else {
+                oauth_code.context("--oauth-code is required for OAuth 2.0 PKCE")?
+            };
+            let code_verifier = if oauth_browser {
+                oauth_code_verifier.unwrap_or_default()
+            } else {
+                oauth_code_verifier
+                    .context("--oauth-code-verifier is required for OAuth 2.0 PKCE")?
+            };
             return Ok(Auth::OAuth2AuthorizationCodePkce {
                 authorization_url,
                 token_url,
@@ -3977,6 +4037,37 @@ mod tests {
                 code_verifier: "a".repeat(43),
                 client_secret: None,
                 scope: Some("read:users".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_oauth_browser_pkce_flags_without_persisted_credentials() {
+        let auth = parse_auth_flags_with_oauth(
+            None,
+            None,
+            None,
+            OAuthCliArgs {
+                oauth_token_url: Some("https://auth.example.test/token".to_owned()),
+                oauth_client_id: Some("postly".to_owned()),
+                oauth_authorization_url: Some("https://auth.example.test/authorize".to_owned()),
+                oauth_redirect_uri: Some("http://127.0.0.1:0/callback".to_owned()),
+                oauth_browser: true,
+                ..OAuthCliArgs::default()
+            },
+        )
+        .expect("browser PKCE flags");
+        assert_eq!(
+            auth,
+            Auth::OAuth2AuthorizationCodePkce {
+                authorization_url: "https://auth.example.test/authorize".to_owned(),
+                token_url: "https://auth.example.test/token".to_owned(),
+                client_id: "postly".to_owned(),
+                redirect_uri: "http://127.0.0.1:0/callback".to_owned(),
+                code: String::new(),
+                code_verifier: String::new(),
+                client_secret: None,
+                scope: None,
             }
         );
     }

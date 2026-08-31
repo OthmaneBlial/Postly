@@ -8,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use cookie_store::{CookieStore as StoredCookieStore, RawCookie};
 use quick_xml::{events::Event, Reader, Writer};
 use reqwest::{
@@ -16,7 +17,13 @@ use reqwest::{
     Client, Method, Url,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+};
+use uuid::Uuid;
 
 use crate::{
     model::{ApiKeyLocation, Auth, HeaderEntry, KeyValue, Request, RequestBody},
@@ -155,9 +162,20 @@ pub struct OAuthDeviceCodePrompt {
     pub interval: Duration,
 }
 
+/// Parameters generated for a browser-based OAuth 2.0 Authorization Code +
+/// PKCE exchange. The verifier and state stay in memory and are never written
+/// to the request file or logs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthAuthorizationRequest {
+    pub url: String,
+    pub redirect_uri: String,
+}
+
 const OAUTH_CACHE_SKEW: Duration = Duration::from_secs(30);
 const MAX_OAUTH_RESPONSE_BYTES: usize = 1_048_576;
 const MAX_OAUTH_CACHED_TOKENS: usize = 128;
+const OAUTH_BROWSER_TIMEOUT: Duration = Duration::from_secs(300);
+const MAX_OAUTH_CALLBACK_BYTES: usize = 16 * 1024;
 
 const MAX_COOKIE_JAR_BYTES: usize = 1_048_576;
 
@@ -553,6 +571,139 @@ impl HttpEngine {
             url: final_url,
             cookies,
         })
+    }
+
+    /// Execute an Authorization Code + PKCE request, opening a local browser
+    /// callback only when the stored authorization code is empty. The caller
+    /// owns the actual browser opener so the core remains usable by both the
+    /// CLI and native GUI.
+    pub async fn execute_with_pkce_browser<F>(
+        &self,
+        request: &Request,
+        context: &VariableContext,
+        open_authorization_url: F,
+    ) -> Result<HttpResponse, HttpError>
+    where
+        F: Fn(&str) -> Result<(), String> + Send + Sync,
+    {
+        let Auth::OAuth2AuthorizationCodePkce {
+            authorization_url,
+            token_url,
+            client_id,
+            redirect_uri,
+            code,
+            code_verifier,
+            client_secret,
+            scope,
+        } = &request.auth
+        else {
+            return self.execute(request, context).await;
+        };
+        if !code.trim().is_empty() {
+            return self.execute(request, context).await;
+        }
+
+        let authorization_url =
+            resolve_oauth_browser_value(context, authorization_url, "authorization URL")?;
+        let client_id = resolve_oauth_browser_value(context, client_id, "client ID")?;
+        let configured_redirect_uri =
+            resolve_oauth_browser_value(context, redirect_uri, "redirect URI")?;
+        let mut redirect = Url::parse(&configured_redirect_uri).map_err(|error| {
+            HttpError::OAuthToken(format!("invalid OAuth redirect URI: {error}"))
+        })?;
+        validate_oauth_loopback_redirect(&redirect)?;
+        let host = redirect
+            .host_str()
+            .ok_or_else(|| HttpError::OAuthToken("OAuth redirect URI has no host".to_owned()))?
+            .to_owned();
+        let port = redirect.port().ok_or_else(|| {
+            HttpError::OAuthToken(
+                "OAuth browser flow requires a loopback redirect URI with an explicit port"
+                    .to_owned(),
+            )
+        })?;
+        let listener = TcpListener::bind((host.as_str(), port))
+            .await
+            .map_err(|error| {
+                HttpError::OAuthToken(format!(
+                    "could not bind OAuth redirect listener on {configured_redirect_uri}: {error}"
+                ))
+            })?;
+        if port == 0 {
+            let actual_port = listener
+                .local_addr()
+                .map_err(|error| HttpError::OAuthToken(error.to_string()))?
+                .port();
+            redirect.set_port(Some(actual_port)).map_err(|_| {
+                HttpError::OAuthToken("could not assign the OAuth redirect port".to_owned())
+            })?;
+        }
+        let redirect_uri = redirect.to_string();
+        let verifier = if code_verifier.trim().is_empty() {
+            generate_pkce_verifier()
+        } else {
+            code_verifier.clone()
+        };
+        validate_pkce_verifier(&verifier)?;
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        let state = Uuid::new_v4().to_string();
+        let mut authorization = Url::parse(&authorization_url).map_err(|error| {
+            HttpError::OAuthToken(format!("invalid OAuth authorization URL: {error}"))
+        })?;
+        if !matches!(authorization.scheme(), "http" | "https") {
+            return Err(HttpError::OAuthToken(
+                "OAuth authorization URL must use http or https".to_owned(),
+            ));
+        }
+        authorization
+            .query_pairs_mut()
+            .append_pair("response_type", "code")
+            .append_pair("client_id", &client_id)
+            .append_pair("redirect_uri", &redirect_uri)
+            .append_pair("code_challenge", &challenge)
+            .append_pair("code_challenge_method", "S256")
+            .append_pair("state", &state);
+        if let Some(scope) = scope
+            .as_ref()
+            .map(|value| resolve_oauth_browser_value(context, value, "scope"))
+            .transpose()?
+            .filter(|value| !value.trim().is_empty())
+        {
+            authorization.query_pairs_mut().append_pair("scope", &scope);
+        }
+        open_authorization_url(authorization.as_str()).map_err(|error| {
+            HttpError::OAuthToken(format!("could not open OAuth authorization URL: {error}"))
+        })?;
+
+        let callback_result = tokio::time::timeout(OAUTH_BROWSER_TIMEOUT, async {
+            let (mut stream, _) = listener.accept().await.map_err(|error| {
+                HttpError::OAuthToken(format!("OAuth redirect listener failed: {error}"))
+            })?;
+            let result = read_oauth_callback(&mut stream, redirect.path(), &state).await;
+            let success = result.is_ok();
+            write_oauth_callback_response(&mut stream, success).await?;
+            result
+        })
+        .await
+        .map_err(|_| {
+            HttpError::OAuthToken(format!(
+                "OAuth browser authorization timed out after {} seconds",
+                OAUTH_BROWSER_TIMEOUT.as_secs()
+            ))
+        })??;
+
+        let mut browser_request = request.clone();
+        browser_request.auth = Auth::OAuth2AuthorizationCodePkce {
+            authorization_url: authorization_url.to_owned(),
+            token_url: token_url.to_owned(),
+            client_id: client_id.to_owned(),
+            redirect_uri,
+            code: callback_result,
+            code_verifier: verifier,
+            client_secret: client_secret.clone(),
+            scope: scope.clone(),
+        };
+        self.execute(&browser_request, context).await
     }
 
     pub async fn execute_stream(
@@ -1124,6 +1275,171 @@ fn secret_fingerprint(secret: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     secret.hash(&mut hasher);
     hasher.finish()
+}
+
+fn resolve_oauth_browser_value(
+    context: &VariableContext,
+    value: &str,
+    label: &str,
+) -> Result<String, HttpError> {
+    let resolved = context.resolve(value);
+    if !resolved.diagnostics.is_empty() {
+        return Err(HttpError::VariableResolution(resolved.diagnostics));
+    }
+    if resolved.value.trim().is_empty() {
+        return Err(HttpError::OAuthToken(format!(
+            "OAuth {label} cannot be empty"
+        )));
+    }
+    Ok(resolved.value)
+}
+
+fn validate_pkce_verifier(verifier: &str) -> Result<(), HttpError> {
+    let verifier_len = verifier.len();
+    if !(43..=128).contains(&verifier_len)
+        || !verifier
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~".contains(&byte))
+    {
+        return Err(HttpError::OAuthToken(
+            "OAuth PKCE code verifier must be 43-128 unreserved characters".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn generate_pkce_verifier() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+fn validate_oauth_loopback_redirect(redirect: &Url) -> Result<(), HttpError> {
+    if redirect.scheme() != "http"
+        || redirect.username() != ""
+        || redirect.password().is_some()
+        || redirect.fragment().is_some()
+    {
+        return Err(HttpError::OAuthToken(
+            "OAuth browser callbacks require an HTTP loopback redirect without credentials or fragments"
+                .to_owned(),
+        ));
+    }
+    let host = redirect.host_str().unwrap_or_default().to_ascii_lowercase();
+    if !matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1") {
+        return Err(HttpError::OAuthToken(
+            "OAuth browser callbacks are restricted to localhost, 127.0.0.1 or ::1".to_owned(),
+        ));
+    }
+    if redirect.port().is_none() {
+        return Err(HttpError::OAuthToken(
+            "OAuth browser callbacks require an explicit loopback port".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+async fn read_oauth_callback(
+    stream: &mut TcpStream,
+    expected_path: &str,
+    expected_state: &str,
+) -> Result<String, HttpError> {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 2048];
+    loop {
+        let count = stream.read(&mut buffer).await.map_err(|error| {
+            HttpError::OAuthToken(format!("could not read OAuth callback: {error}"))
+        })?;
+        if count == 0 {
+            break;
+        }
+        if request.len().saturating_add(count) > MAX_OAUTH_CALLBACK_BYTES {
+            return Err(HttpError::OAuthToken(
+                "OAuth callback request exceeded the safety limit".to_owned(),
+            ));
+        }
+        request.extend_from_slice(&buffer[..count]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+    let request = std::str::from_utf8(&request)
+        .map_err(|_| HttpError::OAuthToken("OAuth callback was not valid HTTP".to_owned()))?;
+    let request_line = request.lines().next().ok_or_else(|| {
+        HttpError::OAuthToken("OAuth callback did not include a request line".to_owned())
+    })?;
+    let mut parts = request_line.split_whitespace();
+    if parts.next() != Some("GET") {
+        return Err(HttpError::OAuthToken(
+            "OAuth callback must use an HTTP GET request".to_owned(),
+        ));
+    }
+    let target = parts.next().ok_or_else(|| {
+        HttpError::OAuthToken("OAuth callback did not include a target".to_owned())
+    })?;
+    if !target.starts_with('/') {
+        return Err(HttpError::OAuthToken(
+            "OAuth callback must use an origin-form target".to_owned(),
+        ));
+    }
+    let callback = Url::parse(&format!("http://postly.invalid{target}")).map_err(|error| {
+        HttpError::OAuthToken(format!("invalid OAuth callback target: {error}"))
+    })?;
+    if callback.path() != expected_path {
+        return Err(HttpError::OAuthToken(
+            "OAuth callback path did not match the configured redirect URI".to_owned(),
+        ));
+    }
+    let mut code = None;
+    let mut state = None;
+    let mut oauth_error = None;
+    let mut error_description = None;
+    for (key, value) in callback.query_pairs() {
+        match key.as_ref() {
+            "code" => code = Some(value.into_owned()),
+            "state" => state = Some(value.into_owned()),
+            "error" => oauth_error = Some(value.into_owned()),
+            "error_description" => error_description = Some(value.into_owned()),
+            _ => {}
+        }
+    }
+    if let Some(error) = oauth_error {
+        return Err(HttpError::OAuthToken(format!(
+            "OAuth authorization was denied: {error}{}",
+            error_description
+                .map(|description| format!(" ({description})"))
+                .unwrap_or_default()
+        )));
+    }
+    if state.as_deref() != Some(expected_state) {
+        return Err(HttpError::OAuthToken(
+            "OAuth callback state did not match the authorization request".to_owned(),
+        ));
+    }
+    code.filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            HttpError::OAuthToken("OAuth callback did not include an authorization code".to_owned())
+        })
+}
+
+async fn write_oauth_callback_response(
+    stream: &mut TcpStream,
+    success: bool,
+) -> Result<(), HttpError> {
+    let body = if success {
+        "<!doctype html><title>Postly authorization received</title><p>Authorization received. You can return to Postly.</p>"
+    } else {
+        "<!doctype html><title>Postly authorization failed</title><p>Postly could not complete this authorization. You can close this window.</p>"
+    };
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .map_err(|error| {
+            HttpError::OAuthToken(format!("could not respond to OAuth callback: {error}"))
+        })
 }
 
 async fn read_bounded_oauth_body(mut response: reqwest::Response) -> Result<Vec<u8>, HttpError> {
@@ -1883,6 +2199,157 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(response.body_text(), "profile");
         server.await.expect("PKCE server");
+    }
+
+    #[tokio::test]
+    async fn exchanges_oauth_authorization_code_through_a_loopback_browser_callback() {
+        let token_listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("token listener");
+        let token_address = token_listener.local_addr().expect("token address");
+        let api_listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("API listener");
+        let api_address = api_listener.local_addr().expect("API address");
+        let token_server = tokio::spawn(async move {
+            let (mut token_socket, _) = token_listener.accept().await.expect("token connection");
+            let token_request = read_request_headers(&mut token_socket).await;
+            assert!(token_request.contains("POST /oauth/token HTTP/1.1"));
+            let token_body = token_request
+                .split_once("\r\n\r\n")
+                .map(|(_, body)| body)
+                .expect("token request body");
+            let fields = url::form_urlencoded::parse(token_body.as_bytes())
+                .into_owned()
+                .collect::<std::collections::HashMap<_, _>>();
+            assert_eq!(
+                fields.get("grant_type").map(String::as_str),
+                Some("authorization_code")
+            );
+            assert_eq!(
+                fields.get("client_id").map(String::as_str),
+                Some("postly-browser")
+            );
+            assert_eq!(fields.get("code").map(String::as_str), Some("browser-code"));
+            assert!(fields.get("redirect_uri").is_some_and(|value| value
+                .starts_with("http://127.0.0.1:")
+                && value.ends_with("/callback")));
+            assert!(fields
+                .get("code_verifier")
+                .is_some_and(|value| value.len() == 64));
+            let token_body =
+                br#"{"access_token":"browser-access","token_type":"Bearer","expires_in":3600}"#;
+            let token_response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                token_body.len(),
+                String::from_utf8_lossy(token_body)
+            );
+            token_socket
+                .write_all(token_response.as_bytes())
+                .await
+                .expect("token response");
+        });
+        let api_server = tokio::spawn(async move {
+            let (mut api_socket, _) = api_listener.accept().await.expect("API connection");
+            let api_request = read_request_headers(&mut api_socket).await;
+            assert!(api_request.contains("GET /browser-profile HTTP/1.1"));
+            assert!(api_request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer browser-access"));
+            api_socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 15\r\nconnection: close\r\n\r\nbrowser-profile",
+                )
+                .await
+                .expect("API response");
+        });
+
+        let callback_task = Arc::new(std::sync::Mutex::new(None));
+        let callback_task_for_opener = Arc::clone(&callback_task);
+        let opener = move |authorization_url: &str| {
+            let authorization = Url::parse(authorization_url).expect("authorization URL");
+            assert_eq!(
+                authorization
+                    .query_pairs()
+                    .find(|(key, _)| key == "response_type")
+                    .map(|(_, value)| value),
+                Some("code".into())
+            );
+            assert_eq!(
+                authorization
+                    .query_pairs()
+                    .find(|(key, _)| key == "code_challenge_method")
+                    .map(|(_, value)| value),
+                Some("S256".into())
+            );
+            let state = authorization
+                .query_pairs()
+                .find(|(key, _)| key == "state")
+                .map(|(_, value)| value.into_owned())
+                .expect("OAuth state");
+            let redirect = authorization
+                .query_pairs()
+                .find(|(key, _)| key == "redirect_uri")
+                .map(|(_, value)| Url::parse(&value).expect("redirect URI"))
+                .expect("redirect URI");
+            let port = redirect.port().expect("dynamic callback port");
+            assert_ne!(port, 0);
+            assert_eq!(redirect.path(), "/callback");
+            assert!(authorization
+                .query_pairs()
+                .any(|(key, value)| key == "scope" && value == "read:profile"));
+
+            let callback_path = redirect.path().to_owned();
+            let callback_task = tokio::spawn(async move {
+                let mut socket = TcpStream::connect(("127.0.0.1", port))
+                    .await
+                    .expect("callback connection");
+                let request = format!(
+                    "GET {callback_path}?code=browser-code&state={state} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+                );
+                socket
+                    .write_all(request.as_bytes())
+                    .await
+                    .expect("callback request");
+                let mut response = Vec::new();
+                socket
+                    .read_to_end(&mut response)
+                    .await
+                    .expect("callback response");
+                assert!(String::from_utf8_lossy(&response).contains("Authorization received"));
+            });
+            *callback_task_for_opener.lock().expect("callback lock") = Some(callback_task);
+            Ok(())
+        };
+
+        let mut request = Request::new(
+            "Browser PKCE request",
+            "GET",
+            format!("http://{api_address}/browser-profile"),
+        );
+        request.auth = Auth::OAuth2AuthorizationCodePkce {
+            authorization_url: "https://auth.example.test/authorize".to_owned(),
+            token_url: format!("http://{token_address}/oauth/token"),
+            client_id: "postly-browser".to_owned(),
+            redirect_uri: "http://127.0.0.1:0/callback".to_owned(),
+            code: String::new(),
+            code_verifier: String::new(),
+            client_secret: None,
+            scope: Some("read:profile".to_owned()),
+        };
+        let engine = HttpEngine::new(&EngineOptions::default()).expect("engine");
+        let response = engine
+            .execute_with_pkce_browser(&request, &VariableContext::default(), opener)
+            .await
+            .expect("browser PKCE response");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body_text(), "browser-profile");
+        let callback_task = callback_task.lock().expect("callback lock").take();
+        if let Some(callback_task) = callback_task {
+            callback_task.await.expect("callback task");
+        }
+        token_server.await.expect("token server");
+        api_server.await.expect("API server");
     }
 
     #[tokio::test]

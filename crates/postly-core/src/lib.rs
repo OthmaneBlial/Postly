@@ -44,8 +44,8 @@ pub use grpc::{
 };
 pub use history::{HistoryEntry, HistoryFilter, HistoryOutcome};
 pub use http::{
-    EngineOptions, HttpEngine, HttpError, HttpResponse, HttpStreamResponse, OAuthDeviceCodePrompt,
-    ResponseCookie, ResponseView,
+    EngineOptions, HttpEngine, HttpError, HttpResponse, HttpStreamResponse,
+    OAuthAuthorizationRequest, OAuthDeviceCodePrompt, ResponseCookie, ResponseView,
 };
 pub use import::{import_dotenv, import_environment, import_postman_collection, ImportReport};
 pub use model::*;
