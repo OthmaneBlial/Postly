@@ -5915,7 +5915,7 @@ impl PostlyApp {
         ui.heading(RichText::new("Connection settings").color(ui.visuals().text_color()));
         ui.label(
             RichText::new(
-                "These local settings apply to HTTP requests, SSE streams, WebSocket connections and gRPC channels. Only file paths are stored.",
+                "These local settings apply to HTTP requests, SSE streams, WebSocket connections and gRPC channels. Domains and file paths are stored locally; private-key contents and passphrases are not.",
             )
             .small()
             .color(ui.visuals().weak_text_color()),
