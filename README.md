@@ -213,8 +213,8 @@ postly list .
 
 Keep secrets out of Git with local environment files and the OS credential store.
 Postly’s ignored `.postly/` artifacts contain bounded metadata-only history and
-optional response snapshots plus a bounded GUI draft-recovery snapshot;
-canonical request files remain ordinary project data. A recovered draft is
+optional response snapshots plus a bounded GUI multi-draft recovery snapshot;
+canonical request files remain ordinary project data. Recovered drafts are
 always reopened as unsaved work and can be discarded explicitly.
 Read the [Postman migration guide](docs/migration-from-postman.md) for the exact
 import boundary.

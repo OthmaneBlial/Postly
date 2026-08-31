@@ -121,9 +121,10 @@ Implemented:
 - Local `cargo xtask fuzz` targets cURL parsing, variable interpolation and
   malformed Postman imports with a bounded smoke run; fuzz artifacts remain
   ignored and no GitHub Actions workflow is required.
-- Native GUI crash recovery persists a bounded, private draft snapshot with
-  atomic replacement, Unix `0600` permissions, automatic restore as a new
-  unsaved request and an explicit discard action.
+- Native GUI crash recovery persists a bounded, private multi-document draft
+  snapshot with atomic replacement, Unix `0600` permissions, automatic restore
+  of dirty tabs as new unsaved requests, an explicit discard action and a
+  compatibility reader for the earlier single-draft format.
 - Native GUI environment editing creates, updates and renames local environment
   files, preserves disabled flags, masks existing keychain-backed values and
   sends newly entered secret values through the OS credential store.
@@ -157,7 +158,8 @@ Not yet implemented:
 - Embedded/hardened script runtime and broader pm.* compatibility beyond the
   tested scoped-variable/request-header/response subset.
 - Broader Postman-compatible test/assertion cases beyond the current explicit native slice.
-- transactional workspace restore and broader multi-document crash recovery.
+- transactional restore for canonical workspace files remains open; recovery
+  now covers multiple dirty GUI documents.
 - Encrypted/PKCS#12 identities, passphrase handling, per-domain certificate association and explicit insecure TLS remain open; gRPC custom PEM CA/client identity and SOCKS5 routing are now available in CLI and GUI.
 - OpenAPI cyclic/remote references, richer schema generation beyond the current composed/format-aware samples and deeper protocol-specific GUI tooling.
 - richer deterministic protocol test server tooling beyond the HTTP mock,
@@ -167,8 +169,8 @@ Not yet implemented:
 ## Verification
 
 The GUI recovery slice adds round-trip coverage for an unsaved JSON draft,
-private file permissions on Unix and explicit discard without changing saved
-requests. The GraphQL schema slice adds core parser coverage for roots, nested type
+multiple dirty tabs, private file permissions on Unix, legacy snapshot upgrade
+and explicit discard without changing saved requests. The GraphQL schema slice adds core parser coverage for roots, nested type
 references, arguments and malformed introspection, a local HTTP CLI test, and a
 native GUI worker test that confirms schemas stay out of request history. The
 gRPC reflection adds a local tonic server test covering service discovery and

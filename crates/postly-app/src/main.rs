@@ -437,7 +437,8 @@ impl ThemeMode {
 const GUI_SETTINGS_FILE: &str = ".postly/gui-settings.json";
 const GUI_TABS_FILE: &str = ".postly/gui-tabs.json";
 const RECOVERY_FILE: &str = ".postly/recovery.json";
-const RECOVERY_VERSION: u8 = 1;
+const RECOVERY_VERSION: u8 = 2;
+const LEGACY_RECOVERY_VERSION: u8 = 1;
 const MAX_RECOVERY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RESPONSE_EXAMPLE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -507,7 +508,22 @@ impl TransportSettings {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+struct RecoveryDraft {
+    collection_id: String,
+    collection_name: String,
+    request: Request,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct RecoverySnapshot {
+    version: u8,
+    saved_at_unix: u64,
+    active_index: usize,
+    drafts: Vec<RecoveryDraft>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LegacyRecoverySnapshot {
     version: u8,
     saved_at_unix: u64,
     collection_id: String,
@@ -537,6 +553,7 @@ struct RequestTab {
     request_path: Option<PathBuf>,
     request: Request,
     dirty: bool,
+    recovered: bool,
 }
 
 fn recovery_path(root: &Path) -> PathBuf {
@@ -583,15 +600,43 @@ fn read_recovery_snapshot(root: &Path) -> Result<Option<RecoverySnapshot>, Strin
             MAX_RECOVERY_BYTES / (1024 * 1024)
         ));
     }
-    let snapshot: RecoverySnapshot =
+    let value: serde_json::Value =
         serde_json::from_slice(&contents).map_err(|error| error.to_string())?;
-    if snapshot.version != RECOVERY_VERSION {
-        return Err(format!(
-            "unsupported recovery snapshot version {}",
-            snapshot.version
-        ));
+    let version = value
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "recovery snapshot is missing its version".to_owned())?;
+    match version {
+        version_number if version_number == u64::from(LEGACY_RECOVERY_VERSION) => {
+            let legacy: LegacyRecoverySnapshot =
+                serde_json::from_value(value).map_err(|error| error.to_string())?;
+            if legacy.version != LEGACY_RECOVERY_VERSION {
+                return Err(format!(
+                    "unsupported recovery snapshot version {}",
+                    legacy.version
+                ));
+            }
+            Ok(Some(RecoverySnapshot {
+                version: RECOVERY_VERSION,
+                saved_at_unix: legacy.saved_at_unix,
+                active_index: 0,
+                drafts: vec![RecoveryDraft {
+                    collection_id: legacy.collection_id,
+                    collection_name: legacy.collection_name,
+                    request: legacy.request,
+                }],
+            }))
+        }
+        version_number if version_number == u64::from(RECOVERY_VERSION) => {
+            let snapshot: RecoverySnapshot =
+                serde_json::from_value(value).map_err(|error| error.to_string())?;
+            if snapshot.drafts.is_empty() {
+                return Err("recovery snapshot does not contain any drafts".to_owned());
+            }
+            Ok(Some(snapshot))
+        }
+        other => Err(format!("unsupported recovery snapshot version {other}")),
     }
-    Ok(Some(snapshot))
 }
 
 fn remove_recovery_snapshot(root: &Path) -> Result<(), String> {
@@ -877,56 +922,109 @@ impl PostlyApp {
     }
 
     fn restore_recovery(&mut self, snapshot: RecoverySnapshot) -> Result<(), String> {
-        if let Some(index) = self
-            .collections
-            .iter()
-            .position(|collection| collection.collection.id.to_string() == snapshot.collection_id)
-        {
-            self.selected_collection = index;
-            self.requests = self
-                .workspace
-                .requests(&self.collections[index])
-                .map_err(|error| error.to_string())?;
+        let recovered_offset = self.open_tabs.len();
+        let mut recovered_tabs = Vec::new();
+        for draft in snapshot.drafts {
+            let collection_index = self
+                .collections
+                .iter()
+                .position(|collection| collection.collection.id.to_string() == draft.collection_id)
+                .unwrap_or(0);
+            recovered_tabs.push(RequestTab {
+                collection_index,
+                request_path: None,
+                request: draft.request,
+                dirty: true,
+                recovered: true,
+            });
         }
-        self.selected_request = None;
-        self.request_path = None;
-        self.request = snapshot.request;
-        self.load_request_editors();
-        self.clear_response();
-        self.dirty = true;
+        if recovered_tabs.is_empty() {
+            return Err("recovery snapshot does not contain any restorable drafts".to_owned());
+        }
+        self.open_tabs.extend(recovered_tabs);
+        self.active_tab = recovered_offset
+            + snapshot
+                .active_index
+                .min(self.open_tabs.len() - recovered_offset - 1);
+        self.load_requests_for_tab(self.active_tab);
+        self.install_tab(self.active_tab);
         self.recovery_restored = true;
         self.recovery_last_saved = Some(Instant::now());
+        self.tabs_settings_dirty = true;
         self.status_message = format!(
-            "Recovered unsaved draft from {} — save it or discard recovery",
-            snapshot.collection_name
+            "Recovered {} local draft{} — save or discard recovery",
+            self.open_tabs.iter().filter(|tab| tab.recovered).count(),
+            if self.open_tabs.iter().filter(|tab| tab.recovered).count() == 1 {
+                ""
+            } else {
+                "s"
+            }
         );
         Ok(())
     }
 
     fn persist_recovery(&mut self) -> Result<(), String> {
-        let collection = self
-            .collections
-            .get(self.selected_collection)
-            .ok_or_else(|| "no collection selected".to_owned())?;
-        let request = self.edited_request()?;
+        if !self.open_tabs.is_empty() {
+            self.sync_active_tab()?;
+        }
+        let mut drafts = self
+            .open_tabs
+            .iter()
+            .filter(|tab| tab.dirty)
+            .map(|tab| {
+                let collection = self
+                    .collections
+                    .get(tab.collection_index)
+                    .ok_or_else(|| "recovery tab references a missing collection".to_owned())?;
+                Ok(RecoveryDraft {
+                    collection_id: collection.collection.id.to_string(),
+                    collection_name: collection.collection.name.clone(),
+                    request: tab.request.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if self.open_tabs.is_empty() && self.dirty {
+            let collection = self
+                .collections
+                .get(self.selected_collection)
+                .ok_or_else(|| "no collection selected".to_owned())?;
+            drafts.push(RecoveryDraft {
+                collection_id: collection.collection.id.to_string(),
+                collection_name: collection.collection.name.clone(),
+                request: self.edited_request()?,
+            });
+        }
+        if drafts.is_empty() {
+            return Ok(());
+        }
         let saved_at_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_secs();
+        let active_index = self
+            .open_tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| tab.dirty)
+            .position(|(index, _)| index == self.active_tab)
+            .unwrap_or(0);
         let snapshot = RecoverySnapshot {
             version: RECOVERY_VERSION,
             saved_at_unix,
-            collection_id: collection.collection.id.to_string(),
-            collection_name: collection.collection.name.clone(),
-            request,
+            active_index: active_index.min(drafts.len().saturating_sub(1)),
+            drafts,
         };
         write_recovery_snapshot(self.workspace.root(), &snapshot)?;
         self.recovery_last_saved = Some(Instant::now());
         Ok(())
     }
 
+    fn has_dirty_work(&self) -> bool {
+        self.dirty || self.open_tabs.iter().any(|tab| tab.dirty)
+    }
+
     fn persist_recovery_if_due(&mut self) {
-        if !self.dirty
+        if !self.has_dirty_work()
             || self
                 .recovery_last_saved
                 .is_some_and(|saved| saved.elapsed() < Duration::from_secs(1))
@@ -943,18 +1041,30 @@ impl PostlyApp {
             self.status_message = format!("Recovery cleanup failed: {error}");
             return;
         }
+        let active_before = self.active_tab;
+        let recovered_before = self
+            .open_tabs
+            .iter()
+            .take(active_before)
+            .filter(|tab| tab.recovered)
+            .count();
+        self.open_tabs.retain(|tab| !tab.recovered);
         self.recovery_restored = false;
         self.recovery_last_saved = None;
-        self.reset_new_request();
-        let current_tab = self.current_tab();
         if self.open_tabs.is_empty() {
-            self.open_tabs.push(current_tab);
             self.active_tab = 0;
-        } else if let Some(tab) = self.open_tabs.get_mut(self.active_tab) {
-            *tab = current_tab;
+            self.reset_new_request();
+            let current_tab = self.current_tab();
+            self.open_tabs.push(current_tab);
+        } else {
+            self.active_tab = active_before
+                .saturating_sub(recovered_before)
+                .min(self.open_tabs.len() - 1);
+            self.load_requests_for_tab(self.active_tab);
+            self.install_tab(self.active_tab);
         }
         self.tabs_settings_dirty = true;
-        self.status_message = "Recovered draft discarded".to_owned();
+        self.status_message = "Recovered local drafts discarded".to_owned();
     }
 
     fn open_environment_editor(&mut self, index: Option<usize>) {
@@ -1101,6 +1211,7 @@ impl PostlyApp {
             tab.request_path = self.request_path.clone();
             tab.request = request;
             tab.dirty = self.dirty;
+            tab.recovered = self.recovery_restored;
         }
         Ok(())
     }
@@ -1111,6 +1222,7 @@ impl PostlyApp {
             request_path: self.request_path.clone(),
             request: self.request.clone(),
             dirty: self.dirty,
+            recovered: self.recovery_restored,
         }
     }
 
@@ -1132,7 +1244,7 @@ impl PostlyApp {
         self.load_request_editors();
         self.clear_response();
         self.dirty = tab.dirty;
-        self.recovery_restored = false;
+        self.recovery_restored = tab.recovered;
     }
 
     fn restore_tabs(&mut self) {
@@ -1164,6 +1276,7 @@ impl PostlyApp {
                 request_path: Some(full_path),
                 request,
                 dirty: false,
+                recovered: false,
             });
         }
         if restored.is_empty() {
@@ -1239,6 +1352,9 @@ impl PostlyApp {
     fn switch_to_tab(&mut self, index: usize) {
         if index >= self.open_tabs.len() || index == self.active_tab {
             return;
+        }
+        if self.dirty {
+            let _ = self.persist_recovery();
         }
         if let Err(error) = self.sync_active_tab() {
             self.status_message = format!("Cannot switch tab: {error}");
@@ -1356,6 +1472,7 @@ impl PostlyApp {
                 request_path: Some(path.clone()),
                 request,
                 dirty: false,
+                recovered: false,
             });
             self.tabs_settings_dirty = true;
             self.open_tabs.len() - 1
@@ -4364,11 +4481,20 @@ impl PostlyApp {
                 });
                 if self.recovery_restored {
                     let mut discard_recovery_clicked = false;
+                    let recovered_count = self
+                        .open_tabs
+                        .iter()
+                        .filter(|tab| tab.recovered)
+                        .count();
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(
-                                "Recovered local draft — save it to keep it in the workspace.",
+                                format!(
+                                    "Recovered {recovered_count} local draft{} — save it to keep {} in the workspace.",
+                                    if recovered_count == 1 { "" } else { "s" },
+                                    if recovered_count == 1 { "it" } else { "them" },
+                                ),
                             )
                             .small()
                             .color(Color32::from_rgb(235, 180, 80)),
@@ -7581,7 +7707,7 @@ impl eframe::App for PostlyApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if self.dirty {
+        if self.has_dirty_work() {
             let _ = self.persist_recovery();
         }
         let _ = self.save_tabs_settings();
@@ -8237,8 +8363,12 @@ mod tests {
         let snapshot = read_recovery_snapshot(directory.path())
             .expect("read recovery")
             .expect("snapshot");
-        assert_eq!(snapshot.request.name, "Unsaved local draft");
-        assert_eq!(snapshot.request.url, "https://api.example.test/draft");
+        assert_eq!(snapshot.drafts.len(), 1);
+        assert_eq!(snapshot.drafts[0].request.name, "Unsaved local draft");
+        assert_eq!(
+            snapshot.drafts[0].request.url,
+            "https://api.example.test/draft"
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -8273,6 +8403,67 @@ mod tests {
         assert!(!reopened.recovery_restored);
         assert_eq!(reopened.request.name, "New request");
         assert!(reopened.dirty);
+    }
+
+    #[test]
+    fn multiple_dirty_tabs_round_trip_through_recovery_snapshot() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.name = "First unsaved draft".to_owned();
+        app.request.url = "https://api.example.test/first".to_owned();
+        app.dirty = true;
+        app.sync_active_tab().expect("sync first draft");
+        app.new_request();
+        app.request.name = "Second unsaved draft".to_owned();
+        app.request.url = "https://api.example.test/second".to_owned();
+        app.dirty = true;
+        app.persist_recovery().expect("persist multiple drafts");
+
+        let snapshot = read_recovery_snapshot(directory.path())
+            .expect("read recovery")
+            .expect("snapshot");
+        assert_eq!(snapshot.drafts.len(), 2);
+        assert_eq!(snapshot.active_index, 1);
+
+        let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
+        assert_eq!(
+            reopened
+                .open_tabs
+                .iter()
+                .filter(|tab| tab.recovered)
+                .count(),
+            2
+        );
+        assert_eq!(
+            reopened.open_tabs[reopened.active_tab].request.name,
+            "Second unsaved draft"
+        );
+        assert!(reopened.request_path.is_none());
+        assert!(reopened.recovery_restored);
+    }
+
+    #[test]
+    fn legacy_single_draft_recovery_is_upgraded_on_read() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let request = Request::new("Legacy draft", "GET", "https://api.example.test/legacy");
+        let legacy = serde_json::json!({
+            "version": LEGACY_RECOVERY_VERSION,
+            "saved_at_unix": 123,
+            "collection_id": "legacy-collection",
+            "collection_name": "Legacy",
+            "request": request,
+        });
+        let path = recovery_path(directory.path());
+        std::fs::create_dir_all(path.parent().expect("recovery parent")).expect("parent");
+        std::fs::write(&path, serde_json::to_vec(&legacy).expect("legacy JSON"))
+            .expect("write legacy snapshot");
+
+        let snapshot = read_recovery_snapshot(directory.path())
+            .expect("read recovery")
+            .expect("snapshot");
+        assert_eq!(snapshot.version, RECOVERY_VERSION);
+        assert_eq!(snapshot.drafts.len(), 1);
+        assert_eq!(snapshot.drafts[0].request.name, "Legacy draft");
     }
 
     #[test]
