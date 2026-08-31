@@ -9,7 +9,7 @@
     { "api": "pm.collectionVariables.get", "status": "supported", "note": "Opt-in Node bridge reads collection variables." },
     { "api": "pm.collectionVariables.unset/clear/has/replaceIn", "status": "supported", "note": "Collection mutations are session-scoped and carried back through the Rust contract." },
     { "api": "pm.globals.get/set/unset/clear/has/replaceIn", "status": "partial", "note": "Global mutations are session-scoped and are not persisted to a global file." },
-    { "api": "pm.iterationData.get/has/replaceIn", "status": "supported", "note": "Runner iteration data is read-only and participates in visible variable precedence." },
+    { "api": "pm.iterationData.get/has/toObject/replaceIn", "status": "supported", "note": "Runner iteration data is read-only, exposes the current row as an object, and participates in visible variable precedence." },
     { "api": "pm.variables.get", "status": "supported", "note": "Reads the documented iteration/runtime/request/environment/collection precedence." },
     { "api": "pm.variables.set/unset/clear/has/replaceIn", "status": "partial", "note": "Runtime session mutations and request header changes are supported; broader scope semantics remain limited." },
     { "api": "pm.info", "status": "partial", "note": "Request name/ID, event name, zero-based iteration and iteration count are exposed; direct GUI runs use a default one-iteration context." },

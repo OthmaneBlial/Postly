@@ -112,6 +112,8 @@ Implemented:
   plus `each/forEach` response-cookie iteration, with local coverage for lookup,
   object conversion and disabled-cookie filtering; automatic cookie-jar
   persistence remains deliberately outside the bridge.
+- Runner iteration data now also exposes Postman’s read-only `toObject()` row
+  view, with a local regression alongside the existing precedence coverage.
 - Script reports now preserve individual post-response test names, pass/fail
   state, callback duration and bounded error details in runner JSON; the native
   GUI and CLI show the same per-test timing.

@@ -1097,6 +1097,7 @@ const globals = scope("globals");
 const iterationData = {
   get: (key) => (values.iteration || {})[key],
   has: (key) => Object.prototype.hasOwnProperty.call(values.iteration || {}, key),
+  toObject: () => ({ ...(values.iteration || {}) }),
   replaceIn
 };
 const runtime = {
@@ -3221,6 +3222,7 @@ mod tests {
                 pm.globals.set("suite", "after");
                 pm.test("iteration data is visible", function () {
                     pm.expect(pm.variables.get("trace")).to.eql("iteration-42");
+                    pm.expect(pm.iterationData.toObject()).to.have.property("trace", "iteration-42");
                 });
             "#,
             &request,

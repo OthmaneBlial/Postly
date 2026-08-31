@@ -30,7 +30,7 @@ The supported compatibility slice includes:
 - `pm.environment.get/set/unset/has/clear/replaceIn`
 - `pm.collectionVariables.get/set/unset/has/clear/replaceIn`
 - `pm.globals.get/set/unset/has/clear/replaceIn`
-- `pm.iterationData.get/has/replaceIn` (read-only)
+- `pm.iterationData.get/has/toObject/replaceIn` (read-only)
 - `pm.variables.get/set/unset/has/clear/replaceIn`, including iteration data precedence
 - `pm.request` URL, method, headers, cookies and Postman-shaped body facades;
   URL protocol/host/port/path/hash metadata, path variables with
