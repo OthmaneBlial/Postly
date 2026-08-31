@@ -496,6 +496,16 @@ const LEGACY_RECOVERY_VERSION: u8 = 1;
 const MAX_RECOVERY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RESPONSE_EXAMPLE_BYTES: usize = 4 * 1024 * 1024;
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+struct CertificateAssociation {
+    domain_pattern: String,
+    ca_cert_path: String,
+    client_identity_path: String,
+    #[serde(skip)]
+    client_identity_passphrase: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 struct TransportSettings {
@@ -508,6 +518,7 @@ struct TransportSettings {
     client_identity_path: String,
     #[serde(skip)]
     client_identity_passphrase: String,
+    certificate_associations: Vec<CertificateAssociation>,
     insecure_tls: bool,
     theme: ThemeMode,
 }
@@ -523,6 +534,7 @@ impl Default for TransportSettings {
             ca_cert_path: String::new(),
             client_identity_path: String::new(),
             client_identity_passphrase: String::new(),
+            certificate_associations: Vec::new(),
             insecure_tls: false,
             theme: ThemeMode::default(),
         }
@@ -546,8 +558,9 @@ impl TransportSettings {
         fs::write(path, contents).map_err(|error| error.to_string())
     }
 
-    fn engine_options(&self, root: &Path) -> EngineOptions {
+    fn engine_options_for_url(&self, root: &Path, endpoint_url: Option<&str>) -> EngineOptions {
         let path = |value: &str| (!value.trim().is_empty()).then(|| PathBuf::from(value.trim()));
+        let certificate = self.certificate_settings_for_url(endpoint_url);
         let max_response_megabytes = self.max_response_megabytes.clamp(1, 4_096);
         EngineOptions {
             timeout: Duration::from_secs(self.timeout_seconds.max(1)),
@@ -559,13 +572,88 @@ impl TransportSettings {
             proxy: (!self.proxy_url.trim().is_empty()).then(|| self.proxy_url.trim().to_owned()),
             no_proxy: (!self.no_proxy_hosts.trim().is_empty())
                 .then(|| self.no_proxy_hosts.trim().to_owned()),
-            ca_cert: path(&self.ca_cert_path),
-            client_identity: path(&self.client_identity_path),
-            client_identity_passphrase: (!self.client_identity_passphrase.is_empty())
-                .then(|| self.client_identity_passphrase.clone()),
+            ca_cert: path(&certificate.ca_cert_path),
+            client_identity: path(&certificate.client_identity_path),
+            client_identity_passphrase: certificate.client_identity_passphrase,
             cookie_jar: Some(root.join(".postly/cookies.json")),
         }
     }
+
+    fn certificate_settings_for_url(
+        &self,
+        endpoint_url: Option<&str>,
+    ) -> EffectiveCertificateSettings {
+        let association = endpoint_url
+            .and_then(|endpoint| url::Url::parse(endpoint).ok())
+            .and_then(|endpoint| endpoint.host_str().map(str::to_owned))
+            .and_then(|host| self.matching_certificate_association(&host));
+        EffectiveCertificateSettings {
+            ca_cert_path: association
+                .and_then(|entry| non_empty_or_none(&entry.ca_cert_path))
+                .unwrap_or_else(|| self.ca_cert_path.trim().to_owned()),
+            client_identity_path: association
+                .and_then(|entry| non_empty_or_none(&entry.client_identity_path))
+                .unwrap_or_else(|| self.client_identity_path.trim().to_owned()),
+            client_identity_passphrase: association
+                .and_then(|entry| non_empty_or_none(&entry.client_identity_passphrase))
+                .or_else(|| non_empty_or_none(&self.client_identity_passphrase)),
+        }
+    }
+
+    fn matching_certificate_association(&self, host: &str) -> Option<&CertificateAssociation> {
+        let normalized_host = normalize_domain(host)?;
+        self.certificate_associations
+            .iter()
+            .filter_map(|entry| {
+                let score = domain_match_score(&entry.domain_pattern, &normalized_host)?;
+                Some((score, entry))
+            })
+            .max_by_key(|(score, _)| *score)
+            .map(|(_, entry)| entry)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct EffectiveCertificateSettings {
+    ca_cert_path: String,
+    client_identity_path: String,
+    client_identity_passphrase: Option<String>,
+}
+
+fn non_empty_or_none(value: &str) -> Option<String> {
+    (!value.trim().is_empty()).then(|| value.trim().to_owned())
+}
+
+fn normalize_domain(value: &str) -> Option<String> {
+    let normalized = value.trim().trim_end_matches('.').to_ascii_lowercase();
+    (!normalized.is_empty()
+        && !normalized.contains('/')
+        && !normalized.contains(':')
+        && !normalized.contains(' '))
+    .then_some(normalized)
+}
+
+fn domain_match_score(pattern: &str, host: &str) -> Option<(u8, usize)> {
+    let pattern = pattern.trim().trim_end_matches('.').to_ascii_lowercase();
+    let host = normalize_domain(host)?;
+    if pattern.is_empty() || pattern.contains('/') || pattern.contains(':') || pattern.contains(' ')
+    {
+        return None;
+    }
+    if pattern == host {
+        return Some((2, pattern.len()));
+    }
+    let suffix = pattern
+        .strip_prefix("*.")
+        .or_else(|| pattern.strip_prefix('.'))?;
+    if !suffix.is_empty()
+        && host.ends_with(suffix)
+        && host.len() > suffix.len()
+        && host.as_bytes()[host.len() - suffix.len() - 1] == b'.'
+    {
+        return Some((1, suffix.len()));
+    }
+    None
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -2699,8 +2787,19 @@ impl PostlyApp {
     }
 
     fn configured_engine(&mut self) -> Result<HttpEngine, String> {
-        let engine = HttpEngine::new(&self.transport.engine_options(self.workspace.root()))
-            .map_err(|error| format!("connection settings are invalid: {error}"))?;
+        self.configured_engine_for_url(None)
+    }
+
+    fn configured_engine_for_url(
+        &mut self,
+        endpoint_url: Option<&str>,
+    ) -> Result<HttpEngine, String> {
+        let engine = HttpEngine::new(
+            &self
+                .transport
+                .engine_options_for_url(self.workspace.root(), endpoint_url),
+        )
+        .map_err(|error| format!("connection settings are invalid: {error}"))?;
         self.engine = engine.clone();
         Ok(engine)
     }
@@ -2726,7 +2825,8 @@ impl PostlyApp {
         }
         let context = self.context()?;
         self.remember_sensitive_values(&request, &context);
-        let engine = self.configured_engine()?;
+        let endpoint_url = resolve_websocket_value(&request.url, &context)?;
+        let engine = self.configured_engine_for_url(Some(&endpoint_url))?;
         let run_scripts_on_send = self.run_scripts_on_send;
         let pre_request_script = request.pre_request_script.clone();
         let test_script = request.test_script.clone();
@@ -2965,7 +3065,8 @@ impl PostlyApp {
         };
         let context = self.context()?;
         self.remember_sensitive_values(&request, &context);
-        let engine = self.configured_engine()?;
+        let endpoint_url = resolve_websocket_value(&request.url, &context)?;
+        let engine = self.configured_engine_for_url(Some(&endpoint_url))?;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
         let (sender, receiver) = mpsc::channel();
@@ -3018,7 +3119,8 @@ impl PostlyApp {
         let request = self.edited_request()?;
         let context = self.context()?;
         self.remember_sensitive_values(&request, &context);
-        let engine = self.configured_engine()?;
+        let endpoint_url = resolve_websocket_value(&request.url, &context)?;
+        let engine = self.configured_engine_for_url(Some(&endpoint_url))?;
         let reconnect_limit = self.sse_reconnect_limit;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
@@ -3192,15 +3294,9 @@ impl PostlyApp {
         let request = self.edited_request()?;
         let context = self.context()?;
         self.remember_sensitive_values(&request, &context);
-        let proxy_url = self.transport.proxy_url.trim().to_owned();
-        let no_proxy = self.transport.no_proxy_hosts.trim().to_owned();
-        let ca_cert_path = (!self.transport.ca_cert_path.trim().is_empty())
-            .then(|| PathBuf::from(self.transport.ca_cert_path.trim()));
-        let client_identity_path = (!self.transport.client_identity_path.trim().is_empty())
-            .then(|| PathBuf::from(self.transport.client_identity_path.trim()));
-        let client_identity_passphrase = (!self.transport.client_identity_passphrase.is_empty())
-            .then(|| self.transport.client_identity_passphrase.clone());
-        let insecure_tls = self.transport.insecure_tls;
+        let transport = self.transport.clone();
+        let proxy_url = transport.proxy_url.trim().to_owned();
+        let no_proxy = transport.no_proxy_hosts.trim().to_owned();
         let reconnect_limit = self.websocket_reconnect_limit;
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
@@ -3217,12 +3313,17 @@ impl PostlyApp {
                 runtime.block_on(async move {
                     let websocket_request = build_websocket_request(&request, &context)?;
                     let websocket_url = websocket_request.uri().to_string();
+                    let certificate = transport.certificate_settings_for_url(Some(&websocket_url));
+                    let ca_cert_path = (!certificate.ca_cert_path.is_empty())
+                        .then(|| PathBuf::from(certificate.ca_cert_path));
+                    let client_identity_path = (!certificate.client_identity_path.is_empty())
+                        .then(|| PathBuf::from(certificate.client_identity_path));
                     let tls_connector = build_websocket_tls_connector(
                         &websocket_url,
                         ca_cert_path.as_deref(),
                         client_identity_path.as_deref(),
-                        insecure_tls,
-                        client_identity_passphrase.as_deref(),
+                        transport.insecure_tls,
+                        certificate.client_identity_passphrase.as_deref(),
                     )?;
                     let mut reconnects_used = 0_u32;
                     loop {
@@ -5950,6 +6051,89 @@ impl PostlyApp {
                 .small()
                 .color(ui.visuals().weak_text_color()),
         );
+        ui.add_space(10.0);
+        ui.collapsing("Per-domain certificate associations", |ui| {
+            ui.label(
+                RichText::new(
+                    "Attach a CA or client identity to one host. Exact hosts take priority over *.domain wildcards; blank fields fall back to the global certificate settings.",
+                )
+                .small()
+                .color(ui.visuals().weak_text_color()),
+            );
+            ui.add_space(6.0);
+            let mut remove_index = None;
+            for (index, association) in self
+                .transport
+                .certificate_associations
+                .iter_mut()
+                .enumerate()
+            {
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Domain");
+                        changed |= ui
+                            .add(
+                                TextEdit::singleline(&mut association.domain_pattern)
+                                    .desired_width(180.0)
+                                    .hint_text("api.example.com or *.example.com"),
+                            )
+                            .changed();
+                        if ui.button("Remove").clicked() {
+                            remove_index = Some(index);
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("CA PEM");
+                        changed |= ui
+                            .add(
+                                TextEdit::singleline(&mut association.ca_cert_path)
+                                    .desired_width(360.0)
+                                    .hint_text("optional"),
+                            )
+                            .changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Identity");
+                        changed |= ui
+                            .add(
+                                TextEdit::singleline(&mut association.client_identity_path)
+                                    .desired_width(360.0)
+                                    .hint_text("PEM, .p12 or .pfx (optional)"),
+                            )
+                            .changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Passphrase");
+                        changed |= ui
+                            .add(
+                                TextEdit::singleline(&mut association.client_identity_passphrase)
+                                    .password(true)
+                                    .desired_width(240.0)
+                                    .hint_text("session only"),
+                            )
+                            .changed();
+                    });
+                });
+                ui.add_space(4.0);
+            }
+            if let Some(index) = remove_index {
+                self.transport.certificate_associations.remove(index);
+                changed = true;
+            }
+            if ui.button("Add domain association").clicked() {
+                self.transport
+                    .certificate_associations
+                    .push(CertificateAssociation::default());
+                changed = true;
+            }
+            if self.transport.certificate_associations.is_empty() {
+                ui.label(
+                    RichText::new("No per-domain override configured.")
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
+            }
+        });
         ui.add_space(8.0);
         if ui
             .checkbox(
@@ -7834,20 +8018,20 @@ fn build_grpc_endpoint(
             "gRPC GUI calls require verified TLS; disable insecure TLS for this request".to_owned(),
         );
     }
-    if is_pkcs12_identity_path(&transport.client_identity_path) {
+    let parsed = url::Url::parse(endpoint_url).map_err(|error| error.to_string())?;
+    let certificate = transport.certificate_settings_for_url(Some(endpoint_url));
+    if is_pkcs12_identity_path(&certificate.client_identity_path) {
         return Err(
             "gRPC GUI calls currently require a combined PEM client identity; PKCS#12 is available for HTTP/SSE"
                 .to_owned(),
         );
     }
-    let parsed = url::Url::parse(endpoint_url).map_err(|error| error.to_string())?;
     let mut endpoint = Endpoint::from_shared(endpoint_url.to_owned())
         .map_err(|error| format!("invalid gRPC endpoint: {error}"))?
         .timeout(Duration::from_secs(transport.timeout_seconds.max(1)));
     match parsed.scheme() {
         "http" => {
-            if !transport.ca_cert_path.trim().is_empty()
-                || !transport.client_identity_path.trim().is_empty()
+            if !certificate.ca_cert_path.is_empty() || !certificate.client_identity_path.is_empty()
             {
                 return Err("gRPC CA and client identity require an https:// endpoint".to_owned());
             }
@@ -7859,8 +8043,8 @@ fn build_grpc_endpoint(
             let mut tls = ClientTlsConfig::new()
                 .domain_name(domain)
                 .with_webpki_roots();
-            if !transport.ca_cert_path.trim().is_empty() {
-                let path = grpc_path_from_workspace(root, &transport.ca_cert_path);
+            if !certificate.ca_cert_path.is_empty() {
+                let path = grpc_path_from_workspace(root, &certificate.ca_cert_path);
                 let pem = fs::read(&path).map_err(|error| {
                     format!(
                         "could not read gRPC CA certificate {}: {error}",
@@ -7872,8 +8056,8 @@ fn build_grpc_endpoint(
                 }
                 tls = tls.ca_certificate(Certificate::from_pem(pem));
             }
-            if !transport.client_identity_path.trim().is_empty() {
-                let path = grpc_path_from_workspace(root, &transport.client_identity_path);
+            if !certificate.client_identity_path.is_empty() {
+                let path = grpc_path_from_workspace(root, &certificate.client_identity_path);
                 let pem = fs::read(&path).map_err(|error| {
                     format!(
                         "could not read gRPC client identity {}: {error}",
@@ -9942,6 +10126,103 @@ mod tests {
         assert!(reopened.transport.insecure_tls);
         assert_eq!(reopened.transport.theme, ThemeMode::Light);
         assert!(!reopened.transport_settings_dirty);
+    }
+
+    #[test]
+    fn certificate_associations_prefer_exact_hosts_and_fall_back_per_field() {
+        let mut transport = TransportSettings {
+            ca_cert_path: "/global/ca.pem".to_owned(),
+            client_identity_path: "/global/client.pem".to_owned(),
+            ..TransportSettings::default()
+        };
+        transport
+            .certificate_associations
+            .push(CertificateAssociation {
+                domain_pattern: "*.example.com".to_owned(),
+                ca_cert_path: "/wildcard/ca.pem".to_owned(),
+                client_identity_path: String::new(),
+                client_identity_passphrase: "wildcard-pass".to_owned(),
+            });
+        transport
+            .certificate_associations
+            .push(CertificateAssociation {
+                domain_pattern: "api.example.com".to_owned(),
+                ca_cert_path: String::new(),
+                client_identity_path: "/exact/client.p12".to_owned(),
+                client_identity_passphrase: "exact-pass".to_owned(),
+            });
+
+        let exact = transport.certificate_settings_for_url(Some("https://api.example.com/v1"));
+        assert_eq!(exact.ca_cert_path, "/global/ca.pem");
+        assert_eq!(exact.client_identity_path, "/exact/client.p12");
+        assert_eq!(
+            exact.client_identity_passphrase.as_deref(),
+            Some("exact-pass")
+        );
+
+        let wildcard = transport.certificate_settings_for_url(Some("https://docs.example.com"));
+        assert_eq!(wildcard.ca_cert_path, "/wildcard/ca.pem");
+        assert_eq!(wildcard.client_identity_path, "/global/client.pem");
+        assert_eq!(
+            wildcard.client_identity_passphrase.as_deref(),
+            Some("wildcard-pass")
+        );
+
+        let fallback = transport.certificate_settings_for_url(Some("https://example.net"));
+        assert_eq!(fallback.ca_cert_path, "/global/ca.pem");
+        assert_eq!(fallback.client_identity_path, "/global/client.pem");
+        assert_eq!(fallback.client_identity_passphrase, None);
+    }
+
+    #[test]
+    fn certificate_association_paths_persist_without_session_passphrases() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.transport
+            .certificate_associations
+            .push(CertificateAssociation {
+                domain_pattern: "api.example.com".to_owned(),
+                ca_cert_path: "certs/api-ca.pem".to_owned(),
+                client_identity_path: "certs/api-client.p12".to_owned(),
+                client_identity_passphrase: "do-not-persist".to_owned(),
+            });
+        app.save_transport_settings().expect("save settings");
+
+        let settings = std::fs::read_to_string(directory.path().join(GUI_SETTINGS_FILE))
+            .expect("settings file");
+        assert!(settings.contains("api.example.com"));
+        assert!(settings.contains("api-client.p12"));
+        assert!(!settings.contains("do-not-persist"));
+
+        let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
+        let association = reopened
+            .transport
+            .certificate_associations
+            .first()
+            .expect("association");
+        assert_eq!(association.domain_pattern, "api.example.com");
+        assert_eq!(association.ca_cert_path, "certs/api-ca.pem");
+        assert_eq!(association.client_identity_path, "certs/api-client.p12");
+        assert!(association.client_identity_passphrase.is_empty());
+    }
+
+    #[test]
+    fn certificate_association_is_validated_before_a_matching_request_runs() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.transport
+            .certificate_associations
+            .push(CertificateAssociation {
+                domain_pattern: "api.example.com".to_owned(),
+                ca_cert_path: "/definitely-not-a-domain-ca.pem".to_owned(),
+                ..CertificateAssociation::default()
+            });
+
+        let error = app
+            .configured_engine_for_url(Some("https://api.example.com/users"))
+            .expect_err("matching certificate path should be diagnosed");
+        assert!(error.contains("could not read CA certificate"));
+        assert!(error.contains("definitely-not-a-domain-ca.pem"));
     }
 
     #[test]

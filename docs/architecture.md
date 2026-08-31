@@ -53,7 +53,7 @@ CLI or native UI
   -> renderer / reporter
 ~~~
 
-The HTTP engine uses a bounded timeout and redirect policy, plus a cookie jar shared by cloned engine handles. Saved workspaces can opt into a bounded ignored JSON cookie file; unsaved callers keep an in-memory jar. Insecure certificate acceptance is an explicit option rather than a default. HTTPS accepts custom PEM roots and PEM client identities through Rustls; `.p12`/`.pfx` client identities use the native TLS backend and receive a transient passphrase only in memory. Variable diagnostics are surfaced before network I/O.
+The HTTP engine uses a bounded timeout and redirect policy, plus a cookie jar shared by cloned engine handles. Saved workspaces can opt into a bounded ignored JSON cookie file; unsaved callers keep an in-memory jar. Insecure certificate acceptance is an explicit option rather than a default. HTTPS accepts custom PEM roots and PEM client identities through Rustls; `.p12`/`.pfx` client identities use the native TLS backend and receive a transient passphrase only in memory. The native GUI can select exact-host or wildcard certificate associations after URL variable resolution for HTTP, SSE, WebSocket and gRPC flows; paths persist locally while passphrases remain session-only. Variable diagnostics are surfaced before network I/O.
 
 ## Next decisions
 

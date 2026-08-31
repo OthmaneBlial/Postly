@@ -214,8 +214,10 @@ Not yet implemented:
   individual TOML writes use unique flushed temporary files and
   request/environment relocations roll back their newly written destination.
 - Encrypted PKCS#12 identities and transient passphrase handling now work for
-  the shared HTTP/SSE/WebSocket engine, CLI and native GUI; per-domain
-  certificate association and gRPC PKCS#12 remain open.
+  the shared HTTP/SSE/WebSocket engine, CLI and native GUI; native GUI
+  per-domain certificate associations now select exact-host or wildcard
+  overrides for HTTP/SSE/WebSocket/gRPC while keeping passphrases session-only.
+  gRPC PKCS#12 remains open.
   gRPC custom PEM CA/client identity and SOCKS5 routing are available in CLI
   and GUI.
 - OpenAPI cyclic/remote references, richer schema generation beyond the current composed/format-aware samples and deeper protocol-specific GUI tooling.
@@ -248,6 +250,12 @@ The WebSocket TLS routing slice validates local CA and combined PEM client
 identity loading before network work, supports PKCS#12 identities through the
 same transient passphrase environment boundary, and applies the configuration
 to both CLI and native GUI `wss://` connections.
+
+The native GUI certificate-association slice persists domain patterns and
+certificate paths, chooses the most specific exact or wildcard host match
+after variable resolution, falls back independently for blank fields, and
+keeps per-association passphrases out of `.postly/gui-settings.json`. Matching
+and pre-network diagnostics are covered by native-app tests.
 
 The OAuth Device Authorization slice adds RFC 8628-style device-code
 requests, safe verification prompts in the CLI/GUI, bounded polling with
@@ -287,7 +295,7 @@ targets (`curl_command`, `variables` and `postman_import`) each completed 256
 bounded runs without a crash. `cargo xtask package` built the current macOS
 arm64 release artifacts, executed the packaged CLI's `--version` and `--help`
 smokes, verified the archive listing and reported SHA-256
-`954e02714a3ce3e69997f2d19c9d44fcfb97211acb05d016e6a356975de19544`.
+`c93241a68bc3a93c0b9b92ac9582602b9e76d322b269ca52ce379bbc3e586645`.
 
 ## Next highest-value work
 

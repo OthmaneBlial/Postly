@@ -73,7 +73,8 @@ This repository contains working vertical slices, not a static interface mockup.
   verified HTTPS, custom PEM CAs, combined PEM or password-protected PKCS#12
   client identities, HTTP(S)/SOCKS
   proxy routing, CLI/GUI WebSocket and gRPC HTTP CONNECT routing, WebSocket
-  custom CA/client-identity support, environment proxy support
+  custom CA/client-identity support, native GUI exact-host/wildcard
+  certificate associations, environment proxy support
   and bypass rules, with actionable
   diagnostics.
 - **Response inspection:** Pretty/Raw views with JSON, YAML and well-formed XML
