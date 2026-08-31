@@ -19,7 +19,7 @@ Implemented:
 - Response metadata and JSON pretty formatting.
 - Postman Collection v2.1 and environment import reports.
 - Postman Collection v2.1 and environment export with a tested native round-trip.
-- Postman importer regression fixture for structured URLs, disabled/non-text values, form bodies, file parts, API-key query auth and GraphQL review warnings.
+- Postman importer regression fixture for structured URLs, disabled/non-text values, form bodies, file parts, API-key query auth and structured GraphQL metadata.
 - Postman importer fixture for supported JavaScript raw bodies, text multipart
   fields, encoded query values and structured bearer requests.
 - Postman import now preserves scalar header values, marks unsupported auth types
@@ -258,8 +258,8 @@ and a real CLI smoke run from a temporary workspace; operation paths, server
 variables, security metadata and request/response examples were inspected.
 
 On this macOS arm64 workspace run, `cargo xtask compat --json` passed all 7
-checked-in fixtures; its separate request-mapping signal was 16/21 (76.19%),
-with the remaining cases retained as explicit manual review. The latest local
+checked-in fixtures; its separate request-mapping signal was 17/21 (80.95%),
+with file bodies, scripts and other review-worthy cases retained as explicit manual review. The latest local
 `cargo xtask bench` run on macOS arm64 reported a CLI `--help` startup median
 of 11.760 ms and peak RSS of 12,768 KiB, 48.941 ms for the Postman variant
 import, 153.092 ms to open a generated 1,000-request workspace, 153.149 ms to

@@ -1094,7 +1094,11 @@ fn description_text(value: &Value) -> Option<String> {
 fn request_needs_review(request: &Request) -> bool {
     request.url.is_empty()
         || matches!(request.body, RequestBody::BinaryFile { .. })
-        || matches!(request.body, RequestBody::Graphql { .. })
+        || matches!(
+            &request.body,
+            RequestBody::Graphql { query, variables, .. }
+                if query.trim().is_empty() || (!variables.is_object() && !variables.is_null())
+        )
         || matches!(
             &request.body,
             RequestBody::Multipart { parts }
@@ -1238,8 +1242,8 @@ TOKEN='last value'
 
         let report = import_postman_collection(&fixture, output.path()).expect("import");
         assert_eq!(report.imported_requests, 8);
-        assert_eq!(report.fully_supported_requests, 5);
-        assert_eq!(report.manual_review_requests, 3);
+        assert_eq!(report.fully_supported_requests, 6);
+        assert_eq!(report.manual_review_requests, 2);
         assert!(report
             .warnings
             .iter()
