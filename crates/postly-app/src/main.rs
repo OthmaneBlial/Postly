@@ -279,6 +279,9 @@ enum BodyKind {
     None,
     Raw,
     Json,
+    Xml,
+    Html,
+    JavaScript,
     Graphql,
     FormUrlEncoded,
     Multipart,
@@ -292,6 +295,9 @@ impl BodyKind {
             Self::None => "None",
             Self::Raw => "Raw text",
             Self::Json => "JSON",
+            Self::Xml => "XML",
+            Self::Html => "HTML",
+            Self::JavaScript => "JavaScript",
             Self::Graphql => "GraphQL",
             Self::FormUrlEncoded => "Form URL encoded",
             Self::Multipart => "Multipart form-data",
@@ -1442,7 +1448,21 @@ impl PostlyApp {
                 self.raw_content_type.clear();
             }
             RequestBody::Raw { text, content_type } => {
-                self.body_kind = BodyKind::Raw;
+                self.body_kind = match content_type
+                    .as_deref()
+                    .unwrap_or_default()
+                    .split(';')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_ascii_lowercase()
+                    .as_str()
+                {
+                    "application/xml" | "text/xml" => BodyKind::Xml,
+                    "text/html" => BodyKind::Html,
+                    "application/javascript" | "text/javascript" => BodyKind::JavaScript,
+                    _ => BodyKind::Raw,
+                };
                 self.body_text.clone_from(text);
                 self.raw_content_type = content_type.clone().unwrap_or_default();
             }
@@ -2200,11 +2220,13 @@ impl PostlyApp {
             (!self.test_script.trim().is_empty()).then(|| self.test_script.clone());
         request.body = match self.body_kind {
             BodyKind::None => RequestBody::None,
-            BodyKind::Raw => RequestBody::Raw {
-                text: self.body_text.clone(),
-                content_type: (!self.raw_content_type.trim().is_empty())
-                    .then(|| self.raw_content_type.trim().to_owned()),
-            },
+            BodyKind::Raw | BodyKind::Xml | BodyKind::Html | BodyKind::JavaScript => {
+                RequestBody::Raw {
+                    text: self.body_text.clone(),
+                    content_type: (!self.raw_content_type.trim().is_empty())
+                        .then(|| self.raw_content_type.trim().to_owned()),
+                }
+            }
             BodyKind::Json => RequestBody::Json {
                 value: serde_json::from_str(&self.body_text)
                     .map_err(|error| format!("JSON body is invalid: {error}"))?,
@@ -4829,6 +4851,9 @@ impl PostlyApp {
                     BodyKind::None,
                     BodyKind::Raw,
                     BodyKind::Json,
+                    BodyKind::Xml,
+                    BodyKind::Html,
+                    BodyKind::JavaScript,
                     BodyKind::Graphql,
                     BodyKind::FormUrlEncoded,
                     BodyKind::Multipart,
@@ -4842,7 +4867,11 @@ impl PostlyApp {
             });
         if self.body_kind != previous {
             self.dirty = true;
-            if self.body_kind == BodyKind::Raw && self.body_text.is_empty() {
+            if matches!(
+                self.body_kind,
+                BodyKind::Raw | BodyKind::Xml | BodyKind::Html | BodyKind::JavaScript
+            ) && self.body_text.is_empty()
+            {
                 self.body_text = "".to_owned();
             }
             if self.body_kind == BodyKind::Json && self.body_text.is_empty() {
@@ -4855,6 +4884,13 @@ impl PostlyApp {
                 if self.graphql_variables.is_empty() {
                     self.graphql_variables = "{}".to_owned();
                 }
+            }
+            match self.body_kind {
+                BodyKind::Xml => self.raw_content_type = "application/xml".to_owned(),
+                BodyKind::Html => self.raw_content_type = "text/html".to_owned(),
+                BodyKind::JavaScript => self.raw_content_type = "text/javascript".to_owned(),
+                BodyKind::Json => self.raw_content_type.clear(),
+                _ => {}
             }
             match self.body_kind {
                 BodyKind::FormUrlEncoded => {
@@ -4872,6 +4908,9 @@ impl PostlyApp {
                 BodyKind::None
                 | BodyKind::Raw
                 | BodyKind::Json
+                | BodyKind::Xml
+                | BodyKind::Html
+                | BodyKind::JavaScript
                 | BodyKind::Graphql
                 | BodyKind::Advanced => {}
             }
@@ -4889,8 +4928,12 @@ impl PostlyApp {
                         .color(ui.visuals().weak_text_color()),
                 );
             }
-            BodyKind::Raw | BodyKind::Json => {
-                if self.body_kind == BodyKind::Raw {
+            BodyKind::Raw
+            | BodyKind::Json
+            | BodyKind::Xml
+            | BodyKind::Html
+            | BodyKind::JavaScript => {
+                if matches!(self.body_kind, BodyKind::Raw) {
                     ui.label(
                         RichText::new("Content type (optional)")
                             .strong()
@@ -4907,6 +4950,16 @@ impl PostlyApp {
                         self.dirty = true;
                     }
                     ui.add_space(6.0);
+                } else if matches!(
+                    self.body_kind,
+                    BodyKind::Xml | BodyKind::Html | BodyKind::JavaScript
+                ) {
+                    ui.label(
+                        RichText::new(format!("Content type: {}", self.raw_content_type))
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                    ui.add_space(6.0);
                 }
                 if ui
                     .add(
@@ -4916,6 +4969,12 @@ impl PostlyApp {
                             .desired_width(f32::INFINITY)
                             .hint_text(if self.body_kind == BodyKind::Json {
                                 "{\n  \"key\": \"value\"\n}"
+                            } else if self.body_kind == BodyKind::Xml {
+                                "<root>\n  <item>value</item>\n</root>"
+                            } else if self.body_kind == BodyKind::Html {
+                                "<!doctype html>\n<html>\n  <body>Hello</body>\n</html>"
+                            } else if self.body_kind == BodyKind::JavaScript {
+                                "export default function example() {\n  return true;\n}"
                             } else {
                                 "Request body"
                             }),
@@ -8081,24 +8140,34 @@ mod tests {
     }
 
     #[test]
-    fn raw_body_editor_preserves_content_type() {
+    fn typed_raw_body_editors_preserve_content_types() {
         let directory = tempfile::tempdir().expect("tempdir");
         let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
-        app.request.body = RequestBody::Raw {
-            text: "<user>Ada</user>".to_owned(),
-            content_type: Some("application/xml".to_owned()),
-        };
-        app.load_request_editors();
+        for (content_type, body_kind, text) in [
+            ("application/xml", BodyKind::Xml, "<user>Ada</user>"),
+            ("text/html", BodyKind::Html, "<p>Ada</p>"),
+            (
+                "text/javascript",
+                BodyKind::JavaScript,
+                "export const user = 'Ada';",
+            ),
+        ] {
+            app.request.body = RequestBody::Raw {
+                text: text.to_owned(),
+                content_type: Some(content_type.to_owned()),
+            };
+            app.load_request_editors();
 
-        assert_eq!(app.body_kind, BodyKind::Raw);
-        assert_eq!(app.raw_content_type, "application/xml");
-        assert_eq!(
-            app.edited_request().expect("raw editor state").body,
-            RequestBody::Raw {
-                text: "<user>Ada</user>".to_owned(),
-                content_type: Some("application/xml".to_owned()),
-            }
-        );
+            assert_eq!(app.body_kind, body_kind);
+            assert_eq!(app.raw_content_type, content_type);
+            assert_eq!(
+                app.edited_request().expect("typed raw editor state").body,
+                RequestBody::Raw {
+                    text: text.to_owned(),
+                    content_type: Some(content_type.to_owned()),
+                }
+            );
+        }
     }
 
     #[test]

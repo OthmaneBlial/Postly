@@ -65,7 +65,7 @@ Implemented:
   applies pre-request mutations to that send, and keeps post-response failures
   visible while retaining the response.
 - native GUI Transport tab with persisted local timeout, HTTP(S)/SOCKS proxy, bypass hosts, custom CA, client identity and explicit insecure-TLS settings for HTTP/SSE/WebSocket/gRPC workflows; WebSocket and gRPC use HTTP CONNECT routing.
-- Native GUI Body tab editors for URL-encoded fields, multipart text/file parts and binary file uploads, with disabled entries and optional content types preserved.
+- Native GUI Body tab editors for raw text, JSON, XML, HTML, JavaScript and GraphQL plus URL-encoded fields, multipart text/file parts and binary file uploads, with disabled entries and optional content types preserved.
 - Native GUI command palette with searchable request actions and keyboard shortcuts for new, save, send, cancel, response clearing and wrapping.
 - Dynamic gRPC `.proto` compilation with service/method discovery plus unary, server-streaming, client-streaming and bidirectional CLI calls using protobuf JSON, metadata, HTTPS webpki roots, custom PEM CAs, combined PEM client identities and explicit HTTP CONNECT proxy routing; explicit insecure TLS remains pending.
 - CLI gRPC server reflection discovery supports protocol v1 with a v1alpha fallback, keeps reflected descriptors in memory and reports services, methods and streaming shapes as text or JSON.

@@ -103,9 +103,10 @@ This repository contains working vertical slices, not a static interface mockup.
   subscriptions, WebSocket text/binary flows with saved message presets, and
   dynamic gRPC calls with local `.proto` discovery or CLI server reflection (v1
   with v1alpha fallback).
-- **Native desktop workspace:** request editing, Scripts and Body tabs, command
-  palette, cancellation, local history, transport settings, dark/light/system
-  themes and the same core semantics as the CLI.
+- **Native desktop workspace:** request editing, dedicated raw text/JSON/XML/
+  HTML/JavaScript body modes, Scripts and Body tabs, command palette,
+  cancellation, local history, transport settings, dark/light/system themes and
+  the same core semantics as the CLI.
 
 The [living progress log](docs/progress.md) records what is implemented, what was
 verified locally and which release gates still require external validation.
