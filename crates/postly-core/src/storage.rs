@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    history::{HistoryEntry, HistoryFilter},
+    history::{sanitize_url, HistoryEntry, HistoryFilter},
     model::{Collection, Environment, ProjectManifest, Request},
 };
 
@@ -143,6 +143,8 @@ impl WorkspaceValidationReport {
 /// Search deliberately covers navigational metadata only. Headers, cookies,
 /// bodies, authentication and scripts are never loaded into the result so a
 /// search command cannot accidentally turn sensitive request data into output.
+/// URL matching uses the saved URL, while emitted URLs remove credentials,
+/// query strings and fragments.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestSearchResult {
     pub collection_id: uuid::Uuid,
@@ -522,7 +524,7 @@ impl Workspace {
                         id: request.id,
                         name: request.name,
                         method: request.method,
-                        url: request.url,
+                        url: sanitize_url(&request.url),
                     });
                 }
             }
@@ -973,7 +975,7 @@ mod tests {
         let request = Request::new(
             "List users",
             "GET",
-            "https://user:password@example.com/users?token=secret",
+            "https://user:password@example.com/users?token=url-value",
         );
         workspace
             .record_history(&HistoryEntry::from_error(&request, 12))
@@ -1063,8 +1065,11 @@ mod tests {
             .create_collection(&Collection::new("Billing"))
             .expect("billing collection");
 
-        let mut users_request =
-            Request::new("List administrators", "GET", "https://example.com/users");
+        let mut users_request = Request::new(
+            "List administrators",
+            "GET",
+            "https://user:password@example.com/users?token=url-value",
+        );
         users_request.folder = Some("Admin / Read".to_owned());
         users_request.description = Some("Searchable operational endpoint".to_owned());
         users_request.headers.push(crate::HeaderEntry::enabled(
@@ -1085,6 +1090,14 @@ mod tests {
         assert_eq!(results[0].collection, "Users");
         assert_eq!(results[0].folder.as_deref(), Some("Admin / Read"));
         assert!(results[0].path.ends_with("list-administrators.postly.toml"));
+        assert_eq!(results[0].url, "https://[redacted]example.com/users");
+        assert_eq!(
+            workspace
+                .search_requests("token")
+                .expect("query search")
+                .len(),
+            1
+        );
         assert!(workspace
             .search_requests("secret")
             .expect("secret search")

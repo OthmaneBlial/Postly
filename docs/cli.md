@@ -61,7 +61,9 @@ postly search "admin / read" --workspace ./my-api --output-json
 
 The result paths are relative to the workspace root and deterministic. An
 empty query is rejected; a valid query with no matches exits successfully and
-prints an explicit no-match message.
+prints an explicit no-match message. Matching can use the saved URL, but output
+URLs are sanitized to remove credentials, query strings and fragments; header,
+cookie, body, auth and script values are never included in search results.
 
 ## Send requests
 

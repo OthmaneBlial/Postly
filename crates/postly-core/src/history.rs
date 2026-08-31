@@ -110,7 +110,7 @@ fn now_unix_ms() -> u64 {
         .min(u64::MAX as u128) as u64
 }
 
-fn sanitize_url(url: &str) -> String {
+pub(crate) fn sanitize_url(url: &str) -> String {
     let without_query = url.split(['?', '#']).next().unwrap_or(url);
     let Some(scheme_end) = without_query.find("://") else {
         return without_query.to_owned();

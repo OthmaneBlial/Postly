@@ -136,6 +136,9 @@ Implemented:
   text and JSON output, aggregates malformed collection/request/environment
   files and returns a failing exit status without inspecting ignored `.postly/`
   runtime state.
+- Workspace search now sanitizes emitted URLs, removing credentials, query
+  strings and fragments while retaining source-URL matching; a regression test
+  ensures search cannot print a URL token or header secret.
 - Native GUI saved-request tabs support dirty indicators, activation,
   close-others, reordering and restoration from ignored local path-only state.
 - Native GUI developer console retains bounded execution, protocol and script
