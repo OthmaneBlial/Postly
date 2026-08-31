@@ -5126,6 +5126,88 @@ paths:
     }
 
     #[tokio::test]
+    async fn websocket_command_routes_through_a_socks5_proxy() {
+        let target_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("target listener");
+        let target_address = target_listener.local_addr().expect("target address");
+        let target_server = tokio::spawn(async move {
+            let (stream, _) = target_listener.accept().await.expect("target connection");
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("WebSocket handshake");
+            match socket.next().await.expect("message").expect("frame") {
+                Message::Text(text) => assert_eq!(text.to_string(), "through-socks"),
+                message => panic!("expected text message, got {message:?}"),
+            }
+            socket
+                .send(Message::text("socks echo"))
+                .await
+                .expect("echo");
+            socket.send(Message::Close(None)).await.expect("close");
+        });
+
+        let proxy_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("proxy listener");
+        let proxy_address = proxy_listener.local_addr().expect("proxy address");
+        let proxy_server = tokio::spawn(async move {
+            let (mut client, _) = proxy_listener.accept().await.expect("proxy connection");
+            let mut greeting = [0_u8; 3];
+            client.read_exact(&mut greeting).await.expect("greeting");
+            assert_eq!(greeting, [0x05, 0x01, 0x00]);
+            client
+                .write_all(&[0x05, 0x00])
+                .await
+                .expect("greeting reply");
+
+            let mut connect_header = [0_u8; 4];
+            client
+                .read_exact(&mut connect_header)
+                .await
+                .expect("connect header");
+            assert_eq!(connect_header, [0x05, 0x01, 0x00, 0x01]);
+            let mut target_ip = [0_u8; 4];
+            client.read_exact(&mut target_ip).await.expect("target ip");
+            let mut target_port = [0_u8; 2];
+            client
+                .read_exact(&mut target_port)
+                .await
+                .expect("target port");
+            assert_eq!(target_ip, [127, 0, 0, 1]);
+            assert_eq!(u16::from_be_bytes(target_port), target_address.port());
+
+            let mut target = tokio::net::TcpStream::connect(target_address)
+                .await
+                .expect("target relay connection");
+            let mut reply = vec![0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1];
+            reply.extend_from_slice(&target_address.port().to_be_bytes());
+            client.write_all(&reply).await.expect("connect reply");
+            tokio::io::copy_bidirectional(&mut client, &mut target)
+                .await
+                .expect("proxy relay");
+        });
+
+        run_websocket(WebsocketOptions {
+            endpoint: format!("ws://{target_address}/socket"),
+            send: vec!["through-socks".to_owned()],
+            headers: Vec::new(),
+            bearer: None,
+            basic_user: None,
+            basic_password: None,
+            timeout: 10,
+            reconnect: 0,
+            proxy: Some(format!("socks5://{proxy_address}")),
+            no_proxy: None,
+            output_json: true,
+        })
+        .await
+        .expect("WebSocket SOCKS proxy command");
+        target_server.await.expect("target server");
+        proxy_server.await.expect("proxy server");
+    }
+
+    #[tokio::test]
     async fn websocket_command_reconnects_a_bounded_number_of_times() {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
