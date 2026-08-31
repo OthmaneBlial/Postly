@@ -568,6 +568,7 @@ pub struct PostlyApp {
     editor_tab: EditorTab,
     body_kind: BodyKind,
     body_text: String,
+    raw_content_type: String,
     graphql_query: String,
     graphql_variables: String,
     graphql_operation_name: String,
@@ -692,6 +693,7 @@ impl PostlyApp {
             editor_tab: EditorTab::Params,
             body_kind: BodyKind::None,
             body_text: String::new(),
+            raw_content_type: String::new(),
             graphql_query: String::new(),
             graphql_variables: String::new(),
             graphql_operation_name: String::new(),
@@ -1388,14 +1390,17 @@ impl PostlyApp {
             RequestBody::None => {
                 self.body_kind = BodyKind::None;
                 self.body_text.clear();
+                self.raw_content_type.clear();
             }
-            RequestBody::Raw { text, .. } => {
+            RequestBody::Raw { text, content_type } => {
                 self.body_kind = BodyKind::Raw;
                 self.body_text.clone_from(text);
+                self.raw_content_type = content_type.clone().unwrap_or_default();
             }
             RequestBody::Json { value } => {
                 self.body_kind = BodyKind::Json;
                 self.body_text = serde_json::to_string_pretty(value).unwrap_or_default();
+                self.raw_content_type.clear();
             }
             RequestBody::Graphql {
                 query,
@@ -1408,18 +1413,22 @@ impl PostlyApp {
                     serde_json::to_string_pretty(variables).unwrap_or_else(|_| "{}".to_owned());
                 self.graphql_operation_name = operation_name.clone().unwrap_or_default();
                 self.body_text.clear();
+                self.raw_content_type.clear();
             }
             RequestBody::FormUrlEncoded { .. } => {
                 self.body_kind = BodyKind::FormUrlEncoded;
                 self.body_text.clear();
+                self.raw_content_type.clear();
             }
             RequestBody::Multipart { .. } => {
                 self.body_kind = BodyKind::Multipart;
                 self.body_text.clear();
+                self.raw_content_type.clear();
             }
             RequestBody::BinaryFile { .. } => {
                 self.body_kind = BodyKind::BinaryFile;
                 self.body_text.clear();
+                self.raw_content_type.clear();
             }
         }
         if self.request.grpc.is_some() && matches!(self.body_kind, BodyKind::None) {
@@ -2069,7 +2078,8 @@ impl PostlyApp {
             BodyKind::None => RequestBody::None,
             BodyKind::Raw => RequestBody::Raw {
                 text: self.body_text.clone(),
-                content_type: None,
+                content_type: (!self.raw_content_type.trim().is_empty())
+                    .then(|| self.raw_content_type.trim().to_owned()),
             },
             BodyKind::Json => RequestBody::Json {
                 value: serde_json::from_str(&self.body_text)
@@ -4421,6 +4431,24 @@ impl PostlyApp {
                 );
             }
             BodyKind::Raw | BodyKind::Json => {
+                if self.body_kind == BodyKind::Raw {
+                    ui.label(
+                        RichText::new("Content type (optional)")
+                            .strong()
+                            .color(ui.visuals().text_color()),
+                    );
+                    if ui
+                        .add(
+                            TextEdit::singleline(&mut self.raw_content_type)
+                                .hint_text("text/plain, application/xml, text/html")
+                                .desired_width(360.0),
+                        )
+                        .changed()
+                    {
+                        self.dirty = true;
+                    }
+                    ui.add_space(6.0);
+                }
                 if ui
                     .add(
                         TextEdit::multiline(&mut self.body_text)
@@ -7336,6 +7364,27 @@ mod tests {
 
         let error = app.edited_request().expect_err("invalid JSON must fail");
         assert!(error.contains("JSON body is invalid"));
+    }
+
+    #[test]
+    fn raw_body_editor_preserves_content_type() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
+        app.request.body = RequestBody::Raw {
+            text: "<user>Ada</user>".to_owned(),
+            content_type: Some("application/xml".to_owned()),
+        };
+        app.load_request_editors();
+
+        assert_eq!(app.body_kind, BodyKind::Raw);
+        assert_eq!(app.raw_content_type, "application/xml");
+        assert_eq!(
+            app.edited_request().expect("raw editor state").body,
+            RequestBody::Raw {
+                text: "<user>Ada</user>".to_owned(),
+                content_type: Some("application/xml".to_owned()),
+            }
+        );
     }
 
     #[test]
