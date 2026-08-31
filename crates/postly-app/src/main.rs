@@ -119,6 +119,7 @@ enum EditorTab {
 enum ResponseTab {
     Pretty,
     Raw,
+    JsonTree,
     Headers,
     Cookies,
     Timing,
@@ -6330,6 +6331,13 @@ impl PostlyApp {
                             self.response_tab = tab;
                         }
                     }
+                    if self.response.as_ref().is_some_and(|response| {
+                        response_preview_language(response) == ResponsePreviewLanguage::Json
+                    }) && tab_button(ui, self.response_tab == ResponseTab::JsonTree, "Tree")
+                        .clicked()
+                    {
+                        self.response_tab = ResponseTab::JsonTree;
+                    }
                     if self.sse_started
                         && tab_button(ui, self.response_tab == ResponseTab::SseEvents, "Events")
                             .clicked()
@@ -6937,6 +6945,17 @@ impl PostlyApp {
                         }
                     });
             }
+            ResponseTab::JsonTree => match response_json_value(response) {
+                Ok(value) => render_json_tree(ui, "response", &value, true),
+                Err(error) => {
+                    ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+                    ui.label(
+                        RichText::new("Switch to Pretty or Raw to inspect the original response.")
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                }
+            },
             ResponseTab::Headers => {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     egui::Grid::new("response-headers")
@@ -7952,6 +7971,96 @@ fn response_preview_language(response: &HttpResponse) -> ResponsePreviewLanguage
         ResponsePreviewLanguage::JavaScript
     } else {
         ResponsePreviewLanguage::Text
+    }
+}
+
+const MAX_JSON_TREE_BYTES: usize = 2 * 1024 * 1024;
+
+fn response_json_value(response: &HttpResponse) -> Result<serde_json::Value, String> {
+    if response.body.len() > MAX_JSON_TREE_BYTES {
+        return Err(format!(
+            "JSON tree view is limited to {} MiB for responsive rendering.",
+            MAX_JSON_TREE_BYTES / (1024 * 1024)
+        ));
+    }
+    serde_json::from_slice(&response.body)
+        .map_err(|error| format!("response body is not valid JSON: {error}"))
+}
+
+fn render_json_tree(ui: &mut egui::Ui, label: &str, value: &serde_json::Value, default_open: bool) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if object.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.monospace(label);
+                    ui.label(
+                        RichText::new("{}  empty object").color(ui.visuals().weak_text_color()),
+                    );
+                });
+            } else {
+                egui::CollapsingHeader::new(format!(
+                    "{label}  ·  {} field{}",
+                    object.len(),
+                    if object.len() == 1 { "" } else { "s" }
+                ))
+                .default_open(default_open)
+                .show(ui, |ui| {
+                    for (key, child) in object {
+                        render_json_tree(ui, key, child, false);
+                    }
+                });
+            }
+        }
+        serde_json::Value::Array(array) => {
+            if array.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.monospace(label);
+                    ui.label(
+                        RichText::new("[]  empty array").color(ui.visuals().weak_text_color()),
+                    );
+                });
+            } else {
+                egui::CollapsingHeader::new(format!(
+                    "{label}  ·  {} item{}",
+                    array.len(),
+                    if array.len() == 1 { "" } else { "s" }
+                ))
+                .default_open(default_open)
+                .show(ui, |ui| {
+                    for (index, child) in array.iter().enumerate() {
+                        render_json_tree(ui, &format!("[{index}]"), child, false);
+                    }
+                });
+            }
+        }
+        serde_json::Value::String(string) => {
+            ui.horizontal(|ui| {
+                ui.monospace(label);
+                ui.label(
+                    RichText::new(format!("\"{string}\"")).color(Color32::from_rgb(214, 166, 95)),
+                );
+            });
+        }
+        serde_json::Value::Number(number) => {
+            ui.horizontal(|ui| {
+                ui.monospace(label);
+                ui.label(RichText::new(number.to_string()).color(Color32::from_rgb(117, 194, 226)));
+            });
+        }
+        serde_json::Value::Bool(boolean) => {
+            ui.horizontal(|ui| {
+                ui.monospace(label);
+                ui.label(
+                    RichText::new(boolean.to_string()).color(Color32::from_rgb(194, 139, 236)),
+                );
+            });
+        }
+        serde_json::Value::Null => {
+            ui.horizontal(|ui| {
+                ui.monospace(label);
+                ui.label(RichText::new("null").color(ui.visuals().weak_text_color()));
+            });
+        }
     }
 }
 
@@ -9661,6 +9770,39 @@ mod tests {
             response_preview_language(&text),
             ResponsePreviewLanguage::Text
         );
+    }
+
+    #[test]
+    fn response_json_tree_parses_valid_bodies_and_bounds_large_payloads() {
+        let response = |body: Vec<u8>| HttpResponse {
+            status: 200,
+            status_text: "OK".to_owned(),
+            headers: Vec::new(),
+            response_size: body.len(),
+            body,
+            content_type: Some("application/json".to_owned()),
+            duration_ms: 1,
+            protocol: "HTTP/1.1".to_owned(),
+            url: "http://example.test".to_owned(),
+            cookies: Vec::new(),
+        };
+
+        let valid = response(br#"{"data":{"active":true},"items":[1,2]}"#.to_vec());
+        let value = response_json_value(&valid).expect("valid JSON tree");
+        assert_eq!(
+            value.pointer("/data/active"),
+            Some(&serde_json::Value::Bool(true))
+        );
+
+        let invalid = response(b"{broken".to_vec());
+        assert!(response_json_value(&invalid)
+            .expect_err("invalid JSON should be rejected")
+            .contains("not valid JSON"));
+
+        let oversized = response(vec![b' '; MAX_JSON_TREE_BYTES + 1]);
+        assert!(response_json_value(&oversized)
+            .expect_err("large JSON tree should be bounded")
+            .contains("limited to 2 MiB"));
     }
 
     #[test]
