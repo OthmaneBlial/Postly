@@ -78,8 +78,9 @@ This repository contains working vertical slices, not a static interface mockup.
   syntax coloring, status/headers/cookies/protocol/duration, local search,
   wrapping, clipboard copy, virtualized rendering, an in-app developer console,
   response snapshots and save-as-example fixtures for local mocks. Buffered
-  HTTP responses are bounded to 100 MiB by default; streaming endpoints remain
-  progressive and bounded by their live history views.
+  HTTP responses are bounded to 100 MiB by default and can be tuned in the GUI
+  Transport settings; streaming endpoints remain progressive and bounded by
+  their live history views.
 - **Collections:** local TOML projects, nested folders, deterministic discovery,
   stable request identity, duplicate/delete/rename flows, metadata-only history
   and workspace-wide request search. The native GUI supports multiple saved

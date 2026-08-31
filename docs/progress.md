@@ -49,7 +49,8 @@ Implemented:
   coloring, case-insensitive local search with occurrence counts and line
   snippets; HTTP and gRPC responses expose received body size as metadata. The
   buffered HTTP engine rejects bodies over its configurable 100 MiB default
-  before unbounded accumulation, while SSE remains progressive.
+  before unbounded accumulation, while SSE remains progressive. The GUI
+  Transport tab exposes the limit in MiB and persists it locally.
 - response Pretty/Raw views now use virtualized line rows with optional wrapping, clipboard copy and workspace-local response snapshots.
 - OpenAPI 3.0/3.1 JSON/YAML import for common operations, local `$ref` components and same-source-directory external refs, parameters, JSON bodies and auth placeholders.
 - OpenAPI import accepts local files or explicit HTTP(S) URLs with a bounded download and source-preserving report.

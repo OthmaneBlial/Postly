@@ -445,6 +445,7 @@ const MAX_RESPONSE_EXAMPLE_BYTES: usize = 4 * 1024 * 1024;
 #[serde(default)]
 struct TransportSettings {
     timeout_seconds: u64,
+    max_response_megabytes: u64,
     proxy_url: String,
     no_proxy_hosts: String,
     ca_cert_path: String,
@@ -457,6 +458,7 @@ impl Default for TransportSettings {
     fn default() -> Self {
         Self {
             timeout_seconds: 30,
+            max_response_megabytes: 100,
             proxy_url: String::new(),
             no_proxy_hosts: String::new(),
             ca_cert_path: String::new(),
@@ -486,8 +488,12 @@ impl TransportSettings {
 
     fn engine_options(&self, root: &Path) -> EngineOptions {
         let path = |value: &str| (!value.trim().is_empty()).then(|| PathBuf::from(value.trim()));
+        let max_response_megabytes = self.max_response_megabytes.clamp(1, 4_096);
         EngineOptions {
             timeout: Duration::from_secs(self.timeout_seconds.max(1)),
+            max_response_bytes: max_response_megabytes
+                .saturating_mul(1024 * 1024)
+                .min(usize::MAX as u64) as usize,
             accept_invalid_certs: self.insecure_tls,
             proxy: (!self.proxy_url.trim().is_empty()).then(|| self.proxy_url.trim().to_owned()),
             no_proxy: (!self.no_proxy_hosts.trim().is_empty())
@@ -5483,6 +5489,24 @@ impl PostlyApp {
                 .changed();
             ui.label("seconds");
         });
+        ui.horizontal(|ui| {
+            ui.label("Max buffered response");
+            changed |= ui
+                .add(
+                    egui::DragValue::new(&mut self.transport.max_response_megabytes)
+                        .range(1..=4_096)
+                        .speed(1.0),
+                )
+                .changed();
+            ui.label("MiB");
+        });
+        ui.label(
+            RichText::new(
+                "Regular HTTP bodies above this limit are rejected before unbounded buffering; SSE remains progressive.",
+            )
+            .small()
+            .color(ui.visuals().weak_text_color()),
+        );
         ui.add_space(6.0);
         ui.label(
             RichText::new("HTTP(S) proxy")
@@ -9048,6 +9072,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let mut app = PostlyApp::open(directory.path().to_path_buf()).expect("open app");
         app.transport.timeout_seconds = 45;
+        app.transport.max_response_megabytes = 256;
         app.transport.proxy_url = "http://127.0.0.1:8080".to_owned();
         app.transport.no_proxy_hosts = "localhost,127.0.0.1".to_owned();
         app.transport.ca_cert_path = "/tmp/company-ca.pem".to_owned();
@@ -9064,6 +9089,7 @@ mod tests {
 
         let reopened = PostlyApp::open(directory.path().to_path_buf()).expect("reopen app");
         assert_eq!(reopened.transport.timeout_seconds, 45);
+        assert_eq!(reopened.transport.max_response_megabytes, 256);
         assert_eq!(reopened.transport.proxy_url, "http://127.0.0.1:8080");
         assert_eq!(reopened.transport.no_proxy_hosts, "localhost,127.0.0.1");
         assert_eq!(reopened.transport.ca_cert_path, "/tmp/company-ca.pem");
