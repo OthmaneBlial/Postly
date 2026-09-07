@@ -7,6 +7,7 @@ It is a native Rust API client and testing workspace with a CLI and desktop app.
 
 - [Project site](https://othmaneblial.github.io/Postly/): product overview and workflow.
 - [Documentation hub](https://othmaneblial.github.io/Postly/docs.html): install, migration, protocols and trust boundaries.
+- [Real product demo](https://othmaneblial.github.io/Postly/demo.html): 66-second native macOS recording, full player and transcript.
 - [GitHub repository](https://github.com/OthmaneBlial/Postly): source, README and versioned evidence.
 - [Compatibility matrix](https://github.com/OthmaneBlial/Postly/blob/main/docs/compatibility.md): fixture-backed support and open gaps.
 - [Progress log](https://github.com/OthmaneBlial/Postly/blob/main/docs/progress.md): local verification and release boundaries.

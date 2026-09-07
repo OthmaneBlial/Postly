@@ -104,11 +104,11 @@ Storyboard proposé, réalisable avec les capacités actuelles en assumant les �
 
 Après M2, remplacer les passages CLI d'import par le parcours GUI s'il est validé. Conserver le passage CLI des tests pour montrer le partage du projet.
 
-- [ ] Préparer uniquement des données fictives et un workspace dédié ; retirer les notifications et exclure les autres fenêtres de la capture.
-- [ ] Filmer une vraie session continue avant montage. Garder le brut, le commit ou tag exact, l'OS, la résolution, les commandes et les logs du serveur local.
-- [ ] Utiliser le skill **`ffmpeg-video-editor`** : sonder les rushes avec `ffprobe`, couper les attentes, conserver les actions et leurs résultats, encoder avec son profil `web-optimized`.
-- [ ] Ne pas reconstruire la GUI avec du HTML ou une succession de screenshots. Les coupes sont permises ; signaler toute accélération qui pourrait être prise pour une mesure de vitesse.
-- [ ] Exporter `postly-demo.mp4`, un poster réel `postly-demo-poster.jpg` et des sous-titres séparés si nécessaire. Un extrait court est facultatif ; le lecteur complet doit rester disponible.
+- [x] Préparer uniquement des données fictives et un workspace dédié ; retirer les notifications et exclure les autres fenêtres de la capture.
+- [x] Filmer une vraie session continue avant montage. Garder le brut, le commit ou tag exact, l'OS, la résolution, les commandes et les logs locaux. Voir [la provenance](docs/demo-production.md).
+- [x] Utiliser le skill **`ffmpeg-video-editor`** : sonder les rushes avec `ffprobe`, conserver les actions et leurs résultats, encoder avec son profil `web-optimized`. Prise continue, sans accélération ni coupe temporelle.
+- [x] Ne pas reconstruire la GUI avec du HTML ou une succession de screenshots. Les coupes sont permises ; signaler toute accélération qui pourrait être prise pour une mesure de vitesse.
+- [x] Exporter `postly-demo.mp4`, un poster réel `postly-demo-poster.jpg` et des sous-titres séparés si nécessaire. Un extrait court est facultatif ; le lecteur complet doit rester disponible.
 - [ ] Publier le MP4 comme asset de la release montrée ou sur un hébergement vidéo durable. Ajouter un lecteur avec contrôles sur le site.
 - [ ] Vérifier le README rendu sur GitHub. Si l'intégration vidéo n'y fonctionne pas, utiliser le poster cliquable vers le lecteur complet ; ne pas confondre une animation GIF avec une vidéo contrôlable.
 - [ ] Vérifier lecture, pause, déplacement dans la vidéo, netteté du texte, absence d'informations privées et concordance avec le téléchargement.

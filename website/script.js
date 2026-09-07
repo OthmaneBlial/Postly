@@ -1,5 +1,28 @@
 (() => {
   const status = document.querySelector('.copy-status');
+  document.querySelectorAll('[data-video-time]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const video = button.closest('section').querySelector('video');
+      try {
+        video.currentTime = Number(button.dataset.videoTime);
+        await video.play();
+      } catch {
+        status.textContent = 'Use the video controls to start playback.';
+      }
+    });
+  });
+  document.querySelectorAll('[data-video-fullscreen]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const video = button.closest('section').querySelector('video');
+      try {
+        if (video.requestFullscreen) await video.requestFullscreen();
+        else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+        else status.textContent = 'Use your browser’s video controls for full screen.';
+      } catch {
+        status.textContent = 'Full screen is unavailable in this browser. The inline player still works.';
+      }
+    });
+  });
   let clearStatus;
   document.querySelectorAll('[data-copy-target]').forEach((button) => {
     button.addEventListener('click', async () => {

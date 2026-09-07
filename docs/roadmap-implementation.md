@@ -151,3 +151,21 @@ state correctly. Browser warning/error log was empty. `node --check
 website/script.js` and `node tools/check-website.mjs` passed; the latter checks
 37 local URLs, copy targets, source-document links and stylesheet font assets.
 Publication and video integration are tracked separately from these checks.
+
+## Real native demo and controlled player
+
+The final clean-commit macOS candidate was recorded in one continuous session.
+The 66-second, 1920×1080 H.264 MP4 shows real requests, structural comparison,
+explicit exclusions and a two-request/five-assertion desktop run. It contains
+normal-speed native footage, not a mock interface. Captions sit outside the
+app image; the original recording and action log are retained locally.
+See [production provenance](demo-production.md) for exact source and hashes.
+
+The site has an inline player and a dedicated demo page with controls, chapter
+buttons and a transcript. The README uses a real poster linked to the full
+player, not an animated GIF or an unsupported external video tag. Validation:
+complete decoding, raw scene inspection, final frame inspection, browser
+playback/pause and chapter seeking. The 390 CSS-pixel mobile layout revealed
+and corrected a fixed video-height issue. Full-screen requests are rejected
+in the test browser; the explicit fallback message was verified instead of
+claiming this mode passed. Other browsers/devices remain untested.

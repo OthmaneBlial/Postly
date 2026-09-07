@@ -31,15 +31,38 @@ The initial packaging pass used uncommitted source and correctly recorded
 the final `*-manifest.json` and `*-SHA256SUMS`; development artifact hashes are
 not release checksums. Generated binaries remain in ignored `dist/`, not Git.
 
+## Rebuilt native-design candidate
+
+The replacement candidate was built from clean commit
+`ff6732be39597ae13623d6b0bdcd7cd5a9e059ca` after the native UI and runtime icon
+changes. Its manifest records `source_dirty: false`. The full local gate now
+passes **270 tests** (38 CLI, 70 GUI, 159 core, 3 packaging), formatting and
+Clippy. Font license files accompany both the archive and app resources.
+
+The rebuilt DMG mounted read-only and passed strict deep signature validation.
+Launch Services opened this exact bundle on the Orders workspace. Its new
+native UI was captured successfully, resolving the earlier local screenshot
+limitation. The CLI inside this bundle again passed two real requests and five
+assertions. This remains testing on the development Mac, not an independent
+installation test.
+
+Final local candidate SHA-256 values:
+
+```text
+5923b577e298d076977b2af136e5dc8668d314d12ab182edd9a6d5349f4f92ea  postly-v0.2.0-preview.1-macos-aarch64.tar.gz
+6e4bbdc9fcae0c2d54988036c16f97375b46434f8ff8c9fa5aea4853ea2b3c0b  postly-v0.2.0-preview.1-macos-aarch64.dmg
+```
+
 ## Open gates
 
-- Final clean-commit rebuild and public asset/checksum verification.
-- Rendered inspection of that exact app; actual Finder installation, update
+- Public asset/checksum verification after release approval.
+- Actual Finder installation, update
   and rollback on an independent machine without a development environment.
 - Developer ID signing and notarization: no usable signing identity was
   available locally. Ad-hoc signing must not be described as notarization.
 - Windows, Linux and Intel macOS native builds and real-machine validation.
 - Release benchmark/fuzz runs and externally observed usability sessions.
 
-No video was captured or generated. No public release, independent user test
-or cross-platform success is implied by this report.
+Video evidence is tracked separately in the roadmap implementation log. No
+public release, independent user test or cross-platform success is implied by
+this report.

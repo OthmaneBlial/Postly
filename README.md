@@ -26,9 +26,15 @@ Build requests. Inspect real responses. Commit the workflow with your code.
 
 </div>
 
-[![Postly's actual native desktop with the Orders API and a full JSON response](website/assets/postly-dark.png)](https://othmaneblial.github.io/Postly/#demo)
+[![Watch the real Postly product demo: requests, JSON comparison and assertions](https://othmaneblial.github.io/Postly/assets/postly-demo-poster.jpg)](https://othmaneblial.github.io/Postly/demo.html)
 
-Actual macOS capture of the redesigned source preview. The older `v0.1.0`
+**[Watch the full 66-second demo](https://othmaneblial.github.io/Postly/demo.html)**
+· [Download MP4](https://othmaneblial.github.io/Postly/assets/postly-demo.mp4)
+· [Full-resolution screenshot](https://othmaneblial.github.io/Postly/assets/postly-dark.png)
+
+Actual, continuous macOS recording at normal speed, with captions and a full
+player (play, pause, seeking and fullscreen). [Capture provenance](docs/demo-production.md).
+The older `v0.1.0`
 download does **not** include this UI, onboarding or the new desktop workflows.
 
 Postly is an open-source **API client**, **REST client** and **API testing

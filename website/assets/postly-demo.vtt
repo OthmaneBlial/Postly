@@ -1,0 +1,29 @@
+WEBVTT
+
+00:00.000 --> 00:07.500
+POSTLY / A native API workspace for your repo
+Real macOS app. Real local API. No account.
+
+00:07.500 --> 00:17.500
+Change one parameter. Send the request again.
+The local API filters the orders from two to one.
+
+00:17.500 --> 00:27.500
+Compare the response against a saved example.
+See exactly which JSON fields changed.
+
+00:27.500 --> 00:37.500
+Exclude a JSON subtree explicitly.
+Keep the comparison focused on what matters.
+
+00:37.500 --> 00:46.000
+Restore the filter. Send. Save.
+Your request lives in a plain-text TOML file.
+
+00:46.000 --> 00:58.000
+Run the saved collection in the desktop app.
+Two real requests. Five passing assertions.
+
+00:58.000 --> 01:06.000
+Your API. Your files. Your workflow.
+Try the source preview at github.com/OthmaneBlial/Postly
