@@ -16,6 +16,7 @@ pub struct DesktopApp {
     path: String,
     name: String,
     error: Option<String>,
+    workflows: crate::workflows::Workflows,
 }
 
 impl DesktopApp {
@@ -31,6 +32,7 @@ impl DesktopApp {
             path: default.display().to_string(),
             name: "My API".into(),
             error: None,
+            workflows: crate::workflows::Workflows::default(),
         };
         if let Some(path) = explicit_path {
             app.path = path.display().to_string();
@@ -84,6 +86,7 @@ impl DesktopApp {
 impl eframe::App for DesktopApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if let Some(workspace) = &mut self.workspace {
+            self.workflows.toolbar(ui, workspace);
             if let Some(server) = &self.demo {
                 egui::Panel::top("example-api-status").show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -100,6 +103,18 @@ impl eframe::App for DesktopApp {
                 });
             }
             workspace.ui(ui, frame);
+            let open = self.workflows.windows(ui.ctx(), workspace);
+            if let Some(path) = open {
+                if let Err(error) = self.open_existing(&path) {
+                    if let Some(workspace) = &mut self.workspace {
+                        workspace.status_message =
+                            format!("Could not open imported project: {error}");
+                    }
+                    self.error = Some(error);
+                } else {
+                    self.workflows = crate::workflows::Workflows::default();
+                }
+            }
             return;
         }
         let mut action = None;

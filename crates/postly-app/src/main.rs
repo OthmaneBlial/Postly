@@ -12,6 +12,7 @@ use std::{
 };
 
 mod welcome;
+mod workflows;
 
 use base64::Engine;
 use chrono::Local;

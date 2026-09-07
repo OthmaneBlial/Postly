@@ -141,6 +141,10 @@ Créer le répertoire de travail lors de la réalisation ; garder les rushes hor
 
 ### M2 — Les améliorations qui rendent Postly mémorable
 
+Import guidé et runner desktop implémentés et inspectés localement ; voir les
+[preuves et limites](docs/roadmap-implementation.md). La comparaison de réponses
+et le critère de sortie avec cinq développeurs restent ouverts.
+
 Choisir la cohérence du parcours avant l'élargissement fonctionnel :
 
 1. **Import accompagné dans l'app.** Sélectionner une collection Postman/OpenAPI, choisir la destination, afficher le nombre de requêtes et les avertissements par requête, ouvrir immédiatement la collection. Réutiliser les importeurs et transactions existants. Les scripts restent explicitement opt-in.

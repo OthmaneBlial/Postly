@@ -43,3 +43,27 @@ Six scoped contribution candidates include source locations and acceptance
 criteria in `docs/contribution-candidates.md`. YAML syntax was validated with
 Ruby's YAML parser. These are prepared candidates; no issue assignments or
 outside contributions are claimed.
+
+## Desktop import and collection runner
+
+`crates/postly-app/src/workflows.rs` adds background import and collection runs
+using the existing shared core. Postman and local OpenAPI files import into a
+new/empty destination; the result retains migration warnings before the user
+opens that project. Existing drafts must be saved before switching.
+
+The runner uses the selected collection and environment, supports nested-folder
+selection, explicit script opt-in, fail-fast, cancellation, JSON report export
+and opening a result's request in the editor. It explicitly runs saved files.
+
+Validation:
+
+- All 259 workspace tests passed; Clippy passed.
+- New regressions cover both import formats, nonempty-destination protection
+  and a real two-request run with an intentionally failed assertion.
+- In the actual macOS window, the Orders runner displayed two passed requests
+  and five assertions. The GUI imported the public Postman fixture, displayed
+  two requests / zero warnings and opened the resulting project. The CLI then
+  ran that GUI-imported project successfully with two HTTP 200 responses.
+
+The detailed guide is [desktop workflows](desktop-workflows.md). Response
+comparison, external usability sessions and other roadmap items remain open.
