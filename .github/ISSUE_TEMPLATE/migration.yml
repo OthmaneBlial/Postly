@@ -1,0 +1,30 @@
+name: Migration problem
+description: A small Postman or OpenAPI case that imports incorrectly or is hard to understand
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Postly version, OS and source format
+      placeholder: "Postly tag / OS / Postman v2.1 or OpenAPI 3.1"
+    validations:
+      required: true
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Minimal anonymized example
+      description: Paste the smallest JSON or YAML that reproduces the issue. Replace all credentials and private data. Do not upload an entire company collection.
+    validations:
+      required: true
+  - type: textarea
+    id: warnings
+    attributes:
+      label: Migration warnings and actual result
+      description: Include only sanitized diagnostics.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have been preserved or explained?
+    validations:
+      required: true

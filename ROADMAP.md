@@ -168,8 +168,8 @@ Matrice de distribution visée, à valider plateforme par plateforme :
 - [ ] Fournir les checksums des archives finales, les dépendances, les limites connues et les instructions de lancement pour chaque asset.
 - [ ] Signer/notariser quand les certificats sont disponibles ; annoncer précisément une preview non signée tant que ce n'est pas fait. Un certificat manquant ne transforme pas un build local en release validée.
 - [ ] Avant publication, télécharger les assets candidats sur une machine propre et rejouer le scénario vidéo. Après publication, vérifier les URLs et les hashes des assets publics.
-- [ ] Ajouter `CONTRIBUTING.md`, un formulaire de bug avec OS/version/reproduction, un formulaire de migration sans données privées et un modèle de PR court.
-- [ ] Préparer 5–8 tickets bornés avec fichiers concernés et critères d'acceptation : documentation, exemples, petits défauts UI et fixtures d'import.
+- [x] Ajouter `CONTRIBUTING.md`, un formulaire de bug avec OS/version/reproduction, un formulaire de migration sans données privées et un modèle de PR court.
+- [x] Préparer 5–8 tickets bornés avec fichiers concernés et critères d'acceptation : documentation, exemples, petits défauts UI et fixtures d'import.
 - [ ] Extraire progressivement les panneaux GUI et les commandes CLI lorsque les travaux les touchent ; éviter un grand refactoring qui retarde les livrables visibles.
 
 **Sortie :** chaque plateforme annoncée dispose d'un artefact testé hors machine de développement, et une première contribution peut être réalisée à partir du guide sans explication privée.

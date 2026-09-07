@@ -1,0 +1,36 @@
+name: Bug report
+description: A reproducible problem with a request, the desktop app or installation
+labels: []
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Postly version or source commit
+      placeholder: "Release tag, or git rev-parse --short HEAD"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      placeholder: "macOS 26 ARM64, Windows 11 x64, Ubuntu 24.04 x64…"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Use fictional values. Do not include tokens, private URLs or customer data.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Optional. Inspect files and screenshots for private information before attaching them.

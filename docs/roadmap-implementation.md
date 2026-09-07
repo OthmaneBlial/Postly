@@ -34,3 +34,12 @@ Validation on the local macOS ARM64 machine with Rust 1.95.0:
 
 This is local development evidence, not a fresh-machine installation test or
 external usability study. No new public binary is established by this entry.
+
+## Contribution entry points
+
+`CONTRIBUTING.md` now describes setup, architecture, local checks and fixture
+boundaries. GitHub has bug and migration form definitions plus a PR template.
+Six scoped contribution candidates include source locations and acceptance
+criteria in `docs/contribution-candidates.md`. YAML syntax was validated with
+Ruby's YAML parser. These are prepared candidates; no issue assignments or
+outside contributions are claimed.
