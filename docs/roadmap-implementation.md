@@ -263,3 +263,14 @@ workspace validated and ran two HTTP 200 requests with five assertions, the
 internal checksums passed, and the packaged GUI stayed alive for three seconds.
 This strengthens the local end-user path without replacing an independent Mac
 or a target-machine test. See the [isolated package report](measurements/2026-09-08-isolated-package.md).
+
+## Cross-target compilation evidence
+
+On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the
+locked shared CLI dependency graph to compile for `x86_64-unknown-linux-gnu`
+and `x86_64-pc-windows-gnu`. This is useful source-compatibility evidence, but
+it is not a package or runtime result. A Linux release link still fails on
+OpenSSL symbols, and the GUI/xtask Linux checks need a target OpenSSL sysroot.
+No Windows/Linux runtime or Intel Mac validation is claimed; the open gate and
+the exact command outcomes are recorded in
+[the cross-platform report](measurements/2026-09-08-cross-platform.md).
