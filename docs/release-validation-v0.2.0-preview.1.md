@@ -53,26 +53,23 @@ Final local candidate SHA-256 values:
 6e4bbdc9fcae0c2d54988036c16f97375b46434f8ff8c9fa5aea4853ea2b3c0b  postly-v0.2.0-preview.1-macos-aarch64.dmg
 ```
 
-## Current package rebuilt from the launch-kit commit
+## Current package and archive-pair preservation
 
-The current clean commit `f1e9cd9193276910a165f61ecd2fe616f77ed2b6` was packaged
-again with the locked release graph on the same host. Archive extraction,
-recursive internal checksums, CLI version/help smoke and macOS app signature
-verification passed. Candidate hashes:
+The final release candidate must be built from a clean commit with the locked
+release graph. The generated `*-manifest.json` records `source_dirty: false`,
+target, Rust toolchain and signing status; the generated `*-SHA256SUMS` records
+the exact archive hashes. Archive extraction, recursive internal checksums, CLI
+version/help smoke and macOS app signature verification passed for the current
+local candidate. The final asset hashes are copied verbatim into the GitHub
+release notes at publication time, rather than duplicated as a second mutable
+source here.
 
-```text
-92197f953369d5b17ca30227bf5dae19e3f39bfd3c0ebc03f00cc0e0fd5b0203  postly-v0.2.0-preview.1-macos-aarch64.tar.gz
-dbf61b0038d427748f4ac5c9105fb664d06f3a992686be6cb9c143ca38e42a74  postly-v0.2.0-preview.1-macos-aarch64.dmg
-```
-
-The current manifest records `source_dirty: false`, target
-`aarch64-apple-darwin`, Rust 1.95.0 and ad-hoc/not-notarized signing. The
-extracted GUI binary hash is
+The extracted GUI binary hash is
 `3c70a1ec1fbc971c5f2dea4f0795044dc4ac5a49116e9c19ef61dc5a9547bf19`, identical
 to the native executable used for the real demo. That byte-level match keeps
-video and candidate behavior aligned even though this commit adds documentation
-and measurement tooling after the capture. The archive-pair preservation test
-is recorded in [its own report](measurements/2026-09-08-update-preservation.md).
+video and candidate behavior aligned even though later commits add documentation
+and measurement tooling. The archive-pair preservation test is recorded in
+[its own report](measurements/2026-09-08-update-preservation.md).
 
 ## Open gates
 

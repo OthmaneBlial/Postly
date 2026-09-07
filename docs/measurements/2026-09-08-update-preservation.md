@@ -10,9 +10,10 @@ schema.
   from the GitHub `v0.1.0` release. SHA-256:
   `dbed9a64a45d0087d369f774363e41b1b7bc42e81a5709999ff52971ed317175`.
 - New candidate archive: `postly-v0.2.0-preview.1-macos-aarch64.tar.gz`,
-  built from clean commit `f1e9cd9193276910a165f61ecd2fe616f77ed2b6` with
-  the locked release graph. SHA-256:
-  `92197f953369d5b17ca30227bf5dae19e3f39bfd3c0ebc03f00cc0e0fd5b0203`.
+  built from the clean release commit recorded in its bundled
+  `postly-package.json`. Its final SHA-256 is recorded by the release's
+  `SHA256SUMS` asset and the GitHub release notes; the checked-in package
+  manifest is the provenance authority for the exact source commit.
 - Host: macOS 26.6, Apple Silicon `Mac14,2`, Rust 1.95.0.
 
 ## Procedure
