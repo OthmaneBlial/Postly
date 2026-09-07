@@ -2,6 +2,11 @@
 
 Audit du 7 septembre 2026 · source examinée : `19c91b9` · statut : plan proposé.
 
+Exécution démarrée le 7 septembre 2026. Le diagnostic ci-dessous conserve son
+instantané initial ; les preuves des changements sont consignées dans
+[le suivi d'implémentation](docs/roadmap-implementation.md). Les critères qui
+demandent des machines externes ou de vrais testeurs restent ouverts.
+
 ## Le diagnostic
 
 Postly a une vraie base technique : un moteur Rust partagé par un client natif et une CLI, des collections TOML, des imports Postman/OpenAPI, des assertions, des mocks et plusieurs protocoles. Le problème le plus visible est la distance entre cette base et ce qu'un développeur peut comprendre, installer et essayer immédiatement.
@@ -69,10 +74,10 @@ Estimations pour une personne connaissant le dépôt ; elles excluent les délai
 
 ### M0 — Rendre la première utilisation crédible
 
-- [ ] Corriger la version minimale de Rust selon le graphe réel de dépendances ; vérifier `cargo build --locked` avec la toolchain annoncée.
-- [ ] Ajouter un écran d'accueil lorsque la GUI démarre sans chemin : **Ouvrir un projet / Créer un projet / Essayer un exemple**. Préserver l'ouverture explicite par argument pour les utilisateurs avancés.
-- [ ] Ajouter un petit exemple public dans `examples/` : API de commandes avec données fictives, deux requêtes, assertions et réponse d'exemple. Définir un serveur loopback déterministe et un démarrage documenté ; ne pas dépendre d'une API gratuite externe.
-- [ ] Documenter un parcours exact : ouvrir l'exemple, envoyer la requête, lire le JSON, modifier un paramètre, sauvegarder, retrouver le fichier TOML.
+- [x] Corriger la version minimale de Rust selon le graphe réel de dépendances ; vérifier `cargo build --locked` avec la toolchain annoncée.
+- [x] Ajouter un écran d'accueil lorsque la GUI démarre sans chemin : **Ouvrir un projet / Créer un projet / Essayer un exemple**. Préserver l'ouverture explicite par argument pour les utilisateurs avancés.
+- [x] Ajouter un petit exemple public dans `examples/` : API de commandes avec données fictives, deux requêtes, assertions et réponse d'exemple. Définir un serveur loopback déterministe et un démarrage documenté ; ne pas dépendre d'une API gratuite externe.
+- [x] Documenter un parcours exact : ouvrir l'exemple, envoyer la requête, lire le JSON, modifier un paramètre, sauvegarder, retrouver le fichier TOML.
 - [ ] Construire une `.app` macOS avec icône et métadonnées, puis un DMG ou ZIP adapté. Vérifier les bibliothèques dynamiques requises sur une machine sans environnement de développement.
 - [ ] Préparer une nouvelle version, par exemple `v0.2.0-preview.1`, depuis un commit identifié. Ce numéro est proposé ; aucun tag n'est créé par cette roadmap.
 - [ ] Placer cette version dans le canal prerelease, avec notes qui décrivent ce binaire et un `SHA256SUMS` téléchargeable pour les archives.

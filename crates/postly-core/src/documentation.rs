@@ -26,7 +26,7 @@ pub fn generate_markdown_docs(
     let selected = collections
         .iter()
         .filter(|collection| {
-            collection_name.map_or(true, |name| {
+            collection_name.is_none_or(|name| {
                 collection.collection.name == name
                     || collection.collection.name.eq_ignore_ascii_case(name)
             })

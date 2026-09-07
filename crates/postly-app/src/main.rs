@@ -11,6 +11,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod welcome;
+
 use base64::Engine;
 use chrono::Local;
 use eframe::egui::{self, Color32, FontId, RichText, TextEdit, TextStyle};
@@ -4200,7 +4202,7 @@ impl PostlyApp {
             .resizable(true)
             .default_size(280.0)
             .min_size(220.0)
-            .frame(egui::Frame::default().fill(ui.visuals().faint_bg_color))
+            .frame(egui::Frame::default().fill(ui.visuals().panel_fill))
             .show(ui, |ui| {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
@@ -4875,7 +4877,7 @@ impl PostlyApp {
                         .add(
                             TextEdit::singleline(&mut self.request.url)
                                 .hint_text("https://api.example.com/resource")
-                                .desired_width(ui.available_width() - 170.0),
+                                .desired_width((ui.available_width() - 180.0).max(80.0)),
                         )
                         .changed()
                     {
@@ -4885,27 +4887,32 @@ impl PostlyApp {
                         if ui.button("Cancel").clicked() {
                             cancel_clicked = true;
                         }
-                    } else if ui.add(egui::Button::new("Send  ⌘↵").fill(ACCENT)).clicked() {
+                    } else if ui.add(egui::Button::new(RichText::new("Send").color(Color32::WHITE)).fill(ACCENT)).on_hover_text("Send request (Cmd/Ctrl+Enter)").clicked() {
                         send_clicked = true;
                     }
                     if ui.button("Save").clicked() {
                         save_clicked = true;
                     }
+                    ui.menu_button("More", |ui| {
                     if ui.button("Copy cURL").clicked() {
                         copy_curl_clicked = true;
+                        ui.close();
                     }
                     if ui
                         .add_enabled(self.request_path.is_some(), egui::Button::new("Duplicate"))
                         .clicked()
                     {
                         duplicate_clicked = true;
+                        ui.close();
                     }
                     if ui
                         .add_enabled(self.request_path.is_some(), egui::Button::new("Delete"))
                         .clicked()
                     {
                         delete_clicked = true;
+                        ui.close();
                     }
+                    });
                     if ui.input(|input| {
                         input.key_pressed(egui::Key::Enter) && input.modifiers.command
                     }) {
@@ -4913,7 +4920,7 @@ impl PostlyApp {
                     }
                 });
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     for (tab, label) in [
                         (EditorTab::Params, "Params"),
                         (EditorTab::Headers, "Headers"),
@@ -4945,7 +4952,7 @@ impl PostlyApp {
                             self.editor_tab = tab;
                         }
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.menu_button("Streaming…", |ui| {
                         ui.label(
                             RichText::new("SSE retries")
                                 .small()
@@ -5028,7 +5035,7 @@ impl PostlyApp {
 
     fn draw_editor(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default()
-            .frame(egui::Frame::default().fill(Color32::from_rgb(18, 22, 30)))
+            .frame(egui::Frame::default().fill(ui.visuals().panel_fill))
             .show(ui, |ui| {
                 ui.add_space(12.0);
                 match self.editor_tab {
@@ -9398,17 +9405,7 @@ fn render_headers(ui: &mut egui::Ui, headers: &mut Vec<HeaderEntry>) -> bool {
 }
 
 fn main() -> eframe::Result {
-    let root = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let app = match PostlyApp::open(root) {
-        Ok(app) => app,
-        Err(error) => {
-            eprintln!("could not open Postly workspace: {error}");
-            std::process::exit(1);
-        }
-    };
+    let app = welcome::DesktopApp::new(std::env::args().nth(1).map(PathBuf::from));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 960.0])

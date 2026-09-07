@@ -1,5 +1,9 @@
 # Development
 
+Rust 1.95.0 is pinned in `rust-toolchain.toml`; the GUI dependencies require
+Rust 1.95 or newer. Install this toolchain with rustup before building. Release
+builds use `cargo build --locked` to preserve the reviewed dependency graph.
+
 Postly intentionally has no GitHub Actions. Keep the important checks runnable on a local machine:
 
 ~~~bash

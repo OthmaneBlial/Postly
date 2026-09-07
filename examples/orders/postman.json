@@ -1,0 +1,40 @@
+{
+  "info": {
+    "name": "Orders API",
+    "description": "Fictional orders served by postly demo --serve-only --port 3979.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [{"key": "baseUrl", "value": "http://127.0.0.1:3979"}],
+  "item": [
+    {
+      "name": "01 Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health",
+        "description": "Check the local Orders API. Expected status: 200; JSON status: ok."
+      }
+    },
+    {
+      "name": "02 List orders",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/orders?status=paid",
+          "host": ["{{baseUrl}}"],
+          "path": ["orders"],
+          "query": [{"key": "status", "value": "paid"}]
+        },
+        "description": "Change status to pending for one order, or disable the filter for all three."
+      },
+      "response": [
+        {
+          "name": "Paid orders",
+          "status": "OK",
+          "code": 200,
+          "header": [{"key": "Content-Type", "value": "application/json"}],
+          "body": "{\"count\":2,\"orders\":[{\"id\":\"ord_1001\",\"customer\":\"Ada\",\"status\":\"paid\",\"total\":42.5,\"currency\":\"EUR\"},{\"id\":\"ord_1003\",\"customer\":\"Sam\",\"status\":\"paid\",\"total\":75.0,\"currency\":\"EUR\"}]}"
+        }
+      ]
+    }
+  ]
+}

@@ -352,9 +352,7 @@ impl Workspace {
                         source,
                     })?
                     .is_file()
-                    || path
-                        .extension()
-                        .map_or(true, |extension| extension != "toml")
+                    || path.extension().is_none_or(|extension| extension != "toml")
                 {
                     continue;
                 }

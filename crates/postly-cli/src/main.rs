@@ -800,6 +800,16 @@ impl From<SnippetLanguageArg> for SnippetLanguage {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Start the local Orders example API, optionally creating its workspace.
+    Demo {
+        #[arg(default_value = "orders-demo")]
+        path: PathBuf,
+        #[arg(long, default_value_t = 3979)]
+        port: u16,
+        /// Restart only the API; leave the existing workspace untouched.
+        #[arg(long)]
+        serve_only: bool,
+    },
     /// Create an empty local Postly workspace.
     Init {
         #[arg(default_value = ".")]
@@ -1515,6 +1525,23 @@ async fn main() -> Result<()> {
         .init();
 
     match Cli::parse().command {
+        Command::Demo {
+            path,
+            port,
+            serve_only,
+        } => {
+            let server = postly_core::demo::DemoServer::start(port)
+                .context("Could not start the local example API; choose a free --port")?;
+            if !serve_only {
+                postly_core::demo::create_workspace(&path, &server.url())
+                    .map_err(anyhow::Error::msg)?;
+                println!("Example workspace: {}", path.display());
+                println!("Open with: postly-gui {}", path.display());
+            }
+            println!("Orders API: {} — press Ctrl+C to stop", server.url());
+            tokio::signal::ctrl_c().await?;
+            Ok(())
+        }
         Command::Init { path, name } => init_workspace(&path, &name),
         Command::New { kind } => match kind {
             NewKind::Request {
