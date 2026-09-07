@@ -26,8 +26,9 @@ real local Orders API at 1280 logical pixels / 2x backing resolution. It is
 not an HTML reconstruction. The displayed latency is one request, not a benchmark.
 
 The landing page and docs explicitly distinguish the old public v0.1.0 archive
-from the current 0.2.0 source preview. Update that status only after verifying
-new public release assets.
+from the public 0.2.0-preview.1 macOS Apple Silicon release. The release link,
+asset names and checksum language are updated only after public asset
+verification in `docs/measurements/2026-09-08-public-release.md`.
 
 The final real-product recording is now included: `demo.html` provides a full
 player and HTML transcript, and the landing page embeds the same controlled

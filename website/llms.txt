@@ -8,6 +8,7 @@ It is a native Rust API client and testing workspace with a CLI and desktop app.
 - [Project site](https://othmaneblial.github.io/Postly/): product overview and workflow.
 - [Documentation hub](https://othmaneblial.github.io/Postly/docs.html): install, migration, protocols and trust boundaries.
 - [Real product demo](https://othmaneblial.github.io/Postly/demo.html): 66-second native macOS recording, full player and transcript.
+- [Latest preview release](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1): macOS Apple Silicon DMG, tar archive, checksums and manifest.
 - [GitHub repository](https://github.com/OthmaneBlial/Postly): source, README and versioned evidence.
 - [Compatibility matrix](https://github.com/OthmaneBlial/Postly/blob/main/docs/compatibility.md): fixture-backed support and open gaps.
 - [Progress log](https://github.com/OthmaneBlial/Postly/blob/main/docs/progress.md): local verification and release boundaries.
@@ -19,5 +20,5 @@ It is a native Rust API client and testing workspace with a CLI and desktop app.
 - The CLI can run saved requests and collections without the desktop app.
 - Postman Collection v2.1 and environment import/export are supported with explicit review diagnostics.
 - Compatibility and benchmarks are reported as measured local evidence; full Postman parity is not claimed.
-- The redesigned native UI, welcome example, desktop import/runner and JSON comparison are in the 0.2.0-preview.1 source, not the older v0.1.0 public download.
-- macOS ARM64 packaging has local evidence. Clean-machine installation, notarization and Windows/Linux validation remain open.
+- The redesigned native UI, welcome example, desktop import/runner and JSON comparison are in the public 0.2.0-preview.1 release, not the older v0.1.0 download.
+- The published macOS ARM64 package is ad hoc signed and not notarized. Clean-machine installation, Developer ID signing, notarization and Windows/Linux/Intel validation remain open.

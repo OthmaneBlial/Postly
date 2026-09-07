@@ -176,7 +176,8 @@ Publication verified: the public MP4 hash matches the local export and the
 release asset, the public player plays and seeks by chapter, and GitHub renders
 the README poster with its link to the full player. The code and media
 milestone is `ddfd0c7`; the Pages content was published as `524d0199` in the
-site's existing `master` branch. Exact release URLs and hashes are recorded in
+site's existing `master` branch. The release-status refresh was then published
+as `da4cd967` in the same `Postly/` folder. Exact release URLs and hashes are recorded in
 [the public-release report](measurements/2026-09-08-public-release.md).
 
 ## README discovery path
