@@ -141,9 +141,9 @@ Créer le répertoire de travail lors de la réalisation ; garder les rushes hor
 
 ### M2 — Les améliorations qui rendent Postly mémorable
 
-Import guidé et runner desktop implémentés et inspectés localement ; voir les
-[preuves et limites](docs/roadmap-implementation.md). La comparaison de réponses
-et le critère de sortie avec cinq développeurs restent ouverts.
+Import guidé, runner desktop et comparaison JSON implémentés et inspectés
+localement ; voir les [preuves et limites](docs/roadmap-implementation.md).
+Le critère de sortie avec cinq développeurs reste ouvert.
 
 Choisir la cohérence du parcours avant l'élargissement fonctionnel :
 

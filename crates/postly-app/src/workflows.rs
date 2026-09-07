@@ -18,6 +18,7 @@ struct ImportOutcome {
 
 #[derive(Default)]
 pub struct Workflows {
+    comparison: crate::comparison::Comparison,
     import_open: bool,
     import_source: String,
     import_destination: String,
@@ -65,6 +66,7 @@ impl Workflows {
                 if ui.button("Run collection…").clicked() {
                     self.runner_open = true;
                 }
+                self.comparison.button(ui, app);
                 if self.running.is_some() {
                     ui.spinner();
                     ui.label("Running saved requests…");
@@ -84,6 +86,7 @@ impl Workflows {
         self.poll(ctx);
         let open = self.import_window(ctx, app);
         self.runner_window(ctx, app);
+        self.comparison.show(ctx, app);
         open
     }
 

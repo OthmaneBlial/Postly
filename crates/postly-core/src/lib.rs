@@ -7,6 +7,7 @@
 pub mod codegen;
 pub mod curl;
 pub mod demo;
+pub mod diff;
 pub mod documentation;
 pub mod export;
 pub mod graphql;

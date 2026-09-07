@@ -65,5 +65,20 @@ Validation:
   two requests / zero warnings and opened the resulting project. The CLI then
   ran that GUI-imported project successfully with two HTTP 200 responses.
 
-The detailed guide is [desktop workflows](desktop-workflows.md). Response
-comparison, external usability sessions and other roadmap items remain open.
+The detailed guide is [desktop workflows](desktop-workflows.md). External
+usability sessions and the remaining roadmap gates are still open.
+
+## Structural response comparison
+
+The core now compares JSON bodies with deterministic JSON Pointer paths,
+added/removed/changed values, explicit subtree exclusions and bounded input,
+depth, work and result counts. The desktop can compare a received response with
+a saved example or chosen JSON file. Closing the comparison discards its
+in-memory baseline and result; it creates no persistent response snapshot.
+
+Validation: 263 workspace tests passed (including four comparison regressions),
+Clippy and the locked build passed. In the native GUI, changing the Orders
+filter from `paid` to `pending` produced 10 structural differences against the
+saved example. Excluding `/orders` left one difference at `/count` and visibly
+reported one excluded subtree. This confirms the displayed comparison uses
+the real received response and applies the user's explicit exclusion.
