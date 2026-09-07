@@ -47,39 +47,50 @@ impl Drop for Workflows {
 
 impl Workflows {
     pub fn toolbar(&mut self, ui: &mut egui::Ui, app: &PostlyApp) {
-        egui::Panel::top("project-workflows").show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("PROJECT").strong().color(crate::ACCENT));
-                if ui.button("Import collection…").clicked() {
-                    self.import_open = true;
-                    if self.import_destination.is_empty() {
-                        self.import_destination = app
-                            .workspace
-                            .root()
-                            .parent()
-                            .unwrap_or_else(|| Path::new("."))
-                            .join("imported-api")
-                            .display()
-                            .to_string();
+        egui::Panel::top("project-workflows")
+            .frame(crate::design::frame(ui, 10))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new("WORKSPACE")
+                            .small()
+                            .strong()
+                            .color(crate::design::accent(ui)),
+                    );
+                    ui.label(
+                        RichText::new(
+                            app.workspace
+                                .root()
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy(),
+                        )
+                        .strong(),
+                    );
+                    ui.separator();
+                    if ui.button("Import collection…").clicked() {
+                        self.import_open = true;
+                        if self.import_destination.is_empty() {
+                            self.import_destination = app
+                                .workspace
+                                .root()
+                                .parent()
+                                .unwrap_or_else(|| Path::new("."))
+                                .join("imported-api")
+                                .display()
+                                .to_string();
+                        }
                     }
-                }
-                if ui.button("Run collection…").clicked() {
-                    self.runner_open = true;
-                }
-                self.comparison.button(ui, app);
-                if self.running.is_some() {
-                    ui.spinner();
-                    ui.label("Running saved requests…");
-                }
-                ui.label(
-                    app.workspace
-                        .root()
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy(),
-                );
+                    if ui.button("Run collection…").clicked() {
+                        self.runner_open = true;
+                    }
+                    self.comparison.button(ui, app);
+                    if self.running.is_some() {
+                        ui.spinner();
+                        ui.label("Running saved requests…");
+                    }
+                });
             });
-        });
     }
 
     pub fn windows(&mut self, ctx: &egui::Context, app: &mut PostlyApp) -> Option<PathBuf> {

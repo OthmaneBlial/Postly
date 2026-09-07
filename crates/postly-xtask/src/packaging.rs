@@ -187,6 +187,10 @@ pub fn package() -> Result<()> {
         copy(root.join(file), package.join(file))?;
     }
     copy(root.join("docs/install.md"), package.join("INSTALL.md"))?;
+    copy(
+        root.join("crates/postly-app/assets/fonts/LICENSE.txt"),
+        package.join("FONT-LICENSE.txt"),
+    )?;
     copy_tree(&root.join("docs"), &package.join("docs"))?;
     copy(
         root.join("website/logo.svg"),
@@ -360,6 +364,10 @@ fn macos_bundle(root: &Path, package: &Path, cli: &str, gui: &str) -> Result<()>
         resources.join("Postly.icns"),
     )?;
     copy(root.join("LICENSE"), resources.join("LICENSE"))?;
+    copy(
+        root.join("crates/postly-app/assets/fonts/LICENSE.txt"),
+        resources.join("FONT-LICENSE.txt"),
+    )?;
     copy(
         root.join("packaging/OPENSSL-LICENSE.txt"),
         resources.join("OPENSSL-LICENSE.txt"),

@@ -47,7 +47,10 @@ use tokio_tungstenite::{
 };
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
 
-const ACCENT: Color32 = Color32::from_rgb(91, 141, 239);
+mod design;
+mod navigation;
+
+const ACCENT: Color32 = design::LIME;
 
 #[derive(Clone)]
 struct DynamicGrpcCodec {
@@ -482,9 +485,9 @@ impl AuthKind {
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum ThemeMode {
+    #[default]
     Dark,
     Light,
-    #[default]
     System,
 }
 
@@ -2118,7 +2121,7 @@ impl PostlyApp {
                 );
                 if let Some(error) = &self.curl_import_error {
                     ui.add_space(5.0);
-                    ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+                    ui.colored_label(ui.visuals().error_fg_color, error);
                 }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -2269,7 +2272,7 @@ impl PostlyApp {
                 }
                 ui.add_space(5.0);
                 ui.label(
-                    RichText::new("↑↓ navigate  ·  Enter run  ·  Esc close")
+                    RichText::new("Up / Down: navigate  ·  Enter: run  ·  Esc: close")
                         .small()
                         .color(ui.visuals().weak_text_color()),
                 );
@@ -4192,328 +4195,6 @@ impl PostlyApp {
         self.websocket_pending.is_some()
     }
 
-    fn draw_navigator(&mut self, ui: &mut egui::Ui) {
-        let mut collection_clicked = None;
-        let mut request_clicked = None;
-        let mut new_clicked = false;
-        let mut environment_clicked = None;
-        let mut environment_edit_clicked = None;
-        let mut history_clicked = None;
-        let mut search_result_clicked = None;
-        let mut clear_history_clicked = false;
-        let mut theme_changed = false;
-        egui::Panel::left("navigator")
-            .resizable(true)
-            .default_size(280.0)
-            .min_size(220.0)
-            .frame(egui::Frame::default().fill(ui.visuals().panel_fill))
-            .show(ui, |ui| {
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.heading(RichText::new("POSTLY").color(ui.visuals().text_color()));
-                    ui.label(RichText::new("LOCAL").small().color(ACCENT));
-                });
-                ui.label(
-                    RichText::new("Rust-native API workspace")
-                        .small()
-                        .color(ui.visuals().weak_text_color()),
-                );
-                ui.add_space(14.0);
-                if ui
-                    .add_sized(
-                        [ui.available_width(), 34.0],
-                        egui::Button::new(
-                            RichText::new("＋  New request").color(ui.visuals().text_color()),
-                        )
-                        .fill(ACCENT),
-                    )
-                    .clicked()
-                {
-                    new_clicked = true;
-                }
-                ui.add_space(14.0);
-                ui.label(
-                    RichText::new("WORKSPACE SEARCH")
-                        .small()
-                        .strong()
-                        .color(ui.visuals().weak_text_color()),
-                );
-                if ui
-                    .add(
-                        TextEdit::singleline(&mut self.workspace_search)
-                            .hint_text("Search collections, requests or URLs")
-                            .desired_width(ui.available_width()),
-                    )
-                    .changed()
-                {
-                    self.refresh_workspace_search();
-                }
-                if self.workspace_search.trim().is_empty() {
-                    ui.add_space(12.0);
-                    ui.label(
-                        RichText::new("COLLECTIONS")
-                            .small()
-                            .strong()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                    ui.add_space(5.0);
-                    for (index, collection) in self.collections.iter().enumerate() {
-                        let selected = index == self.selected_collection;
-                        if ui
-                            .selectable_label(
-                                selected,
-                                RichText::new(format!("▸  {}", collection.collection.name)).color(
-                                    if selected {
-                                        ui.visuals().text_color()
-                                    } else {
-                                        ui.visuals().weak_text_color()
-                                    },
-                                ),
-                            )
-                            .clicked()
-                        {
-                            collection_clicked = Some(index);
-                        }
-                    }
-                    ui.add_space(14.0);
-                    ui.label(
-                        RichText::new("REQUESTS")
-                            .small()
-                            .strong()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical()
-                        .id_salt("request-list")
-                        .max_height((ui.available_height() - 280.0).max(100.0))
-                        .show(ui, |ui| {
-                            for (index, (_, request)) in self.requests.iter().enumerate() {
-                                let selected = self.selected_request == Some(index);
-                                let label = format!("{}  {}", request.method, request.name);
-                                if ui
-                                    .selectable_label(
-                                        selected,
-                                        RichText::new(label).color(if selected {
-                                            ui.visuals().text_color()
-                                        } else {
-                                            ui.visuals().weak_text_color()
-                                        }),
-                                    )
-                                    .clicked()
-                                {
-                                    request_clicked = Some(index);
-                                }
-                            }
-                        });
-                } else {
-                    let result_count = self.workspace_search_results.len();
-                    ui.label(
-                        RichText::new(format!("{result_count} matching request(s)"))
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                    egui::ScrollArea::vertical()
-                        .id_salt("workspace-search-results")
-                        .max_height((ui.available_height() - 280.0).max(100.0))
-                        .show(ui, |ui| {
-                            for result in &self.workspace_search_results {
-                                let location = result
-                                    .folder
-                                    .as_deref()
-                                    .map(|folder| format!("{} / {folder}", result.collection))
-                                    .unwrap_or_else(|| result.collection.clone());
-                                let label = format!("{}  {}", result.method, result.name);
-                                if ui
-                                    .selectable_label(
-                                        false,
-                                        RichText::new(label).color(ui.visuals().weak_text_color()),
-                                    )
-                                    .on_hover_text(format!("{location} · {}", result.url))
-                                    .clicked()
-                                {
-                                    search_result_clicked = Some(result.clone());
-                                }
-                                ui.label(
-                                    RichText::new(format!("{location} · {}", result.url))
-                                        .small()
-                                        .color(ui.visuals().weak_text_color()),
-                                );
-                            }
-                        });
-                }
-                ui.add_space(10.0);
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("HISTORY")
-                            .small()
-                            .strong()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                    if ui.small_button("Clear").clicked() {
-                        clear_history_clicked = true;
-                    }
-                });
-                ui.add(
-                    TextEdit::singleline(&mut self.history_search)
-                        .hint_text("Search recent requests")
-                        .desired_width(ui.available_width()),
-                );
-                let history_filter = HistoryFilter {
-                    search: Some(self.history_search.clone()),
-                    ..HistoryFilter::default()
-                };
-                egui::ScrollArea::vertical()
-                    .id_salt("history-list")
-                    .max_height(130.0)
-                    .show(ui, |ui| {
-                        for entry in self
-                            .history
-                            .iter()
-                            .filter(|entry| history_filter.matches(entry))
-                        {
-                            let status = entry
-                                .status
-                                .map(|status| status.to_string())
-                                .unwrap_or_else(|| "error".to_owned());
-                            let label =
-                                format!("{} {} · {}", entry.method, entry.request_name, status);
-                            if ui
-                                .selectable_label(
-                                    false,
-                                    RichText::new(label).color(ui.visuals().weak_text_color()),
-                                )
-                                .on_hover_text(&entry.url)
-                                .clicked()
-                            {
-                                history_clicked = Some(entry.clone());
-                            }
-                        }
-                    });
-                ui.add_space(8.0);
-                ui.separator();
-                ui.label(
-                    RichText::new("ENVIRONMENT")
-                        .small()
-                        .strong()
-                        .color(ui.visuals().weak_text_color()),
-                );
-                let selected_name = self
-                    .selected_environment
-                    .as_deref()
-                    .unwrap_or("No environment")
-                    .to_owned();
-                egui::ComboBox::from_id_salt("environment")
-                    .selected_text(selected_name)
-                    .width(ui.available_width())
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(self.selected_environment.is_none(), "No environment")
-                            .clicked()
-                        {
-                            environment_clicked = Some(None);
-                        }
-                        for (_, environment) in &self.environments {
-                            if ui
-                                .selectable_label(
-                                    self.selected_environment.as_deref()
-                                        == Some(environment.name.as_str()),
-                                    &environment.name,
-                                )
-                                .clicked()
-                            {
-                                environment_clicked = Some(Some(environment.name.clone()));
-                            }
-                        }
-                    });
-                ui.horizontal(|ui| {
-                    if ui.small_button("＋ New environment").clicked() {
-                        environment_edit_clicked = Some(None);
-                    }
-                    if let Some(selected) = self.selected_environment.as_deref() {
-                        if ui.small_button("Edit selected").clicked() {
-                            environment_edit_clicked = Some(
-                                self.environments
-                                    .iter()
-                                    .position(|(_, environment)| environment.name == selected),
-                            );
-                        }
-                    }
-                });
-                ui.add_space(8.0);
-                ui.separator();
-                ui.label(
-                    RichText::new("APPEARANCE")
-                        .small()
-                        .strong()
-                        .color(ui.visuals().weak_text_color()),
-                );
-                let previous_theme = self.transport.theme;
-                egui::ComboBox::from_id_salt("theme")
-                    .selected_text(self.transport.theme.label())
-                    .width(ui.available_width())
-                    .show_ui(ui, |ui| {
-                        for mode in [ThemeMode::System, ThemeMode::Dark, ThemeMode::Light] {
-                            ui.selectable_value(&mut self.transport.theme, mode, mode.label());
-                        }
-                    });
-                theme_changed = self.transport.theme != previous_theme;
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new(self.workspace.root().display().to_string())
-                        .small()
-                        .color(ui.visuals().weak_text_color()),
-                );
-            });
-        if theme_changed {
-            self.transport_settings_dirty = true;
-            if let Err(error) = self.transport.save(self.workspace.root()) {
-                self.status_message = format!("Appearance could not be saved: {error}");
-            } else {
-                self.transport_settings_dirty = false;
-                self.status_message =
-                    format!("{} theme saved locally", self.transport.theme.label());
-            }
-        }
-        if new_clicked {
-            self.new_request();
-        }
-        if let Some(index) = collection_clicked {
-            self.selected_collection = index;
-            if let Err(error) = self.refresh_requests(None) {
-                self.status_message = error;
-            }
-        }
-        if let Some(index) = request_clicked {
-            self.select_request(index);
-        }
-        if let Some(result) = search_result_clicked {
-            if let Err(error) = self.open_search_result(&result) {
-                self.status_message = format!("Search result could not open: {error}");
-            }
-        }
-        if let Some(environment) = environment_clicked {
-            self.selected_environment = environment;
-        }
-        if let Some(index) = environment_edit_clicked {
-            self.open_environment_editor(index);
-        }
-        if clear_history_clicked {
-            match self.workspace.clear_history() {
-                Ok(()) => {
-                    self.history.clear();
-                    self.status_message = "Local history cleared".to_owned();
-                }
-                Err(error) => self.status_message = format!("History clear failed: {error}"),
-            }
-        }
-        if let Some(entry) = history_clicked {
-            if let Err(error) = self.reopen_history(&entry) {
-                self.status_message = format!("History reopen failed: {error}");
-            }
-        }
-    }
-
     fn draw_response_example_editor(&mut self, ctx: &egui::Context) {
         if !self.response_example_editor_open {
             return;
@@ -4546,11 +4227,11 @@ impl PostlyApp {
                         "Response examples are canonical project data; check them for credentials or personal data before committing.",
                     )
                     .small()
-                    .color(Color32::from_rgb(235, 180, 80)),
+                    .color(ui.visuals().warn_fg_color),
                 );
                 if let Some(error) = &self.response_example_error {
                     ui.add_space(6.0);
-                    ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+                    ui.colored_label(ui.visuals().error_fg_color, error);
                 }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -4651,7 +4332,7 @@ impl PostlyApp {
                 if let Some(index) = remove {
                     self.environment_editor_variables.remove(index);
                 }
-                if ui.button("＋ Add variable").clicked() {
+                if ui.button("+ Add variable").clicked() {
                     self.environment_editor_variables.push(EnvironmentVariableDraft {
                         key: String::new(),
                         value: String::new(),
@@ -4662,7 +4343,7 @@ impl PostlyApp {
                 }
                 ui.add_space(8.0);
                 if let Some(error) = &self.environment_editor_error {
-                    ui.colored_label(Color32::from_rgb(240, 120, 110), error);
+                    ui.colored_label(ui.visuals().error_fg_color, error);
                 }
                 ui.horizontal(|ui| {
                     if ui.button("Save environment").clicked() {
@@ -4699,13 +4380,22 @@ impl PostlyApp {
                 let title = format!("{} {}", if tab.dirty { "•" } else { "" }, tab.request.name);
                 ui.push_id(index, |ui| {
                     if ui
-                        .selectable_label(index == self.active_tab, title)
+                        .add(
+                            egui::Button::new(title)
+                                .selected(index == self.active_tab)
+                                .stroke(egui::Stroke::NONE),
+                        )
                         .clicked()
                     {
                         switch = Some(index);
                     }
                     if ui
-                        .add_enabled(!tab.dirty, egui::Button::new("×"))
+                        .add_enabled(
+                            !tab.dirty,
+                            egui::Button::new("×")
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(egui::Stroke::NONE),
+                        )
                         .on_hover_text("Close tab after saving it")
                         .clicked()
                     {
@@ -4714,27 +4404,28 @@ impl PostlyApp {
                 });
             }
             if self.open_tabs.len() > 1 {
-                ui.separator();
-                if ui.button("Close others").clicked() {
-                    close_others = true;
-                }
-                if ui
-                    .add_enabled(self.active_tab > 0, egui::Button::new("←"))
-                    .on_hover_text("Move active tab left")
-                    .clicked()
-                {
-                    move_left = true;
-                }
-                if ui
-                    .add_enabled(
-                        self.active_tab + 1 < self.open_tabs.len(),
-                        egui::Button::new("→"),
-                    )
-                    .on_hover_text("Move active tab right")
-                    .clicked()
-                {
-                    move_right = true;
-                }
+                ui.menu_button("Tabs", |ui| {
+                    if ui.button("Close others").clicked() {
+                        close_others = true;
+                    }
+                    if ui
+                        .add_enabled(self.active_tab > 0, egui::Button::new("Move left"))
+                        .on_hover_text("Move active tab left")
+                        .clicked()
+                    {
+                        move_left = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            self.active_tab + 1 < self.open_tabs.len(),
+                            egui::Button::new("Move right"),
+                        )
+                        .on_hover_text("Move active tab right")
+                        .clicked()
+                    {
+                        move_right = true;
+                    }
+                });
             }
         });
         if let Some(index) = switch {
@@ -4755,32 +4446,13 @@ impl PostlyApp {
     }
 
     fn draw_request_header(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::top("request-header")
-            .frame(egui::Frame::default().fill(ui.visuals().panel_fill))
+        egui::Panel::top("request-header-v2").resizable(false)
+            .frame(design::frame(ui, 14))
             .show(ui, |ui| {
-                ui.add_space(8.0);
-                self.draw_request_tabs(ui);
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("REQUEST")
-                            .strong()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                    ui.label(
-                        RichText::new(if self.dirty { "• unsaved" } else { "saved" })
-                            .small()
-                            .color(if self.dirty {
-                                Color32::from_rgb(235, 180, 80)
-                            } else {
-                                Color32::from_rgb(100, 205, 145)
-                            }),
-                    );
+                    self.draw_request_tabs(ui);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(&self.status_message)
-                                .small()
-                                .color(ui.visuals().weak_text_color()),
-                        );
+                        ui.add(egui::Label::new(RichText::new(&self.status_message).small().color(ui.visuals().weak_text_color())).truncate());
                     });
                 });
                 if self.recovery_restored {
@@ -4801,7 +4473,7 @@ impl PostlyApp {
                                 ),
                             )
                             .small()
-                            .color(Color32::from_rgb(235, 180, 80)),
+                            .color(ui.visuals().warn_fg_color),
                         );
                         if ui.small_button("Discard recovery").clicked() {
                             discard_recovery_clicked = true;
@@ -4825,22 +4497,13 @@ impl PostlyApp {
                     || self.websocket_pending.is_some()
                     || self.script_pending.is_some();
                 ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            TextEdit::singleline(&mut self.request.name)
-                                .hint_text("Request name")
-                                .desired_width(170.0),
-                        )
-                        .changed()
-                    {
-                        self.dirty = true;
-                    }
+                    ui.spacing_mut().interact_size.y = 38.0;
                     let common_methods =
                         ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
                     let method_is_common = common_methods.contains(&self.request.method.as_str());
                     egui::ComboBox::from_id_salt("method")
-                        .selected_text(&self.request.method)
-                        .width(92.0)
+                        .selected_text(RichText::new(&self.request.method).monospace().strong().color(design::accent(ui)))
+                        .width(85.0)
                         .show_ui(ui, |ui| {
                             for method in common_methods {
                                 if ui
@@ -4881,7 +4544,9 @@ impl PostlyApp {
                         .add(
                             TextEdit::singleline(&mut self.request.url)
                                 .hint_text("https://api.example.com/resource")
-                                .desired_width((ui.available_width() - 180.0).max(80.0)),
+                                .font(TextStyle::Monospace)
+                                .margin(egui::vec2(12.0, 10.0))
+                                .desired_width((ui.available_width() - 224.0).max(80.0)),
                         )
                         .changed()
                     {
@@ -4891,13 +4556,16 @@ impl PostlyApp {
                         if ui.button("Cancel").clicked() {
                             cancel_clicked = true;
                         }
-                    } else if ui.add(egui::Button::new(RichText::new("Send").color(Color32::WHITE)).fill(ACCENT)).on_hover_text("Send request (Cmd/Ctrl+Enter)").clicked() {
+                    } else if ui.add(design::primary("Send")).on_hover_text("Send request (Cmd/Ctrl+Enter)").clicked() {
                         send_clicked = true;
                     }
                     if ui.button("Save").clicked() {
                         save_clicked = true;
                     }
                     ui.menu_button("More", |ui| {
+                    ui.label("Request name");
+                    if ui.text_edit_singleline(&mut self.request.name).changed() { self.dirty = true; }
+                    ui.separator();
                     if ui.button("Copy cURL").clicked() {
                         copy_curl_clicked = true;
                         ui.close();
@@ -5039,9 +4707,9 @@ impl PostlyApp {
 
     fn draw_editor(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default()
-            .frame(egui::Frame::default().fill(ui.visuals().panel_fill))
+            .frame(design::frame(ui, 18))
             .show(ui, |ui| {
-                ui.add_space(12.0);
+                egui::ScrollArea::both().id_salt("request-editor-scroll").auto_shrink([false, false]).show(ui, |ui| {
                 match self.editor_tab {
                     EditorTab::Params => {
                         ui.heading(RichText::new("Query parameters").color(ui.visuals().text_color()));
@@ -5055,7 +4723,7 @@ impl PostlyApp {
                             ui,
                             &mut self.request.query,
                             "query",
-                            "＋ Add parameter",
+                            "+ Add parameter",
                         );
                     }
                     EditorTab::Headers => {
@@ -5084,7 +4752,7 @@ impl PostlyApp {
                             ui,
                             &mut self.request.cookies,
                             "request-cookies",
-                            "＋ Add cookie",
+                            "+ Add cookie",
                         );
                         ui.add_space(18.0);
                         ui.separator();
@@ -5176,6 +4844,7 @@ impl PostlyApp {
                     EditorTab::Assertions => self.render_assertions(ui),
                     EditorTab::Transport => self.render_transport(ui),
                 }
+                });
             });
     }
 
@@ -5256,7 +4925,7 @@ impl PostlyApp {
             ui,
             &mut self.grpc_metadata,
             "grpc-metadata",
-            "＋ Add metadata",
+            "+ Add metadata",
         );
         ui.add_space(8.0);
         ui.label(
@@ -5623,7 +5292,7 @@ impl PostlyApp {
                 ui.add_space(8.0);
                 if let RequestBody::FormUrlEncoded { fields } = &mut self.request.body {
                     self.dirty |=
-                        render_key_values(ui, fields, "form-url-encoded", "＋ Add form field");
+                        render_key_values(ui, fields, "form-url-encoded", "+ Add form field");
                 }
             }
             BodyKind::Multipart => {
@@ -6412,7 +6081,7 @@ impl PostlyApp {
                     "Scripts run in the same explicit Node.js bridge as previews; failures stay visible and the response is retained.",
                 )
                 .small()
-                .color(Color32::from_rgb(235, 180, 80)),
+                .color(ui.visuals().warn_fg_color),
             );
         }
         let script_busy = self.script_pending.is_some()
@@ -6502,7 +6171,7 @@ impl PostlyApp {
         );
         if let Some(error) = &self.script_error {
             ui.add_space(8.0);
-            ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+            ui.colored_label(ui.visuals().error_fg_color, error);
         }
         if let Some(report) = &self.script_report {
             ui.add_space(8.0);
@@ -6522,9 +6191,9 @@ impl PostlyApp {
                     ))
                     .strong()
                     .color(if failed == 0 {
-                        Color32::from_rgb(100, 205, 145)
+                        design::accent(ui)
                     } else {
-                        Color32::from_rgb(240, 125, 105)
+                        ui.visuals().error_fg_color
                     }),
                 );
                 for test in &report.result.tests {
@@ -6751,7 +6420,7 @@ impl PostlyApp {
                         ui.selectable_value(&mut self.new_assertion_kind, kind, kind.label());
                     }
                 });
-            if ui.button("＋ Add assertion").clicked() {
+            if ui.button("+ Add assertion").clicked() {
                 let assertion = self.new_assertion_kind.default_assertion();
                 self.assertion_json_text.push(match &assertion {
                     Assertion::JsonPointerEquals { expected, .. }
@@ -6773,13 +6442,24 @@ impl PostlyApp {
     }
 
     fn draw_response(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::bottom("response")
+        let panel = if ui.available_width() >= 900.0 {
+            egui::Panel::right("response-side-by-side")
+                .default_size(ui.available_width() * 0.57)
+                .min_size(420.0)
+                .max_size(ui.available_width() - 280.0)
+        } else {
+            egui::Panel::bottom("response-stacked")
+                .default_size((ui.available_height() * 0.56).max(250.0))
+                .min_size(200.0)
+        };
+        panel
             .resizable(true)
-            .default_size(330.0)
-            .min_size(180.0)
-            .frame(egui::Frame::default().fill(ui.visuals().panel_fill))
+            .frame(design::frame(ui, 14))
             .show(ui, |ui| {
-                ui.add_space(8.0);
+                ui.spacing_mut().interact_size.y = 22.0;
+                ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.set_min_height(ui.available_height());
                 if let Some(prompt) = &self.device_code_prompt {
                     ui.group(|ui| {
                         ui.label(
@@ -6815,9 +6495,9 @@ impl PostlyApp {
                                 response.protocol
                             ))
                             .color(if response.status < 400 {
-                                Color32::from_rgb(100, 205, 145)
+                                design::accent(ui)
                             } else {
-                                Color32::from_rgb(240, 125, 105)
+                                ui.visuals().error_fg_color
                             }),
                         );
                     }
@@ -6839,7 +6519,7 @@ impl PostlyApp {
                                 if self.sse_events.len() == 1 { "" } else { "s" }
                             ))
                             .color(if self.sse_connected {
-                                Color32::from_rgb(100, 205, 145)
+                                design::accent(ui)
                             } else {
                                 ui.visuals().weak_text_color()
                             }),
@@ -6862,7 +6542,7 @@ impl PostlyApp {
                                 }
                             ))
                             .color(if self.websocket_connected {
-                                Color32::from_rgb(100, 205, 145)
+                                design::accent(ui)
                             } else {
                                 ui.visuals().weak_text_color()
                             }),
@@ -6870,7 +6550,7 @@ impl PostlyApp {
                     }
                 });
                 ui.add_space(5.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     for (tab, label) in [
                         (ResponseTab::Pretty, "Pretty"),
                         (ResponseTab::Raw, "Raw"),
@@ -6940,16 +6620,11 @@ impl PostlyApp {
                         ResponseTab::Pretty | ResponseTab::Preview | ResponseTab::Raw
                     )
                 {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Search")
-                                .small()
-                                .color(ui.visuals().weak_text_color()),
-                        );
+                    ui.horizontal_wrapped(|ui| {
                         ui.add(
                             TextEdit::singleline(&mut self.response_search)
                                 .hint_text("find in response")
-                                .desired_width(220.0),
+                                .desired_width((ui.available_width() - 235.0).clamp(110.0, 220.0)),
                         );
                         if ui.button("Copy").clicked() {
                             if let Some(response) = &self.response {
@@ -6958,23 +6633,25 @@ impl PostlyApp {
                                 self.status_message = "Response copied to clipboard".to_owned();
                             }
                         }
-                        if ui.button("Save response").clicked() {
-                            if let Err(error) = self.save_current_response() {
-                                self.status_message = format!("Save failed: {error}");
+                        ui.menu_button("Export", |ui| {
+                            if ui.button("Save response").clicked() {
+                                if let Err(error) = self.save_current_response() {
+                                    self.status_message = format!("Save failed: {error}");
+                                }
                             }
-                        }
-                        if ui
-                            .add_enabled(
-                                self.request_path.is_some(),
-                                egui::Button::new("Save as example"),
-                            )
-                            .on_hover_text(
-                                "Save the response into this request's canonical examples",
-                            )
-                            .clicked()
-                        {
-                            self.open_response_example_editor();
-                        }
+                            if ui
+                                .add_enabled(
+                                    self.request_path.is_some(),
+                                    egui::Button::new("Save as example"),
+                                )
+                                .on_hover_text(
+                                    "Save the response into this request's canonical examples",
+                                )
+                                .clicked()
+                            {
+                                self.open_response_example_editor();
+                            }
+                        });
                         ui.checkbox(&mut self.response_wrap, "Wrap");
                     });
                 }
@@ -6991,10 +6668,10 @@ impl PostlyApp {
                                 }
                             ))
                             .strong()
-                            .color(Color32::from_rgb(240, 125, 105)),
+                            .color(ui.visuals().error_fg_color),
                         );
                         for failure in &self.response_assertion_failures {
-                            ui.colored_label(Color32::from_rgb(240, 125, 105), failure);
+                            ui.colored_label(ui.visuals().error_fg_color, failure);
                         }
                     });
                 }
@@ -7002,7 +6679,7 @@ impl PostlyApp {
                 if self.response_tab == ResponseTab::Console {
                     self.render_console_content(ui);
                 } else if let Some(error) = &self.response_error {
-                    ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+                    ui.colored_label(ui.visuals().error_fg_color, error);
                     if self.sse_started {
                         self.render_sse_content(ui);
                     } else if self.websocket_started {
@@ -7026,10 +6703,7 @@ impl PostlyApp {
                             .color(ui.visuals().weak_text_color()),
                     );
                 } else {
-                    ui.label(
-                        RichText::new("Send a request to inspect its response here.")
-                            .color(ui.visuals().weak_text_color()),
-                    );
+                    design::empty_response(ui);
                 }
             });
     }
@@ -7061,9 +6735,7 @@ impl PostlyApp {
                             ui.horizontal(|ui| {
                                 let (label, color) = match message.direction {
                                     WebSocketDirection::Sent => ("OUT", ACCENT),
-                                    WebSocketDirection::Received => {
-                                        ("IN", Color32::from_rgb(100, 205, 145))
-                                    }
+                                    WebSocketDirection::Received => ("IN", design::accent(ui)),
                                 };
                                 ui.label(
                                     RichText::new(format!("#{} {label}", index + 1))
@@ -7154,8 +6826,8 @@ impl PostlyApp {
                 for entry in &self.console_entries {
                     let (label, color) = match entry.level {
                         ConsoleLevel::Info => ("INFO", ui.visuals().weak_text_color()),
-                        ConsoleLevel::Warn => ("WARN", Color32::from_rgb(235, 180, 80)),
-                        ConsoleLevel::Error => ("ERROR", Color32::from_rgb(240, 125, 105)),
+                        ConsoleLevel::Warn => ("WARN", ui.visuals().warn_fg_color),
+                        ConsoleLevel::Error => ("ERROR", ui.visuals().error_fg_color),
                     };
                     ui.horizontal(|ui| {
                         ui.label(
@@ -7254,7 +6926,7 @@ impl PostlyApp {
             return;
         }
         if let Some(error) = &self.graphql_schema_error {
-            ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+            ui.colored_label(ui.visuals().error_fg_color, error);
             ui.label(
                 RichText::new(
                     "The endpoint may disable introspection or return an incomplete schema.",
@@ -7388,7 +7060,7 @@ impl PostlyApp {
                                     ui.label(
                                         RichText::new("deprecated")
                                             .small()
-                                            .color(Color32::from_rgb(235, 180, 80)),
+                                            .color(ui.visuals().warn_fg_color),
                                     );
                                 }
                             });
@@ -7495,6 +7167,8 @@ impl PostlyApp {
                 }
                 let lines = text.lines().collect::<Vec<_>>();
                 let line_height = ui.text_style_height(&TextStyle::Monospace);
+                ui.spacing_mut().interact_size.y = line_height;
+                ui.spacing_mut().item_spacing.y = 2.0;
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
                     .show_rows(ui, line_height, line_count, |ui, row_range| {
@@ -7544,6 +7218,8 @@ impl PostlyApp {
                     });
                     let lines = text.lines().collect::<Vec<_>>();
                     let line_height = ui.text_style_height(&TextStyle::Body);
+                    ui.spacing_mut().interact_size.y = line_height;
+                    ui.spacing_mut().item_spacing.y = 2.0;
                     egui::ScrollArea::both()
                         .auto_shrink([false, false])
                         .show_rows(ui, line_height, line_count, |ui, row_range| {
@@ -7569,7 +7245,7 @@ impl PostlyApp {
                         });
                 }
                 Err(error) => {
-                    ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+                    ui.colored_label(ui.visuals().error_fg_color, error);
                     ui.label(
                         RichText::new("Preview is available for bounded HTML responses only; use Pretty or Raw for the original body.")
                             .small()
@@ -7580,7 +7256,7 @@ impl PostlyApp {
             ResponseTab::JsonTree => match response_json_value(response) {
                 Ok(value) => render_json_tree(ui, "response", &value, true),
                 Err(error) => {
-                    ui.colored_label(Color32::from_rgb(240, 125, 105), error);
+                    ui.colored_label(ui.visuals().error_fg_color, error);
                     ui.label(
                         RichText::new("Switch to Pretty or Raw to inspect the original response.")
                             .small()
@@ -8674,19 +8350,7 @@ fn mask_cookie_value(value: &str) -> String {
 }
 
 fn tab_button(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
-    let fill = if selected {
-        ACCENT.linear_multiply(0.24)
-    } else {
-        Color32::TRANSPARENT
-    };
-    ui.add(
-        egui::Button::new(RichText::new(label).color(if selected {
-            ui.visuals().text_color()
-        } else {
-            ui.visuals().weak_text_color()
-        }))
-        .fill(fill),
-    )
+    design::tab(ui, selected, label)
 }
 
 fn response_preview_language(response: &HttpResponse) -> ResponsePreviewLanguage {
@@ -9000,21 +8664,25 @@ fn render_json_tree(ui: &mut egui::Ui, label: &str, value: &serde_json::Value, d
             ui.horizontal(|ui| {
                 ui.monospace(label);
                 ui.label(
-                    RichText::new(format!("\"{string}\"")).color(Color32::from_rgb(214, 166, 95)),
+                    RichText::new(format!("\"{string}\""))
+                        .color(design::syntax_colors(ui.visuals())[0]),
                 );
             });
         }
         serde_json::Value::Number(number) => {
             ui.horizontal(|ui| {
                 ui.monospace(label);
-                ui.label(RichText::new(number.to_string()).color(Color32::from_rgb(117, 194, 226)));
+                ui.label(
+                    RichText::new(number.to_string()).color(design::syntax_colors(ui.visuals())[1]),
+                );
             });
         }
         serde_json::Value::Bool(boolean) => {
             ui.horizontal(|ui| {
                 ui.monospace(label);
                 ui.label(
-                    RichText::new(boolean.to_string()).color(Color32::from_rgb(194, 139, 236)),
+                    RichText::new(boolean.to_string())
+                        .color(design::syntax_colors(ui.visuals())[2]),
                 );
             });
         }
@@ -9033,10 +8701,7 @@ fn highlight_response_line(
     visuals: &egui::Visuals,
 ) -> egui::text::LayoutJob {
     let default_color = visuals.text_color();
-    let string_color = Color32::from_rgb(214, 166, 95);
-    let number_color = Color32::from_rgb(117, 194, 226);
-    let keyword_color = Color32::from_rgb(194, 139, 236);
-    let markup_color = Color32::from_rgb(103, 190, 143);
+    let [string_color, number_color, keyword_color, markup_color] = design::syntax_colors(visuals);
     let comment_color = visuals.weak_text_color();
     let mut job = egui::text::LayoutJob::default();
     let font_id = FontId::monospace(13.0);
@@ -9253,9 +8918,10 @@ fn render_key_values(
 ) -> bool {
     let mut changed = false;
     let mut remove = None;
+    let field_width = ((ui.available_width() - 90.0) / 2.0).max(100.0);
     egui::Grid::new(id)
         .striped(true)
-        .min_col_width(120.0)
+        .min_col_width(40.0)
         .show(ui, |ui| {
             ui.label(
                 RichText::new("Enabled")
@@ -9275,8 +8941,22 @@ fn render_key_values(
             ui.end_row();
             for (index, pair) in values.iter_mut().enumerate() {
                 changed |= ui.checkbox(&mut pair.enabled, "").changed();
-                changed |= ui.text_edit_singleline(&mut pair.key).changed();
-                changed |= ui.text_edit_singleline(&mut pair.value).changed();
+                changed |= ui
+                    .add_sized(
+                        [field_width, 30.0],
+                        TextEdit::singleline(&mut pair.key)
+                            .hint_text("Parameter")
+                            .desired_width(field_width),
+                    )
+                    .changed();
+                changed |= ui
+                    .add_sized(
+                        [field_width, 30.0],
+                        TextEdit::singleline(&mut pair.value)
+                            .hint_text("Value or {{variable}}")
+                            .desired_width(field_width),
+                    )
+                    .changed();
                 if ui.small_button("×").clicked() {
                     remove = Some(index);
                 }
@@ -9351,7 +9031,7 @@ fn render_multipart_parts(ui: &mut egui::Ui, parts: &mut Vec<MultipartPart>) -> 
         parts.remove(index);
         changed = true;
     }
-    if ui.button("＋ Add multipart part").clicked() {
+    if ui.button("+ Add multipart part").clicked() {
         parts.push(MultipartPart {
             name: String::new(),
             value: String::new(),
@@ -9401,7 +9081,7 @@ fn render_headers(ui: &mut egui::Ui, headers: &mut Vec<HeaderEntry>) -> bool {
         headers.remove(index);
         changed = true;
     }
-    if ui.button("＋ Add header").clicked() {
+    if ui.button("+ Add header").clicked() {
         headers.push(HeaderEntry::enabled("", ""));
         changed = true;
     }
@@ -9412,6 +9092,7 @@ fn main() -> eframe::Result {
     let app = welcome::DesktopApp::new(std::env::args().nth(1).map(PathBuf::from));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_icon(design::app_icon())
             .with_inner_size([1440.0, 960.0])
             .with_min_inner_size([980.0, 680.0]),
         ..Default::default()
@@ -9419,7 +9100,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Postly — local API workspace",
         options,
-        Box::new(|_creation_context| Ok(Box::new(app))),
+        Box::new(|creation_context| {
+            design::install(&creation_context.egui_ctx);
+            Ok(Box::new(app))
+        }),
     )
 }
 
@@ -9433,6 +9117,47 @@ mod tests {
         net::TcpListener,
         task::{Context, Poll},
     };
+
+    #[test]
+    fn adaptive_inspector_keeps_the_request_editor_reachable() {
+        for width in [980.0, 1280.0] {
+            let directory = tempfile::tempdir().unwrap();
+            postly_core::demo::create_workspace(directory.path(), "http://127.0.0.1:3979").unwrap();
+            let mut app = PostlyApp::open(directory.path().to_owned()).unwrap();
+            let ctx = egui::Context::default();
+            design::install(&ctx);
+            let mut workflows = workflows::Workflows::default();
+            for _ in 0..3 {
+                ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 680.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        workflows.toolbar(ui, &app);
+                        app.draw_navigator(ui);
+                        app.draw_request_header(ui);
+                        let before = ui.available_rect_before_wrap();
+                        app.draw_response(ui);
+                        let editor = ui.available_rect_before_wrap();
+                        assert!(editor.width() >= 260.0, "editor too narrow: {editor:?}");
+                        assert!(editor.height() >= 130.0, "editor too short: {editor:?}");
+                        if width >= 1280.0 {
+                            assert!(editor.width() < before.width() - 400.0);
+                            assert!((editor.height() - before.height()).abs() < 1.0);
+                        } else {
+                            assert!(editor.height() < before.height() - 200.0);
+                        }
+                        app.draw_editor(ui);
+                    },
+                )
+                .drop_without_applying_deltas();
+            }
+        }
+    }
 
     #[test]
     fn websocket_presets_round_trip_through_local_request_storage() {

@@ -102,3 +102,36 @@ launched through Launch Services. Exact-bundle visual inspection remains open:
 system screenshot capture failed during this session. Clean-machine testing,
 signing credentials and cross-platform validation are also external gates.
 See the [candidate report](release-validation-v0.2.0-preview.1.md).
+
+## Native visual system and response workspace
+
+The desktop now uses bundled IBM Plex Sans, opaque theme-aware text, a graphite
+dark theme and a separate light palette. New projects start dark; existing
+theme preferences are preserved. Navigation and design helpers are extracted
+from the main application module. Font licenses ship with the app and archives.
+
+The response inspector uses a resizable right-hand pane when the content area
+is wide enough and stacks below the editor in smaller windows. Compact response
+controls and consistent JSON line heights leave more space for the actual body.
+Request renaming remains available under More, exports under Export, and the
+request editor scrolls independently. No protocol or transport controls were
+removed. The bundled Postly logo is shared by the navigation header and runtime
+window/Dock icon; the macOS ICNS uses the same geometry as the website SVG.
+
+Regression checks cover theme text contrast (body, muted and syntax text on panel/field
+backgrounds), pointer/keyboard navigation, adaptive editor reachability and the
+bundled icon. These bounded checks are not a full accessibility certification.
+
+Local validation: formatting, Clippy and all 270 workspace tests passed (38 CLI,
+70 GUI, 159 core, 3 packaging). The rebuilt native app was inspected in dark and
+light themes, sent a real Orders request, and displayed the full 19-line JSON
+in the wide inspector. At 980 px width, the editor and stacked response remain
+reachable. The Dock was captured with the custom icon after a direct binary
+launch. Light JSON token colors were darkened after visual inspection.
+
+During real demo validation, a macOS accepted-socket timing issue was fixed:
+the loopback server explicitly waits for incoming bytes within its existing
+timeout. A regression connects before sending request data and checks HTTP 200.
+
+The final real-product video is required, not cancelled. Capture and publication
+follow the final product/site work; the older release does not contain this UI.

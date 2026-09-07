@@ -86,6 +86,7 @@ impl DesktopApp {
 impl eframe::App for DesktopApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if let Some(workspace) = &mut self.workspace {
+            ui.ctx().set_theme(workspace.transport.theme.preference());
             self.workflows.toolbar(ui, workspace);
             if let Some(server) = &self.demo {
                 egui::Panel::top("example-api-status").show(ui, |ui| {
@@ -121,7 +122,7 @@ impl eframe::App for DesktopApp {
         egui::CentralPanel::default().show(ui, |ui| {
             ui.add_space((ui.available_height() * 0.12).max(20.0));
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("POSTLY").size(18.0).strong().color(crate::ACCENT));
+                ui.label(RichText::new("POSTLY / LOCAL API WORKSPACE").size(13.0).strong().color(crate::design::accent(ui)));
                 ui.add_space(14.0);
                 ui.label(RichText::new("Your API. Your project.").size(38.0).strong());
                 ui.add_space(10.0);
