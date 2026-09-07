@@ -81,6 +81,9 @@ and measurement tooling. The archive-pair preservation test is recorded in
 - Developer ID signing and notarization: no usable signing identity was
   available locally. Ad-hoc signing must not be described as notarization.
 - Windows, Linux and Intel macOS native builds and real-machine validation.
+- The local cross-target attempt and its missing compiler/sysroot prerequisites
+  are recorded in the [cross-platform report](measurements/2026-09-08-cross-platform.md);
+  no target is advertised from that failed check.
 - Per-keystroke/scroll-FPS profiling, deeper fuzz campaigns and externally observed usability
   sessions. The [8 September report](measurements/2026-09-08-validation.md)
   now supplies a release CLI/core benchmark and bounded local fuzz smoke;
