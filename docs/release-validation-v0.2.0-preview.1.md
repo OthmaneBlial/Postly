@@ -1,8 +1,10 @@
 # Preview candidate validation — 0.2.0-preview.1
 
-Local checks on 7 September 2026, macOS 26.6, Apple Silicon (`Mac14,2`),
+Local checks on 7–8 September 2026, macOS 26.6, Apple Silicon (`Mac14,2`),
 Rust 1.95.0. This is not an independent clean-machine installation report.
-The candidate remains unpublished until its release gates are addressed.
+The candidate is published as the GitHub prerelease
+[`v0.2.0-preview.1`](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1);
+its public assets are verified in the [public-release report](measurements/2026-09-08-public-release.md).
 
 ## Packaging and runtime evidence
 
@@ -46,7 +48,8 @@ limitation. The CLI inside this bundle again passed two real requests and five
 assertions. This remains testing on the development Mac, not an independent
 installation test.
 
-Final local candidate SHA-256 values:
+Historical local candidate SHA-256 values from the superseded `ff6732be`
+build (not the published asset checksums):
 
 ```text
 5923b577e298d076977b2af136e5dc8668d314d12ab182edd9a6d5349f4f92ea  postly-v0.2.0-preview.1-macos-aarch64.tar.gz
@@ -55,14 +58,14 @@ Final local candidate SHA-256 values:
 
 ## Current package and archive-pair preservation
 
-The final release candidate must be built from a clean commit with the locked
-release graph. The generated `*-manifest.json` records `source_dirty: false`,
-target, Rust toolchain and signing status; the generated `*-SHA256SUMS` records
-the exact archive hashes. Archive extraction, recursive internal checksums, CLI
-version/help smoke and macOS app signature verification passed for the current
-local candidate. The final asset hashes are copied verbatim into the GitHub
-release notes at publication time, rather than duplicated as a second mutable
-source here.
+The published release was built from clean commit
+`493cf8cbfac1a743bf4136e1f62ff5d622e23fe3` with the locked release graph. Its
+generated `*-manifest.json` records `source_dirty: false`, target, Rust
+toolchain and signing status; `*-SHA256SUMS` records the exact archive hashes.
+Archive extraction, recursive internal checksums, CLI version/help smoke and
+macOS app signature verification passed locally. Downloading the public assets
+and re-running the checksum and video checks also passed; see the
+[public-release report](measurements/2026-09-08-public-release.md).
 
 The extracted GUI binary hash is
 `3c70a1ec1fbc971c5f2dea4f0795044dc4ac5a49116e9c19ef61dc5a9547bf19`, identical
@@ -73,7 +76,6 @@ and measurement tooling. The archive-pair preservation test is recorded in
 
 ## Open gates
 
-- Public asset/checksum verification after release approval.
 - Actual Finder installation, update
   and rollback on an independent machine without a development environment.
 - Developer ID signing and notarization: no usable signing identity was
@@ -89,6 +91,6 @@ now supplies five startup/idle-memory/search/navigation samples on this Mac.
 Its capture-based timings have explicit observation overhead; it is not a
 cross-platform, continuous-scroll or external-user result.
 
-Video evidence is tracked separately in the roadmap implementation log. No
-public release, independent user test or cross-platform success is implied by
-this report.
+Video evidence is tracked separately in the roadmap implementation log. The
+public release is verified, but no independent user test or cross-platform
+success is implied by this report.

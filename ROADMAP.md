@@ -1,11 +1,24 @@
 # Postly — roadmap produit, démo et adoption GitHub
 
-Audit du 7 septembre 2026 · source examinée : `19c91b9` · statut : plan proposé.
+Audit du 7 septembre 2026 · source examinée : `19c91b9` · dernière mise à jour :
+8 septembre 2026.
 
 Exécution démarrée le 7 septembre 2026. Le diagnostic ci-dessous conserve son
 instantané initial ; les preuves des changements sont consignées dans
 [le suivi d'implémentation](docs/roadmap-implementation.md). Les critères qui
 demandent des machines externes ou de vrais testeurs restent ouverts.
+
+## État d'exécution au 8 septembre 2026
+
+29 des 34 cases vérifiables sont terminées (**85 %**). M0 est à 9/10 (90 %),
+M1 à 8/8 pour ses livrables (100 %), M2 est implémenté localement mais son
+test avec cinq développeurs reste ouvert, M3 est à 8/11 (73 %) et la
+préparation du lancement est à 4/5 (80 %). Les cinq cases restantes sont des
+gates honnêtement non simulables ici : installation sur machine propre,
+validation Windows/Linux/Intel, replay avant publication, extraction
+progressive de modules et retours utilisateurs suivis d'une correction.
+Les preuves détaillées sont regroupées dans
+[docs/roadmap-implementation.md](docs/roadmap-implementation.md).
 
 ## Le diagnostic
 
@@ -78,9 +91,10 @@ Estimations pour une personne connaissant le dépôt ; elles excluent les délai
 - [x] Ajouter un écran d'accueil lorsque la GUI démarre sans chemin : **Ouvrir un projet / Créer un projet / Essayer un exemple**. Préserver l'ouverture explicite par argument pour les utilisateurs avancés.
 - [x] Ajouter un petit exemple public dans `examples/` : API de commandes avec données fictives, deux requêtes, assertions et réponse d'exemple. Définir un serveur loopback déterministe et un démarrage documenté ; ne pas dépendre d'une API gratuite externe.
 - [x] Documenter un parcours exact : ouvrir l'exemple, envoyer la requête, lire le JSON, modifier un paramètre, sauvegarder, retrouver le fichier TOML.
-- [ ] Construire une `.app` macOS avec icône et métadonnées, puis un DMG ou ZIP adapté. Vérifier les bibliothèques dynamiques requises sur une machine sans environnement de développement.
-- [x] Préparer une nouvelle version `v0.2.0-preview.1` depuis un commit identifié. Candidat local avec provenance ; aucune publication publique déduite de cette préparation.
-- [ ] Placer cette version dans le canal prerelease, avec notes qui décrivent ce binaire et un `SHA256SUMS` téléchargeable pour les archives.
+- [x] Construire une `.app` macOS avec icône et métadonnées, puis un DMG et une archive adaptés. Le package Apple Silicon, la signature ad hoc, les dépendances système et le smoke test CLI sont vérifiés localement ; la machine sans environnement de développement reste une gate distincte.
+- [ ] Vérifier l'ouverture et les bibliothèques dynamiques sur une machine propre sans environnement de développement.
+- [x] Préparer une nouvelle version `v0.2.0-preview.1` depuis le commit propre `493cf8c` et la publier dans le canal prerelease : [release GitHub](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1).
+- [x] Placer cette version dans le canal prerelease, avec notes qui décrivent ce binaire et un `SHA256SUMS` téléchargeable pour les archives. Les assets et hashes publics sont vérifiés dans [le rapport de release](docs/measurements/2026-09-08-public-release.md).
 - [x] Remplacer les commandes illustratives du site par le scénario local testé ; réserver la compilation à une section « Build from source ».
 - [x] Rendre explicites les plateformes disponibles, les dépendances optionnelles comme Node pour les scripts et le statut de signature.
 
@@ -167,11 +181,13 @@ Matrice de distribution visée, à valider plateforme par plateforme :
 | Linux x64 | Archive documentée puis AppImage ou paquet selon la demande. | Dépendances graphiques/TLS, ouverture desktop, keyring disponible ou diagnostic explicite, distribution/version testées. |
 
 - [x] Corriger le packaging pour utiliser les noms exécutables propres à chaque OS et inclure le commit source, la toolchain et la cible dans le manifeste. Implémenté et testé localement ; [preuve candidat](docs/release-validation-v0.2.0-preview.1.md), sans validation Windows/Linux implicite.
-- [ ] Respecter le choix documenté du projet : **pas de GitHub Actions**. Conserver `cargo xtask check`, `compat`, `bench`, `fuzz` et `package` comme outils locaux ; effectuer les validations sur les machines cibles et joindre un rapport par release.
+- [x] Respecter le choix documenté du projet : **pas de GitHub Actions**. `cargo xtask check`, `compat`, `bench`, `fuzz` et `package` restent les gates locales, avec un rapport attaché à la release.
+- [ ] Effectuer les validations sur les machines cibles non macOS et joindre un rapport par plateforme ; aucune compatibilité Windows/Linux/Intel n'est déduite du build ARM64.
 - [x] Ajouter les guides d'installation, de mise à jour et de retour à la version précédente ; vérifier que la mise à jour conserve collections et préférences. Le script [verify-update-preservation](tools/verify-update-preservation.sh) a été exécuté avec `v0.1.0` et le package macOS `0.2.0-preview.1` sur des données fictives : fichiers du workspace et préférence de thème inchangés après lancement du nouveau GUI.
-- [ ] Fournir les checksums des archives finales, les dépendances, les limites connues et les instructions de lancement pour chaque asset.
-- [ ] Signer/notariser quand les certificats sont disponibles ; annoncer précisément une preview non signée tant que ce n'est pas fait. Un certificat manquant ne transforme pas un build local en release validée.
-- [ ] Avant publication, télécharger les assets candidats sur une machine propre et rejouer le scénario vidéo. Après publication, vérifier les URLs et les hashes des assets publics.
+- [x] Fournir les checksums des archives finales, les dépendances, les limites connues et les instructions de lancement pour chaque asset. Voir `SHA256SUMS`, le manifeste, les notes de release, [le guide d'installation](docs/install.md) et [la vérification publique](docs/measurements/2026-09-08-public-release.md).
+- [x] Annoncer précisément le statut de signature : la preview publiée est ad hoc et non notarized ; le statut est répété dans le manifeste et les notes. La Developer ID/notarisation reste conditionnée à la disponibilité des certificats.
+- [ ] Avant publication, télécharger les assets candidats sur une machine propre et rejouer le scénario vidéo ; cette gate pré-publication reste ouverte.
+- [x] Après publication, vérifier les URLs et les hashes des assets publics. Vérifié le 8 septembre dans [le rapport de release](docs/measurements/2026-09-08-public-release.md).
 - [x] Ajouter `CONTRIBUTING.md`, un formulaire de bug avec OS/version/reproduction, un formulaire de migration sans données privées et un modèle de PR court.
 - [x] Préparer 5–8 tickets bornés avec fichiers concernés et critères d'acceptation : documentation, exemples, petits défauts UI et fixtures d'import.
 - [ ] Extraire progressivement les panneaux GUI et les commandes CLI lorsque les travaux les touchent ; éviter un grand refactoring qui retarde les livrables visibles.
@@ -207,7 +223,7 @@ Commencer par 10 développeurs backend utilisant déjà Postman, Bruno ou un cli
 
 ### Diffusion après les critères de sortie
 
-- [ ] Publier une release cohérente avec la vidéo, puis un récit de construction précis : problème rencontré, démo, choix techniques et limites actuelles.
+- [x] Publier une release cohérente avec la vidéo, puis un récit de construction précis : problème rencontré, démo, choix techniques et limites actuelles. Voir [v0.2.0-preview.1](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1), [la provenance vidéo](docs/demo-production.md) et [la vérification publique](docs/measurements/2026-09-08-public-release.md).
 - [x] Préparer un Show HN, un message pour une communauté Rust et un message pour une communauté backend ; adapter chaque texte à son audience et vérifier ses règles au moment de publier. Brouillons : [launch kit](docs/launch-kit.md).
 - [x] Mettre en avant un résultat utile dans chaque publication : import avec diagnostic, tests sur les mêmes fichiers ou mock local. Déclarer clairement son rôle de créateur. Inclus dans les trois brouillons du [launch kit](docs/launch-kit.md).
 - [x] Demander un retour concret, par exemple une étape d'installation bloquante ou un cas d'import mal expliqué. Éviter les sollicitations répétitives de stars et les messages privés non demandés. Questions et suivi : [launch kit](docs/launch-kit.md).
@@ -240,10 +256,21 @@ Si les visites restent faibles mais les essais réussissent, améliorer la distr
 
 ## 7. Les cinq prochains tickets, dans cet ordre
 
-1. **Aligner la toolchain et préparer le build candidat** — `Cargo.toml`, documentation de développement et notes de version ; vérifier depuis un environnement propre.
-2. **Créer l'exemple local et l'accueil desktop** — futur `examples/`, `postly-app` ; réussir la première requête sans lancer Cargo.
-3. **Préparer et tester la preview macOS** — `postly-xtask`, packaging et installation ; identifier le commit, le canal et les checksums.
-4. **Capturer la vraie app et monter la vidéo avec FFmpeg** — suivre M1 sur ce build ; fournir MP4, poster, lecteur et scénario reproductible.
-5. **Recomposer le haut du README et du site** — téléchargement, vidéo et exemple d'abord ; recruter les premiers testeurs après validation.
+1. **Rejouer l'installation sur une machine propre** — télécharger la
+   prerelease, vérifier les hashes, ouvrir le DMG depuis Finder et refaire le
+   parcours vidéo sans Cargo.
+2. **Valider les cibles restantes** — produire des artefacts et rapports
+   séparés pour Windows x64, Linux x64 et Intel macOS avant de les annoncer.
+3. **Observer cinq premiers utilisateurs** — chronométrer installation,
+   première réponse, import, sauvegarde et second usage ; anonymiser les
+   retours et classer chaque abandon.
+4. **Fermer les défauts de qualité mesurés** — profiling par frappe/scroll,
+   vérification clavier/contraste/petite fenêtre et corrections accompagnées
+   d'une courte démo.
+5. **Élargir avec preuve** — traiter les incompatibilités Postman demandées,
+   extraire les modules GUI/CLI touchés et publier une release corrective
+   seulement après reproduction et test de non-régression.
 
-Les jalons et cases de ce document décrivent du travail à réaliser. Leur présence ne signifie pas qu'une vidéo, une nouvelle release, un installateur ou une campagne a déjà été produit ou publié.
+Les cases cochées correspondent désormais à des preuves locales ou publiques
+référencées. Les cases non cochées restent des gates externes, et ne doivent
+pas être présentées comme des fonctionnalités ou une compatibilité acquise.

@@ -49,13 +49,13 @@ workspace that share the same request model.
 
 ## Download
 
-The older technical preview is available for macOS Apple Silicon:
-[`v0.1.0`](https://github.com/OthmaneBlial/Postly/releases/tag/v0.1.0). Verify
-the included `SHA256SUMS` file before running the binaries. Cross-platform
-installers, notarization and production release validation remain open.
-The current source targets `0.2.0-preview.1`; its macOS app/DMG has local
-packaging evidence, not a confirmed new public release. See the
-[installation guide](docs/install.md) and [candidate report](docs/release-validation-v0.2.0-preview.1.md).
+The current macOS Apple Silicon preview is
+[`v0.2.0-preview.1`](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1).
+Download the DMG or tar archive, verify its included `SHA256SUMS`, and follow
+the [installation guide](docs/install.md). This preview is ad hoc signed and
+not notarized; Windows, Linux and Intel macOS assets are not published yet.
+The [public release report](docs/measurements/2026-09-08-public-release.md)
+records the exact asset hashes and verification date.
 
 ## What Postly offers
 

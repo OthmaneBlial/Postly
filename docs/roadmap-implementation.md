@@ -93,7 +93,9 @@ DMG. The CLI statically bundles OpenSSL instead of requiring Homebrew.
 
 Installation, update and rollback instructions accompany the package. Platform
 availability, optional Node scripting and ad-hoc/not-notarized status are
-explicit. This does not create a public release or establish other OS support.
+explicit. This local evidence does not establish other OS support or a
+clean-machine installation. The macOS Apple Silicon package was subsequently
+published as the prerelease [v0.2.0-preview.1](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1).
 
 Validation: 265 tests, formatting and Clippy passed; compatibility fixtures
 passed 10/10 with 27/31 request mappings. The mounted DMG's CLI passed two
@@ -133,8 +135,8 @@ During real demo validation, a macOS accepted-socket timing issue was fixed:
 the loopback server explicitly waits for incoming bytes within its existing
 timeout. A regression connects before sending request data and checks HTTP 200.
 
-The final real-product video is required, not cancelled. Capture and publication
-follow the final product/site work; the older release does not contain this UI.
+The final real-product video is included in the public prerelease and remains
+served by the site. The older `v0.1.0` release does not contain this UI.
 
 ## Product site and first-run documentation
 
@@ -170,11 +172,12 @@ and corrected a fixed video-height issue. Full-screen requests are rejected
 in the test browser; the explicit fallback message was verified instead of
 claiming this mode passed. Other browsers/devices remain untested.
 
-Publication verified: the public MP4 hash matches the local export, the public
-player plays and seeks by chapter, and GitHub renders the README poster with
-its link to the full player. The code and media milestone is `ddfd0c7`; the
-Pages content was published as `524d0199` in the site's existing `master`
-branch. No other project folder was changed.
+Publication verified: the public MP4 hash matches the local export and the
+release asset, the public player plays and seeks by chapter, and GitHub renders
+the README poster with its link to the full player. The code and media
+milestone is `ddfd0c7`; the Pages content was published as `524d0199` in the
+site's existing `master` branch. Exact release URLs and hashes are recorded in
+[the public-release report](measurements/2026-09-08-public-release.md).
 
 ## README discovery path
 

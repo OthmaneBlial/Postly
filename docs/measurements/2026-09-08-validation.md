@@ -2,7 +2,9 @@
 
 Host: macOS 26.6, Apple Silicon `Mac14,2`. These are development-machine
 observations, not independent installation, cross-platform or adoption evidence.
-The public binary is still the older v0.1.0 preview.
+This benchmark report predates the final package commit; the public binary is
+now `v0.2.0-preview.1`, while the measured executable provenance remains the
+commit recorded below.
 
 ## Quality and compatibility
 

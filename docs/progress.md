@@ -351,8 +351,12 @@ support, Postman awsv4 import/export, local header-delivery coverage and a
 deterministic AWS S3 signature-calculation regression vector.
 
 The release packaging gate has since been validated locally with the macOS
-ARM64 archive, internal SHA256 manifest and packaged CLI smoke checks. External
-review, public distribution and manual desktop QA remain separate gates.
+ARM64 archive, internal SHA256 manifest and packaged CLI smoke checks. The
+macOS Apple Silicon package is now published as the prerelease
+[`v0.2.0-preview.1`](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1);
+public asset hashes are recorded in the [verification report](measurements/2026-09-08-public-release.md).
+External review, clean-machine installation and manual desktop QA remain
+separate gates.
 
 The first public `v0.1.0` macOS Apple Silicon technical preview is now
 published as a GitHub Release with the validated archive and installation
