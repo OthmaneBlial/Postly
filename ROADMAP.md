@@ -193,6 +193,12 @@ Déplacer la longue liste de détails de transport et de protocoles vers la docu
 
 La promesse de rapidité doit s'appuyer sur les [benchmarks existants](docs/benchmarks.md). Ajouter ensuite démarrage GUI, mémoire au repos et navigation dans 10 000 requêtes, avec machine, profil release, version, protocole de mesure et résultats bruts. Le temps de `postly --help` ne mesure pas le démarrage de l'app. Aucune comparaison « x fois plus rapide » avant une mesure contrôlée des versions concurrentes.
 
+Première mesure native réalisée le 8 septembre : [cinq lancements, mémoire au
+repos et navigation sur 10 000 requêtes](docs/measurements/2026-09-08-macos-gui.md).
+Le rapport conserve les données brutes et distingue les délais observés par
+capture des temps de rendu exacts. La fluidité par frappe/FPS et les autres
+plateformes ne sont pas déduites de ce premier résultat.
+
 ## 5. Lancement et boucle d'apprentissage
 
 ### Première audience

@@ -49,12 +49,13 @@ The output intentionally does not compare
 Postly to Postman, Bruno or any other client. Add a controlled competitor version
 and methodology before publishing a comparison.
 
-The benchmark suite is still a foundation. Idle memory, large response
-rendering, larger runner-throughput matrices and cross-platform runs remain
+The benchmark suite is still a foundation. Large response rendering,
+larger runner-throughput matrices and cross-platform runs remain
 future additions; the HTTP engine nevertheless enforces a configurable 100 MiB
 default cap for buffered response bodies so malformed or unbounded endpoints
 cannot grow the process without limit.
 
 Use the [native GUI protocol and 10,000-request fixture](gui-performance.md)
-for rendered measurements. Its desktop validation remains open; the CLI/core
-baseline must not stand in for it.
+for rendered measurements. A [first macOS native baseline](measurements/2026-09-08-macos-gui.md)
+now records startup, idle RSS and navigation separately from CLI/core timings.
+It is not a continuous-scroll FPS, per-keystroke or cross-platform result.

@@ -1,0 +1,110 @@
+{
+  "binary" : "\/tmp\/postly-final-demo.6jvWV4\/mounted\/Postly.app\/Contents\/MacOS\/postly-gui",
+  "binary_sha256" : "3c70a1ec1fbc971c5f2dea4f0795044dc4ac5a49116e9c19ef61dc5a9547bf19",
+  "completed_runs" : 5,
+  "hardware" : "Mac14,2",
+  "measured_at_utc" : "2026-09-07T22:36:24Z",
+  "method" : "CGWindow polling 10ms; captured-content OCR upper bounds (capture completion time, excluding later OCR); idle RSS approximately 5\/6\/7 seconds after startup-content recognition; no cache flushing; no HTTP requests; each query inserted as one Unicode event; scroll-to-bottom is one synthetic pixel-wheel event, not a scroll-FPS test",
+  "observer_binary_sha256" : "78520168ba2890092c8b7de9a571714b570f44257b4a719d130b8b5c7fa278d8",
+  "os" : "Version 26.6 (Build 25G72)",
+  "request_count" : 10000,
+  "requested_runs" : 5,
+  "samples" : [
+    {
+      "broad_search_observed_by_ms" : 1310.2553751086816,
+      "idle_rss_kib" : [
+        235040,
+        235040,
+        235040
+      ],
+      "pid" : 38494,
+      "run" : 1,
+      "scroll_bottom_observed_by_ms" : 770.91233339160681,
+      "search_result_observed_by_ms" : 829.4430417008698,
+      "selection_observed_by_ms" : 1278.2863333122805,
+      "startup_content_observed_by_ms" : 1926.5382916200906,
+      "window_ms" : 1757.39995832555,
+      "window_points" : [
+        1280,
+        713
+      ]
+    },
+    {
+      "broad_search_observed_by_ms" : 1313.3256250293925,
+      "idle_rss_kib" : [
+        235040,
+        234992,
+        234992
+      ],
+      "pid" : 38512,
+      "run" : 2,
+      "scroll_bottom_observed_by_ms" : 755.1554583478719,
+      "search_result_observed_by_ms" : 805.80354167614132,
+      "selection_observed_by_ms" : 1260.5187916196883,
+      "startup_content_observed_by_ms" : 1749.3245416553691,
+      "window_ms" : 1531.5905417082831,
+      "window_points" : [
+        1280,
+        713
+      ]
+    },
+    {
+      "broad_search_observed_by_ms" : 1312.130666570738,
+      "idle_rss_kib" : [
+        234992,
+        234992,
+        234992
+      ],
+      "pid" : 38529,
+      "run" : 3,
+      "scroll_bottom_observed_by_ms" : 769.256875035353,
+      "search_result_observed_by_ms" : 821.90987502690405,
+      "selection_observed_by_ms" : 1270.0309999054298,
+      "startup_content_observed_by_ms" : 1738.6335416231304,
+      "window_ms" : 1514.1314583597705,
+      "window_points" : [
+        1280,
+        713
+      ]
+    },
+    {
+      "broad_search_observed_by_ms" : 1310.463875066489,
+      "idle_rss_kib" : [
+        234944,
+        234944,
+        234944
+      ],
+      "pid" : 38546,
+      "run" : 4,
+      "scroll_bottom_observed_by_ms" : 764.9324166122824,
+      "search_result_observed_by_ms" : 803.43787500169128,
+      "selection_observed_by_ms" : 1269.6104167262092,
+      "startup_content_observed_by_ms" : 1799.5904999552295,
+      "window_ms" : 1583.409083308652,
+      "window_points" : [
+        1280,
+        713
+      ]
+    },
+    {
+      "broad_search_observed_by_ms" : 1302.2312500979751,
+      "idle_rss_kib" : [
+        234912,
+        234912,
+        234912
+      ],
+      "pid" : 38567,
+      "run" : 5,
+      "scroll_bottom_observed_by_ms" : 771.52554166968912,
+      "search_result_observed_by_ms" : 803.8085832959041,
+      "selection_observed_by_ms" : 1277.0977083127946,
+      "startup_content_observed_by_ms" : 1795.6599583849311,
+      "window_ms" : 1576.8664584029466,
+      "window_points" : [
+        1280,
+        713
+      ]
+    }
+  ],
+  "workspace" : "\/Users\/othmane\/Projects\/GITHUB_PROJECTS\/Postly\/tmp\/gui-benchmark-2026-09-08\/workspace"
+}

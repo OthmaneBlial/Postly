@@ -217,3 +217,15 @@ requests. The CLI validator reported no issues and the generator's no-overwrite
 behavior was checked. The actual capture attempt encountered a locked macOS
 session, so no GUI timing or idle-memory claim is made. The
 [GUI measurement protocol](gui-performance.md) retains that gate explicitly.
+
+## First real native performance baseline
+
+After macOS became unlocked, the external observer completed five native runs
+on the same clean-commit app used for the demo, with 10,000 fictional requests.
+The [raw report and inspected frames](measurements/2026-09-08-macos-gui.md)
+record startup, idle RSS, unique/broad searches, opening the correct request and
+scrolling to the last result. Window registration median was 1,576.87 ms;
+idle app RSS median was 234,992 KiB. Capture-based interaction numbers remain
+explicit observation bounds, not exact render times or a claim of smooth FPS.
+The earlier locked-session failure is superseded for this local measurement;
+independent installations, other OSes and external usability remain open.
