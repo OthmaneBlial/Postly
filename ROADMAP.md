@@ -10,13 +10,13 @@ demandent des machines externes ou de vrais testeurs restent ouverts.
 
 ## État d'exécution au 8 septembre 2026
 
-29 des 34 cases vérifiables sont terminées (**85 %**). M0 est à 9/10 (90 %),
+31 des 35 cases vérifiables sont terminées (**88,6 %**). M0 est à 10/11 (91 %),
 M1 à 8/8 pour ses livrables (100 %), M2 est implémenté localement mais son
 test avec cinq développeurs reste ouvert, M3 est à 8/11 (73 %) et la
-préparation du lancement est à 4/5 (80 %). Les cinq cases restantes sont des
+préparation du lancement est à 4/5 (80 %). Les quatre cases restantes sont des
 gates honnêtement non simulables ici : installation sur machine propre,
-validation Windows/Linux/Intel, replay avant publication, extraction
-progressive de modules et retours utilisateurs suivis d'une correction.
+validation Windows/Linux/Intel, replay avant publication et retours utilisateurs
+suivis d'une correction.
 Les preuves détaillées sont regroupées dans
 [docs/roadmap-implementation.md](docs/roadmap-implementation.md).
 
@@ -92,7 +92,8 @@ Estimations pour une personne connaissant le dépôt ; elles excluent les délai
 - [x] Ajouter un petit exemple public dans `examples/` : API de commandes avec données fictives, deux requêtes, assertions et réponse d'exemple. Définir un serveur loopback déterministe et un démarrage documenté ; ne pas dépendre d'une API gratuite externe.
 - [x] Documenter un parcours exact : ouvrir l'exemple, envoyer la requête, lire le JSON, modifier un paramètre, sauvegarder, retrouver le fichier TOML.
 - [x] Construire une `.app` macOS avec icône et métadonnées, puis un DMG et une archive adaptés. Le package Apple Silicon, la signature ad hoc, les dépendances système et le smoke test CLI sont vérifiés localement ; la machine sans environnement de développement reste une gate distincte.
-- [ ] Vérifier l'ouverture et les bibliothèques dynamiques sur une machine propre sans environnement de développement.
+- [x] Rejouer l'archive dans un environnement utilisateur isolé sans Cargo ni Node ; version, workspace, API locale, checksums et démarrage GUI passent. Voir [la preuve isolée](docs/measurements/2026-09-08-isolated-package.md).
+- [ ] Vérifier l'ouverture et les bibliothèques dynamiques sur une machine réellement indépendante sans environnement de développement.
 - [x] Préparer une nouvelle version `v0.2.0-preview.1` depuis le commit propre `493cf8c`, avec provenance, cible et statut de signature dans le manifeste.
 - [x] Placer cette version dans le canal prerelease, avec notes qui décrivent ce binaire et un `SHA256SUMS` téléchargeable pour les archives : [release GitHub](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1). Les assets et hashes publics sont vérifiés dans [le rapport de release](docs/measurements/2026-09-08-public-release.md).
 - [x] Remplacer les commandes illustratives du site par le scénario local testé ; réserver la compilation à une section « Build from source ».

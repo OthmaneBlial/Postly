@@ -256,3 +256,10 @@ and a three-second launch of the new extracted GUI; canonical files and the
 preference JSON matched byte-for-byte. See the [dated report](measurements/2026-09-08-update-preservation.md).
 This is one local archive pair, not clean-machine, keychain or cross-platform
 evidence.
+
+The published archive was also replayed in a fresh temporary HOME with a
+minimal system PATH: no Cargo or Node was available, the generated Orders
+workspace validated and ran two HTTP 200 requests with five assertions, the
+internal checksums passed, and the packaged GUI stayed alive for three seconds.
+This strengthens the local end-user path without replacing an independent Mac
+or a target-machine test. See the [isolated package report](measurements/2026-09-08-isolated-package.md).
