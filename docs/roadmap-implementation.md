@@ -82,3 +82,23 @@ filter from `paid` to `pending` produced 10 structural differences against the
 saved example. Excluding `/orders` left one difference at `/count` and visibly
 reported one excluded subtree. This confirms the displayed comparison uses
 the real received response and applies the user's explicit exclusion.
+
+## Native release packaging candidate
+
+Version `0.2.0-preview.1` now has native-host packaging with target-correct
+executable names, explicit locked release builds, source/toolchain provenance,
+recursive archive checksums and an extracted-CLI smoke run against the local
+Orders API. macOS adds the existing brand icon, an app bundle and a verified
+DMG. The CLI statically bundles OpenSSL instead of requiring Homebrew.
+
+Installation, update and rollback instructions accompany the package. Platform
+availability, optional Node scripting and ad-hoc/not-notarized status are
+explicit. This does not create a public release or establish other OS support.
+
+Validation: 265 tests, formatting and Clippy passed; compatibility fixtures
+passed 10/10 with 27/31 request mappings. The mounted DMG's CLI passed two
+requests and five assertions, and its app passed signature verification and
+launched through Launch Services. Exact-bundle visual inspection remains open:
+system screenshot capture failed during this session. Clean-machine testing,
+signing credentials and cross-platform validation are also external gates.
+See the [candidate report](release-validation-v0.2.0-preview.1.md).

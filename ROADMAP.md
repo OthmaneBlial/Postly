@@ -166,7 +166,7 @@ Matrice de distribution visée, à valider plateforme par plateforme :
 | Windows x64 | ZIP preview puis installateur. | Noms `.exe`, dépendances TLS, chemins avec espaces, credential store, pare-feu local, désinstallation. |
 | Linux x64 | Archive documentée puis AppImage ou paquet selon la demande. | Dépendances graphiques/TLS, ouverture desktop, keyring disponible ou diagnostic explicite, distribution/version testées. |
 
-- [ ] Corriger le packaging pour utiliser les noms exécutables propres à chaque OS et inclure le commit source, la toolchain et la cible dans le manifeste.
+- [x] Corriger le packaging pour utiliser les noms exécutables propres à chaque OS et inclure le commit source, la toolchain et la cible dans le manifeste. Implémenté et testé localement ; [preuve candidat](docs/release-validation-v0.2.0-preview.1.md), sans validation Windows/Linux implicite.
 - [ ] Respecter le choix documenté du projet : **pas de GitHub Actions**. Conserver `cargo xtask check`, `compat`, `bench`, `fuzz` et `package` comme outils locaux ; effectuer les validations sur les machines cibles et joindre un rapport par release.
 - [ ] Ajouter les guides d'installation, de mise à jour et de retour à la version précédente ; vérifier que la mise à jour conserve collections et préférences.
 - [ ] Fournir les checksums des archives finales, les dépendances, les limites connues et les instructions de lancement pour chaque asset.

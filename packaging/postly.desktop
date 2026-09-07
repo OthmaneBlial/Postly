@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Postly
+Comment=Native API workspace for your repository
+Exec=postly-gui
+Icon=postly
+Terminal=false
+Categories=Development;Network;
+StartupNotify=true

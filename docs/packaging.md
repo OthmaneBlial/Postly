@@ -1,25 +1,57 @@
-# Local packaging
+# Local release packaging
 
-Postly has a local packaging command for producing a reviewable macOS/Linux
-or Windows-targeted release directory from the current Rust toolchain. It does
-not publish a release or upload artifacts:
+Run on the OS and architecture you intend to distribute:
 
-~~~bash
-CARGO_PROFILE_RELEASE_DEBUG=0 cargo xtask package
-~~~
+```bash
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_INCREMENTAL=0 cargo xtask package
+```
 
-The command builds the CLI and native GUI with `--locked`, runs the packaged CLI
-with `--version` and `--help`, checks the archive listing, then writes an
-ignored `dist/` directory containing:
+Packaging builds the CLI and GUI with the locked graph and the toolchain's
+explicit host target. It does not upload a release. OpenSSL is statically built
+from the vendored dependency for the CLI; building it requires a C compiler,
+make and Perl. Users of the resulting macOS binaries do not need Homebrew.
 
-- `postly` and `postly-gui`;
-- a copy of the README and MIT license;
-- `postly-package.json` with the local platform and architecture;
-- `SHA256SUMS` for every packaged file;
-- a `.tar.gz` archive and its printed SHA-256 digest.
+The command writes generated artifacts under ignored `dist/`:
 
-The result is a local artifact for smoke testing and review. The GUI binary is
-packaged but still needs manual desktop launch/accessibility QA. This is not a
-signed installer, notarized macOS application bundle, cross-compiled release,
-registry publication or proof of end-user installation. Those remain separate
-release gates.
+- macOS: a `.tar.gz` and DMG containing an icon-bearing `Postly.app` with both
+  binaries, its bundle metadata and license resources;
+- Windows: a ZIP using `.exe` names throughout packaging and smoke checks;
+- Linux: a `.tar.gz`, including an installable desktop entry and SVG icon;
+- per-target `*-SHA256SUMS` and `*-manifest.json` files, with version, exact
+  source commit, dirty status, target triple, toolchain and signing status.
+
+The archives contain their own recursive checksum manifest, installation guide,
+documentation, MIT/OpenSSL licenses and public Orders example. Packaging extracts the archive,
+checks every entry against the manifest and runs the extracted CLI. macOS also
+checks linked libraries, verifies ad-hoc signatures, creates and verifies the
+DMG. The app opens onboarding when launched from Finder.
+
+Generated files for the same version/target are replaced by a later successful
+package run. Source files and other versions in `dist/` are not deleted. Staging
+directories are temporary and discarded when packaging returns.
+
+Before publication, commit all source changes and rerun packaging. A manifest
+with `source_dirty: true` is a development artifact, not release provenance.
+Combine the per-target checksum lists into the release's public `SHA256SUMS`
+only after collecting the final, independently tested assets.
+
+## Gates that packaging does not establish
+
+Ad-hoc signing is not Apple Developer ID signing or notarization. Windows
+packages are unsigned. Do not describe cross-platform installation, external
+usability, keychain behavior or an update/rollback as tested without checking
+them on the relevant machine. Native-host packaging support is not a substitute
+for release assets or end-user validation.
+
+This repository intentionally has no GitHub Actions. Use the local quality,
+compatibility, benchmark and fuzz commands before making a release. Record OS,
+architecture, artifact hash and actual outcomes in a release validation report.
+The installation and rollback guide is [install.md](install.md).
+
+The macOS icon is rasterized from the existing logo geometry. To regenerate:
+
+```bash
+# Choose a fresh output directory; the renderer refuses to overwrite PNGs.
+swift tools/render-macos-icon.swift ./tmp/Postly.iconset
+iconutil -c icns ./tmp/Postly.iconset -o packaging/Postly.icns
+```

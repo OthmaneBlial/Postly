@@ -5,6 +5,8 @@ use std::{
     time::Instant,
 };
 
+mod packaging;
+
 use postly_core::{
     import_environment, import_openapi, import_postman_collection, run_requests, Collection,
     EngineOptions, HttpEngine, Request, RunnerOptions, VariableContext, Workspace,
@@ -474,186 +476,13 @@ fn display_relative(root: &Path, path: &Path) -> String {
 }
 
 fn package_release() -> bool {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    if !run_in(
-        &root,
-        "cargo",
-        &[
-            "build",
-            "--locked",
-            "--release",
-            "-p",
-            "postly",
-            "-p",
-            "postly-app",
-        ],
-    ) {
-        return false;
-    }
-
-    let target = env::var_os("CARGO_TARGET_DIR")
-        .map(std::path::PathBuf::from)
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                root.join(path)
-            }
-        })
-        .unwrap_or_else(|| root.join("target"));
-    let dist = root.join("dist");
-    let package_name = format!(
-        "postly-v{}-{}-{}",
-        env!("CARGO_PKG_VERSION"),
-        env::consts::OS,
-        env::consts::ARCH
-    );
-    let package_dir = dist.join(&package_name);
-    if let Err(error) = fs::create_dir_all(&package_dir) {
-        eprintln!(
-            "could not create package directory {}: {error}",
-            package_dir.display()
-        );
-        return false;
-    }
-
-    let files = [
-        (target.join("release/postly"), package_dir.join("postly")),
-        (
-            target.join("release/postly-gui"),
-            package_dir.join("postly-gui"),
-        ),
-        (root.join("README.md"), package_dir.join("README.md")),
-        (root.join("LICENSE"), package_dir.join("LICENSE")),
-    ];
-    for (source, destination) in files {
-        if let Err(error) = fs::copy(&source, &destination) {
-            eprintln!(
-                "could not copy package file {} to {}: {error}",
-                source.display(),
-                destination.display()
-            );
-            return false;
-        }
-    }
-
-    let manifest = json!({
-        "name": "Postly",
-        "version": env!("CARGO_PKG_VERSION"),
-        "platform": env::consts::OS,
-        "architecture": env::consts::ARCH,
-        "binaries": ["postly", "postly-gui"],
-        "source": "local cargo release build",
-    });
-    let manifest_path = package_dir.join("postly-package.json");
-    match serde_json::to_vec_pretty(&manifest)
-        .map_err(|error| error.to_string())
-        .and_then(|contents| fs::write(&manifest_path, contents).map_err(|error| error.to_string()))
-    {
-        Ok(()) => {}
+    match packaging::package() {
+        Ok(()) => true,
         Err(error) => {
-            eprintln!("could not write package manifest: {error}");
-            return false;
-        }
-    }
-
-    let checksums = [
-        "postly",
-        "postly-gui",
-        "README.md",
-        "LICENSE",
-        "postly-package.json",
-    ]
-    .iter()
-    .map(|name| {
-        let path = package_dir.join(name);
-        sha256_hex(&path).map(|hash| format!("{hash}  {name}"))
-    })
-    .collect::<Result<Vec<_>, _>>();
-    let checksums = match checksums {
-        Ok(checksums) => checksums.join("\n") + "\n",
-        Err(error) => {
-            eprintln!("could not hash package files: {error}");
-            return false;
-        }
-    };
-    if let Err(error) = fs::write(package_dir.join("SHA256SUMS"), checksums) {
-        eprintln!("could not write package checksums: {error}");
-        return false;
-    }
-    if !run_package_cli_smoke(&package_dir) {
-        return false;
-    }
-
-    let archive = dist.join(format!("{package_name}.tar.gz"));
-    let tar_status = Command::new("tar")
-        .arg("-czf")
-        .arg(&archive)
-        .arg("-C")
-        .arg(&dist)
-        .arg(&package_name)
-        .status();
-    if !tar_status.map(|status| status.success()).unwrap_or(false) {
-        eprintln!("could not create package archive {}", archive.display());
-        return false;
-    }
-    let archive_listing = Command::new("tar").arg("-tzf").arg(&archive).output();
-    let archive_listing = match archive_listing {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).into_owned()
-        }
-        Ok(output) => {
-            eprintln!("could not list package archive: {}", output.status);
-            return false;
-        }
-        Err(error) => {
-            eprintln!("could not inspect package archive: {error}");
-            return false;
-        }
-    };
-    for expected in [
-        format!("{package_name}/postly"),
-        format!("{package_name}/postly-gui"),
-        format!("{package_name}/SHA256SUMS"),
-    ] {
-        if !archive_listing.lines().any(|entry| entry == expected) {
-            eprintln!("package archive is missing {expected}");
-            return false;
-        }
-    }
-    match sha256_hex(&archive) {
-        Ok(hash) => {
-            println!("package directory: {}", package_dir.display());
-            println!("package archive: {}", archive.display());
-            println!("archive sha256: {hash}");
-            true
-        }
-        Err(error) => {
-            eprintln!("could not hash package archive: {error}");
+            eprintln!("packaging failed: {error}");
             false
         }
     }
-}
-
-fn run_package_cli_smoke(package_dir: &Path) -> bool {
-    let cli = package_dir.join("postly");
-    for argument in ["--version", "--help"] {
-        let output = match Command::new(&cli).arg(argument).output() {
-            Ok(output) => output,
-            Err(error) => {
-                eprintln!("packaged CLI smoke test could not start {argument}: {error}");
-                return false;
-            }
-        };
-        if !output.status.success() {
-            eprintln!(
-                "packaged CLI smoke test {argument} exited with {}",
-                output.status
-            );
-            return false;
-        }
-    }
-    true
 }
 
 fn sha256_hex(path: &Path) -> Result<String, String> {

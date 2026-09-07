@@ -1,0 +1,73 @@
+# Install Postly Preview
+
+Use an asset from the [GitHub Releases page](https://github.com/OthmaneBlial/Postly/releases)
+that matches your OS and CPU. These instructions describe the `0.2.0-preview.1`
+packaging; the old `v0.1.0` archive does not include the new desktop workflows.
+
+## macOS Apple Silicon
+
+1. Download the macOS ARM64 `.dmg` and the matching `SHA256SUMS` file.
+2. From the download folder, verify its SHA-256 against that file:
+   `shasum -a 256 postly-v0.2.0-preview.1-macos-aarch64.dmg`.
+3. Open the DMG and drag **Postly.app** to **Applications**.
+4. Open Postly from Applications and choose **Try the example**, **Create
+   project** or **Open project**. Choose an empty folder for a new example.
+
+This preview is ad-hoc signed, **not Developer ID signed or notarized**. macOS
+may block a downloaded app. After verifying its source and checksum, use the
+per-app **Open Anyway** option in System Settings → Privacy & Security if you
+choose to run it. Do not disable Gatekeeper globally. Some managed machines
+will disallow unnotarized apps entirely.
+
+The DMG contains both the desktop app and CLI. Run the bundled CLI with:
+
+```bash
+/Applications/Postly.app/Contents/MacOS/postly --help
+/Applications/Postly.app/Contents/MacOS/postly demo ./orders-demo
+```
+
+The `.tar.gz` alternative contains standalone `postly` and `postly-gui`
+executables as well as `Postly.app`. Extract it and check the internal
+`SHA256SUMS` from inside the extracted folder using `shasum -a 256 -c SHA256SUMS`.
+Run `./postly --help` or open `Postly.app`. OpenSSL is bundled statically in
+the CLI; Homebrew is not an end-user requirement.
+
+## Windows and Linux
+
+Only download these platforms when a matching asset is actually listed in the
+release. A build script supporting an OS does not mean a tested download exists.
+
+Windows packaging creates a ZIP containing `postly.exe` and `postly-gui.exe`.
+Extract it into a writable folder and run `postly-gui.exe`. Verify a downloaded
+archive using PowerShell `Get-FileHash -Algorithm SHA256 PATH` and compare with
+the release checksum. Unsigned previews may trigger SmartScreen or organization
+policy. A working OS credential store is needed for secret environments.
+
+Linux packaging creates a `.tar.gz` with the two executables, an SVG icon and a
+desktop entry. Extract, verify with `sha256sum -c SHA256SUMS`, and launch
+`./postly-gui`. Native graphics libraries and an available graphical session are
+required; use the CLI for headless work. Install the desktop entry only after
+placing `postly-gui` on your PATH and installing `postly.svg` in your icon theme.
+Distribution-specific dependency and keyring behavior requires testing on that
+distribution before it is claimed supported.
+
+Node.js is optional. It is required only when explicitly enabling the Postman
+script bridge. The native demo, requests and assertions do not require Node.
+
+## Updating and going back
+
+Quit Postly before replacing the app or extracted executables. Keep your API
+project directories separately from the installation folder: requests and
+preferences live in those directories, not in the app bundle. Back up or commit
+your request files before testing a preview; local environments and `.postly/`
+state should remain private.
+
+There is no automatic updater or silent workspace migration in this preview.
+To roll back, close Postly and reinstall a previously downloaded, checksum-verified
+version. Restore a workspace backup if the older version cannot read fields
+introduced later. Preview compatibility with older versions is not guaranteed;
+do not overwrite your only workspace copy to test a rollback.
+
+To uninstall, remove the app/extracted executables. Your project folders remain.
+Secrets stored in the OS credential store are separate from the installation;
+do not assume removing the binary erases them.
