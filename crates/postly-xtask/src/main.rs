@@ -78,9 +78,13 @@ fn main() -> ExitCode {
 
 fn run_benchmarks(json_output: bool) -> bool {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let context = benchmark_context(&root);
-    match collect_benchmarks() {
-        Ok(results) => {
+    let report = (|| {
+        let context = benchmark_context(&root)?;
+        let results = collect_benchmarks(Path::new(&context.cli_binary))?;
+        Ok::<_, String>((context, results))
+    })();
+    match report {
+        Ok((context, results)) => {
             if json_output {
                 println!(
                     "{}",
@@ -112,6 +116,8 @@ fn run_benchmarks(json_output: bool) -> bool {
                 );
                 println!("rustc: {}", context.rustc.as_deref().unwrap_or("unknown"));
                 println!("profile: {}", context.profile);
+                println!("CLI: {} ({})", context.cli_binary, context.cli_version);
+                println!("CLI SHA-256: {}", context.cli_sha256);
                 println!();
                 println!(
                     "{:<46} {:>12} {:>12} {:>12} {:>16}",
@@ -153,17 +159,34 @@ struct BenchmarkContext {
     #[serde(skip_serializing_if = "Option::is_none")]
     rustc: Option<String>,
     profile: &'static str,
+    opt_level: &'static str,
+    target: &'static str,
+    source_dirty: bool,
+    harness_binary: String,
+    harness_sha256: String,
+    cli_binary: String,
+    cli_sha256: String,
+    cli_version: String,
 }
 
-fn benchmark_context(root: &Path) -> BenchmarkContext {
-    let profile = if root.join("target/debug/postly").is_file() {
-        "debug"
-    } else if root.join("target/release/postly").is_file() {
-        "release"
-    } else {
-        "unknown"
-    };
-    BenchmarkContext {
+fn benchmark_context(root: &Path) -> Result<BenchmarkContext, String> {
+    let harness = env::current_exe().map_err(|error| error.to_string())?;
+    let cli = resolve_cli_binary(&harness)?;
+    let cli_version = command_output(
+        root,
+        cli.to_str().ok_or("CLI path is not UTF-8")?,
+        &["--version"],
+    )
+    .ok_or("could not read the measured CLI version")?;
+    let status = Command::new("git")
+        .current_dir(root)
+        .args(["status", "--porcelain", "--untracked-files=normal"])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !status.status.success() {
+        return Err("could not determine benchmark source cleanliness".into());
+    }
+    Ok(BenchmarkContext {
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
         revision: command_output(root, "git", &["rev-parse", "--short", "HEAD"]),
@@ -174,8 +197,16 @@ fn benchmark_context(root: &Path) -> BenchmarkContext {
             .then(|| command_output(root, "sw_vers", &["-productVersion"]))
             .flatten(),
         rustc: command_output(root, "rustc", &["--version"]),
-        profile,
-    }
+        profile: env!("POSTLY_BENCH_PROFILE"),
+        opt_level: env!("POSTLY_BENCH_OPT_LEVEL"),
+        target: env!("POSTLY_BENCH_TARGET"),
+        source_dirty: !status.stdout.is_empty(),
+        harness_binary: harness.display().to_string(),
+        harness_sha256: sha256_hex(&harness)?,
+        cli_binary: cli.display().to_string(),
+        cli_sha256: sha256_hex(&cli)?,
+        cli_version,
+    })
 }
 
 fn command_output(root: &Path, program: &str, arguments: &[&str]) -> Option<String> {
@@ -498,14 +529,15 @@ struct BenchmarkResult {
     median_ms: f64,
     min_ms: f64,
     max_ms: f64,
+    samples_ms: Vec<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    peak_rss_samples_kib: Vec<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     peak_rss_kib: Option<u64>,
 }
 
-fn collect_benchmarks() -> Result<Vec<BenchmarkResult>, String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let cli_binary = resolve_cli_binary(&root)?;
-    let cli_startup = measure_process("cli_startup_help", &cli_binary, &["--help"])?;
+fn collect_benchmarks(cli_binary: &Path) -> Result<Vec<BenchmarkResult>, String> {
+    let cli_startup = measure_process("cli_startup_help", cli_binary, &["--help"])?;
 
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../compat/postman-import/variants-v2.1.json");
@@ -729,19 +761,17 @@ async fn run_local_runner_benchmark() -> Result<(), String> {
     Ok(())
 }
 
-fn resolve_cli_binary(root: &Path) -> Result<std::path::PathBuf, String> {
-    for profile in ["debug", "release"] {
-        let candidate = root
-            .join("target")
-            .join(profile)
-            .join(format!("postly{}", env::consts::EXE_SUFFIX));
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
+fn resolve_cli_binary(harness: &Path) -> Result<std::path::PathBuf, String> {
+    let directory = harness
+        .parent()
+        .ok_or("benchmark executable has no parent")?;
+    let candidate = directory.join(format!("postly{}", env::consts::EXE_SUFFIX));
+    if candidate.is_file() {
+        return Ok(candidate);
     }
     Err(format!(
-        "postly CLI binary not found under {}; run `cargo build -p postly` first",
-        root.join("target").display()
+        "matching CLI not found at {}; build postly and postly-xtask together with the same profile and target; refusing a debug/release fallback",
+        candidate.display()
     ))
 }
 
@@ -755,6 +785,7 @@ where
         operation()?;
         samples.push(started.elapsed().as_secs_f64() * 1_000.0);
     }
+    let samples_ms = samples.clone();
     samples.sort_by(f64::total_cmp);
     let median_ms = samples[samples.len() / 2];
     Ok(BenchmarkResult {
@@ -763,6 +794,8 @@ where
         median_ms,
         min_ms: samples[0],
         max_ms: samples[samples.len() - 1],
+        samples_ms,
+        peak_rss_samples_kib: Vec::new(),
         peak_rss_kib: None,
     })
 }
@@ -799,6 +832,8 @@ fn measure_process(name: &str, program: &Path, args: &[&str]) -> Result<Benchmar
             memory.push((rss_bytes.saturating_add(1023)) / 1024);
         }
     }
+    let samples_ms = durations.clone();
+    let peak_rss_samples_kib = memory.clone();
     durations.sort_by(f64::total_cmp);
     memory.sort_unstable();
     Ok(BenchmarkResult {
@@ -807,6 +842,8 @@ fn measure_process(name: &str, program: &Path, args: &[&str]) -> Result<Benchmar
         median_ms: durations[durations.len() / 2],
         min_ms: durations[0],
         max_ms: durations[durations.len() - 1],
+        samples_ms,
+        peak_rss_samples_kib,
         peak_rss_kib: (!memory.is_empty()).then(|| memory[memory.len() / 2]),
     })
 }
@@ -817,19 +854,6 @@ fn parse_macos_peak_rss(stderr: &[u8]) -> Option<u64> {
         .lines()
         .find(|line| line.contains("maximum resident set size"))
         .and_then(|line| line.split_whitespace().find_map(|value| value.parse().ok()))
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod tests {
-    use super::parse_macos_peak_rss;
-
-    #[test]
-    fn parses_macos_time_peak_rss() {
-        assert_eq!(
-            parse_macos_peak_rss(b"            12484608  maximum resident set size\n"),
-            Some(12_484_608)
-        );
-    }
 }
 
 fn run(program: &str, args: &[&str]) -> bool {
@@ -849,4 +873,53 @@ fn run_in(root: &Path, program: &str, args: &[&str]) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parses_macos_time_peak_rss() {
+        assert_eq!(
+            parse_macos_peak_rss(b"            12484608  maximum resident set size\n"),
+            Some(12_484_608)
+        );
+    }
+
+    #[test]
+    fn benchmark_cli_is_a_sibling_not_an_unrelated_debug_build() {
+        let root = tempfile::tempdir().unwrap();
+        let debug = root.path().join("debug");
+        let release = root.path().join("custom-target/release");
+        fs::create_dir_all(&debug).unwrap();
+        fs::create_dir_all(&release).unwrap();
+        let name = format!("postly{}", env::consts::EXE_SUFFIX);
+        fs::write(debug.join(&name), b"unrelated debug build").unwrap();
+        let harness = release.join("postly-xtask");
+        assert!(resolve_cli_binary(&harness)
+            .unwrap_err()
+            .contains("refusing"));
+        fs::write(release.join(&name), b"matching release build").unwrap();
+        assert_eq!(resolve_cli_binary(&harness).unwrap(), release.join(name));
+    }
+
+    #[test]
+    fn benchmark_preserves_raw_samples_and_computes_summary_from_them() {
+        let mut calls = 0;
+        let result = measure("sample", || {
+            calls += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(calls, BENCHMARK_ITERATIONS);
+        assert_eq!(result.samples_ms.len(), calls);
+        let mut sorted = result.samples_ms.clone();
+        sorted.sort_by(f64::total_cmp);
+        assert_eq!(result.min_ms, sorted[0]);
+        assert_eq!(result.max_ms, sorted[calls - 1]);
+        assert_eq!(result.median_ms, sorted[calls / 2]);
+        assert!(result.peak_rss_samples_kib.is_empty());
+    }
 }

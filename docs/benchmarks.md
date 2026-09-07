@@ -9,10 +9,25 @@ cargo xtask bench
 cargo xtask bench --json > bench-generated/local.json
 ```
 
+Build both the CLI and harness together first (`cargo build --locked -p postly
+-p postly-xtask`). For release measurements, explicitly use the release harness:
+
+```bash
+cargo build --locked --release -p postly -p postly-xtask
+mkdir -p bench-generated
+./target/release/postly-xtask bench --json > bench-generated/release.json
+```
+
+With an explicit target triple, use that triple's output directory instead.
+The harness only measures the CLI beside its own executable. It refuses to
+fall back to a debug binary when a matching release binary is missing. This
+also supports Cargo target-directory overrides without guessing `target/`.
+
 The command currently covers a CLI `--help` startup, an eight-request Postman
 import, generated 1,000- and 10,000-request workspace open/search paths and a
 deterministic 100-request local HTTP runner workload. Each operation runs five
-samples and prints median, minimum and maximum duration. On macOS, the startup
+samples and prints median, minimum and maximum duration. JSON also retains all
+samples in observation order. On macOS, the startup
 measurement also records the median peak resident set size reported by
 `/usr/bin/time -l`; other platforms omit that optional field until a
 platform-specific process measurement is added. The startup measurement
@@ -22,7 +37,12 @@ ignored `bench-generated/` destination may contain output.
 
 Results are meaningful only with their context: the JSON/text output records the
 current commit, OS, architecture, hardware when available, OS version, Rust
-toolchain and detected build profile. The output intentionally does not compare
+toolchain, Cargo build profile/optimization level/target, source dirty state,
+measured executable paths, SHA-256 hashes and CLI version. The profile describes
+the compiled harness, not whichever binary directory happens to exist. Rebuild
+both programs at a clean commit before publishing a report: a workspace revision
+alone does not prove a previously built binary came from that revision.
+The output intentionally does not compare
 Postly to Postman, Bruno or any other client. Add a controlled competitor version
 and methodology before publishing a comparison.
 
