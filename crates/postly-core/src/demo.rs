@@ -80,6 +80,9 @@ fn orders(status: Option<&str>) -> Value {
 }
 
 fn serve(stream: &mut TcpStream) -> io::Result<()> {
+    // Accepted sockets can inherit nonblocking mode on BSD/macOS. The bounded
+    // reader below needs to wait for bytes, not close before the client writes.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_millis(250)))?;
     stream.set_write_timeout(Some(Duration::from_millis(250)))?;
     let mut request = Vec::new();
@@ -206,6 +209,23 @@ pub fn create_workspace(root: &Path, base_url: &str) -> Result<Workspace, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepted_connection_waits_for_request_bytes() {
+        let server = DemoServer::start(0).unwrap();
+        let mut stream = TcpStream::connect(server.address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        thread::sleep(Duration::from_millis(75));
+        stream
+            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("Postly Orders"));
+    }
 
     #[tokio::test]
     async fn starter_runs_real_requests_and_stops_its_server() {
