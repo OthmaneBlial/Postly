@@ -135,3 +135,19 @@ timeout. A regression connects before sending request data and checks HTTP 200.
 
 The final real-product video is required, not cancelled. Capture and publication
 follow the final product/site work; the older release does not contain this UI.
+
+## Product site and first-run documentation
+
+Both static pages were rebuilt around a shared editorial visual system, bundled
+Plex typography and a real native screenshot. The simulated HTML app and the
+nonfunctional first-run example URL were removed. The README leads with the
+real UI and a loopback starter; source compilation no longer has a 60-second
+promise. Site and docs distinguish source preview from the old public download.
+
+Local browser checks: landing and documentation layouts at 1422 and 433 CSS
+pixels had no horizontal overflow. Images loaded, demo/build copy buttons
+returned the exact commands, and guide filtering showed matches and an empty
+state correctly. Browser warning/error log was empty. `node --check
+website/script.js` and `node tools/check-website.mjs` passed; the latter checks
+37 local URLs, copy targets, source-document links and stylesheet font assets.
+Publication and video integration are tracked separately from these checks.

@@ -18,3 +18,5 @@ It is a native Rust API client and testing workspace with a CLI and desktop app.
 - The CLI can run saved requests and collections without the desktop app.
 - Postman Collection v2.1 and environment import/export are supported with explicit review diagnostics.
 - Compatibility and benchmarks are reported as measured local evidence; full Postman parity is not claimed.
+- The redesigned native UI, welcome example, desktop import/runner and JSON comparison are in the 0.2.0-preview.1 source, not the older v0.1.0 public download.
+- macOS ARM64 packaging has local evidence. Clean-machine installation, notarization and Windows/Linux validation remain open.

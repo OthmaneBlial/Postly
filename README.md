@@ -2,9 +2,9 @@
 
 <img src="website/logo.svg" alt="Postly logo" width="96">
 
-# Postly — the open-source Postman alternative
+# Postly — a native API workspace for your repo
 
-### A fast, local-first API client for REST, GraphQL, streaming APIs and gRPC.
+### Import a collection. Inspect real responses. Run the same requests from your terminal.
 
 Build requests. Inspect real responses. Commit the workflow with your code.
 
@@ -16,7 +16,7 @@ Build requests. Inspect real responses. Commit the workflow with your code.
 </p>
 
 <p>
-  <a href="#quick-start">Try it in 60 seconds</a> ·
+  <a href="#quick-start">Try the local example</a> ·
   <a href="https://othmaneblial.github.io/Postly/">Open the project site</a> ·
   <a href="https://othmaneblial.github.io/Postly/docs.html">Read the docs</a> ·
   <a href="docs/migration-from-postman.md">Migrate from Postman</a> ·
@@ -25,6 +25,11 @@ Build requests. Inspect real responses. Commit the workflow with your code.
 </p>
 
 </div>
+
+[![Postly's actual native desktop with the Orders API and a full JSON response](website/assets/postly-dark.png)](https://othmaneblial.github.io/Postly/#demo)
+
+Actual macOS capture of the redesigned source preview. The older `v0.1.0`
+download does **not** include this UI, onboarding or the new desktop workflows.
 
 Postly is an open-source **API client**, **REST client** and **API testing
 workspace** for developers who want their requests, collections and environments
@@ -35,7 +40,7 @@ workspace that share the same request model.
 > **The idea:** your API client should help you ship the API — not become another
 > cloud workspace that your API depends on.
 
-## Why developers choose Postly
+## What Postly offers
 
 | If you care about… | Postly gives you… |
 | --- | --- |
@@ -138,47 +143,58 @@ compatibility.
 
 ## Download
 
-The first technical preview is available for macOS Apple Silicon:
+The older technical preview is available for macOS Apple Silicon:
 [`v0.1.0`](https://github.com/OthmaneBlial/Postly/releases/tag/v0.1.0). Verify
 the included `SHA256SUMS` file before running the binaries. Cross-platform
 installers, notarization and production release validation remain open.
+The current source targets `0.2.0-preview.1`; its macOS app/DMG has local
+packaging evidence, not a confirmed new public release. See the
+[installation guide](docs/install.md) and [candidate report](docs/release-validation-v0.2.0-preview.1.md).
 
 ## Quick start
 
-### 1. Clone and create a local workspace
+### 1. Build the current preview
+
+Rust **1.95.0** is pinned in this repository. Initial compilation time depends
+on your machine; the example itself needs no account or external API.
 
 ```bash
 git clone https://github.com/OthmaneBlial/Postly.git
 cd Postly
 
-cargo run -- init ./my-api --name "My API"
-cargo run -- new request \
-  --workspace ./my-api \
-  --collection "My API" \
-  --name health \
-  https://example.com/health \
-  --query "probe=1"
-
-cargo run -- validate ./my-api
+cargo build --locked --workspace
+cargo run -p postly-app
 ```
 
-### 2. Send a request
+### 2. Try the real local API
+
+Choose **Try the example**, then an empty folder. Send **01 Health** to get
+HTTP 200, then **02 List orders** to see two paid orders. Change `paid` to
+`pending`, send again, and save the request. Use **Run collection** to execute
+the saved requests and native assertions. The example server runs while that
+desktop session stays open.
+
+### 3. Use the same workspace from the terminal
+
+Or create the starter from the CLI and leave its server running:
 
 ```bash
-cargo run -- request https://httpbin.org/get \
-  --query "source=postly" \
-  --header "Accept: application/json" \
-  --output-json
+cargo run -- demo ./orders-demo --port 3979
 ```
 
-### 3. Open the native workspace
+In another terminal, from the repository root:
 
 ```bash
-cargo run -p postly-app -- ./my-api
+cargo run -- run ./orders-demo
+cargo run -p postly-app -- ./orders-demo
 ```
 
 The desktop app and CLI read the same local project. There is no signup step and
 no hosted workspace is required for the core workflow.
+The unchanged starter passes two requests and five assertions. See the
+[complete Orders walkthrough](examples/orders/README.md) for Git diffs,
+restarting the server, mocks and Postman import. Node.js is optional and only
+needed for the opt-in Postman script bridge.
 
 ## From Postman to a Git-native API project
 

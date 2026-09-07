@@ -79,10 +79,10 @@ Estimations pour une personne connaissant le dépôt ; elles excluent les délai
 - [x] Ajouter un petit exemple public dans `examples/` : API de commandes avec données fictives, deux requêtes, assertions et réponse d'exemple. Définir un serveur loopback déterministe et un démarrage documenté ; ne pas dépendre d'une API gratuite externe.
 - [x] Documenter un parcours exact : ouvrir l'exemple, envoyer la requête, lire le JSON, modifier un paramètre, sauvegarder, retrouver le fichier TOML.
 - [ ] Construire une `.app` macOS avec icône et métadonnées, puis un DMG ou ZIP adapté. Vérifier les bibliothèques dynamiques requises sur une machine sans environnement de développement.
-- [ ] Préparer une nouvelle version, par exemple `v0.2.0-preview.1`, depuis un commit identifié. Ce numéro est proposé ; aucun tag n'est créé par cette roadmap.
+- [x] Préparer une nouvelle version `v0.2.0-preview.1` depuis un commit identifié. Candidat local avec provenance ; aucune publication publique déduite de cette préparation.
 - [ ] Placer cette version dans le canal prerelease, avec notes qui décrivent ce binaire et un `SHA256SUMS` téléchargeable pour les archives.
-- [ ] Remplacer les commandes illustratives du site par le scénario local testé ; réserver la compilation à une section « Build from source ».
-- [ ] Rendre explicites les plateformes disponibles, les dépendances optionnelles comme Node pour les scripts et le statut de signature.
+- [x] Remplacer les commandes illustratives du site par le scénario local testé ; réserver la compilation à une section « Build from source ».
+- [x] Rendre explicites les plateformes disponibles, les dépendances optionnelles comme Node pour les scripts et le statut de signature.
 
 **Sortie :** trois personnes sur la plateforme annoncée installent le binaire et obtiennent une réponse de l'exemple sans Cargo ni aide du mainteneur. Cible : moins de deux minutes après téléchargement. Les blocages d'installation restent consignés jusqu'à résolution.
 
