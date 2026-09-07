@@ -111,7 +111,7 @@ Après M2, remplacer les passages CLI d'import par le parcours GUI s'il est vali
 - [x] Exporter `postly-demo.mp4`, un poster réel `postly-demo-poster.jpg` et des sous-titres séparés si nécessaire. Un extrait court est facultatif ; le lecteur complet doit rester disponible.
 - [x] Publier le MP4 comme asset de la release montrée ou sur un hébergement vidéo durable. MP4 versionné et servi sur GitHub Pages, lecteurs avec contrôles sur le site ; aucune nouvelle release binaire déduite de cette publication.
 - [x] Vérifier le README rendu sur GitHub. Poster chargé et cliquable vers le lecteur complet ; ce n'est pas une animation GIF.
-- [ ] Vérifier lecture, pause, déplacement dans la vidéo, netteté du texte, absence d'informations privées et concordance avec le téléchargement.
+- [x] Vérifier lecture, pause, déplacement dans la vidéo, netteté du texte, absence d'informations privées et concordance avec le téléchargement. Vérifié le 8 septembre : téléchargement public, hash, décodage complet, poster, lecture/pause et déplacement par chapitres ; le plein écran est explicitement limité par le navigateur de test.
 
 Commandes de préparation issues du profil FFmpeg ; chemins proposés, à utiliser après capture réelle :
 
@@ -208,9 +208,9 @@ Commencer par 10 développeurs backend utilisant déjà Postman, Bruno ou un cli
 ### Diffusion après les critères de sortie
 
 - [ ] Publier une release cohérente avec la vidéo, puis un récit de construction précis : problème rencontré, démo, choix techniques et limites actuelles.
-- [ ] Préparer un Show HN, un message pour une communauté Rust et un message pour une communauté backend ; adapter chaque texte à son audience et vérifier ses règles au moment de publier.
-- [ ] Mettre en avant un résultat utile dans chaque publication : import avec diagnostic, tests sur les mêmes fichiers ou mock local. Déclarer clairement son rôle de créateur.
-- [ ] Demander un retour concret, par exemple une étape d'installation bloquante ou un cas d'import mal expliqué. Éviter les sollicitations répétitives de stars et les messages privés non demandés.
+- [x] Préparer un Show HN, un message pour une communauté Rust et un message pour une communauté backend ; adapter chaque texte à son audience et vérifier ses règles au moment de publier. Brouillons : [launch kit](docs/launch-kit.md).
+- [x] Mettre en avant un résultat utile dans chaque publication : import avec diagnostic, tests sur les mêmes fichiers ou mock local. Déclarer clairement son rôle de créateur. Inclus dans les trois brouillons du [launch kit](docs/launch-kit.md).
+- [x] Demander un retour concret, par exemple une étape d'installation bloquante ou un cas d'import mal expliqué. Éviter les sollicitations répétitives de stars et les messages privés non demandés. Questions et suivi : [launch kit](docs/launch-kit.md).
 - [ ] Répondre aux retours, reproduire les problèmes et publier une correction accompagnée d'une courte démonstration.
 
 Ces éléments sont à préparer ; cette roadmap n'autorise ni n'effectue de publication de messages.

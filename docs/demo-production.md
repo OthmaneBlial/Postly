@@ -76,4 +76,7 @@ the value above. Its browser player loaded all metadata (66 seconds, ready
 state 4), played successfully and jumped to the assertions chapter. The
 GitHub-rendered README loaded the 1920-pixel poster and linked it to the full
 demo page. Full-screen requests were rejected in the test browser and produced
-the intended fallback message; this mode is not claimed validated there.
+the intended fallback message; this mode is not claimed validated there. Pause,
+chapter seeking and public-download hash concordance were rechecked on 8
+September; text remained legible in the inspected frames and no private data was
+present in the fictional Orders session.
