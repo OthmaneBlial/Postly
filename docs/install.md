@@ -94,3 +94,23 @@ trying another preview.
 
 The 8 September local result is recorded in the
 [update-preservation report](measurements/2026-09-08-update-preservation.md).
+
+### Replay a package without the development toolchain
+
+For a repeatable end-user smoke test, use the repository's portable archive
+replayer. It extracts into a temporary directory, verifies every entry in the
+embedded `SHA256SUMS`, checks the packaged CLI, creates the loopback Orders
+example, runs its two requests and five assertions, then keeps the GUI alive
+for three seconds. It does not call Cargo or Node and never touches the
+current directory:
+
+```bash
+tools/replay-package.sh \
+  /path/to/postly-v0.2.0-preview.1-macos-aarch64.tar.gz
+```
+
+Run it on the target machine with a graphical session. Set
+`POSTLY_SKIP_GUI=1` only for a deliberately headless CLI replay; that mode
+does not validate desktop startup. The script is evidence for the extracted
+archive path, not a substitute for Finder/Gatekeeper checks or a separate
+physical machine.

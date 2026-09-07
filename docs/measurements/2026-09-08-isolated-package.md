@@ -24,6 +24,9 @@ the package evidence but is **not** an independent clean-machine result.
 - The archive's complete internal `SHA256SUMS` list passed.
 - The extracted `Postly.app/Contents/MacOS/postly-gui` process stayed alive for
   three seconds when launched with the same isolated environment and workspace.
+- The portable `tools/replay-package.sh` was then run against the same archive
+  with `PATH=/usr/bin:/bin`; its checksum, CLI, loopback, validation, run and
+  three-second GUI checks passed without Cargo or Node on the PATH.
 
 ## Boundary
 

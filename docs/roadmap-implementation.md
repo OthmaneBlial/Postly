@@ -264,6 +264,13 @@ internal checksums passed, and the packaged GUI stayed alive for three seconds.
 This strengthens the local end-user path without replacing an independent Mac
 or a target-machine test. See the [isolated package report](measurements/2026-09-08-isolated-package.md).
 
+The portable `tools/replay-package.sh` script now codifies that archive replay
+without Cargo or Node: it checks the recursive manifest, validates the
+packaged CLI, creates a random-port loopback Orders workspace, runs two HTTP
+requests with five assertions, and optionally keeps the GUI alive for three
+seconds. It is ready to run on a genuinely independent machine; a local run
+still remains development-host evidence until that external gate is exercised.
+
 ## Cross-target compilation evidence
 
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the
