@@ -27,6 +27,10 @@ the package evidence but is **not** an independent clean-machine result.
 - The portable `tools/replay-package.sh` was then run against the same archive
   with `PATH=/usr/bin:/bin`; its checksum, CLI, loopback, validation, run and
   three-second GUI checks passed without Cargo or Node on the PATH.
+- A second headless invocation with `env -i PATH=/usr/bin:/bin TMPDIR=/tmp
+  LANG=C` also passed, confirming that the CLI replay does not depend on the
+  shell's inherited developer environment. The GUI was intentionally skipped
+  for this invocation.
 
 ## Boundary
 
