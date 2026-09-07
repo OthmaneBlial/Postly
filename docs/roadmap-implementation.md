@@ -229,3 +229,13 @@ idle app RSS median was 234,992 KiB. Capture-based interaction numbers remain
 explicit observation bounds, not exact render times or a claim of smooth FPS.
 The earlier locked-session failure is superseded for this local measurement;
 independent installations, other OSes and external usability remain open.
+
+## Update preservation evidence
+
+The old public `v0.1.0` macOS archive and the current `0.2.0-preview.1` package
+were extracted into separate temporary directories. A fictional workspace and
+light theme preference survived old-CLI creation, new-CLI list/search/validate
+and a three-second launch of the new extracted GUI; canonical files and the
+preference JSON matched byte-for-byte. See the [dated report](measurements/2026-09-08-update-preservation.md).
+This is one local archive pair, not clean-machine, keychain or cross-platform
+evidence.

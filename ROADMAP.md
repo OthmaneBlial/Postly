@@ -168,7 +168,7 @@ Matrice de distribution visée, à valider plateforme par plateforme :
 
 - [x] Corriger le packaging pour utiliser les noms exécutables propres à chaque OS et inclure le commit source, la toolchain et la cible dans le manifeste. Implémenté et testé localement ; [preuve candidat](docs/release-validation-v0.2.0-preview.1.md), sans validation Windows/Linux implicite.
 - [ ] Respecter le choix documenté du projet : **pas de GitHub Actions**. Conserver `cargo xtask check`, `compat`, `bench`, `fuzz` et `package` comme outils locaux ; effectuer les validations sur les machines cibles et joindre un rapport par release.
-- [ ] Ajouter les guides d'installation, de mise à jour et de retour à la version précédente ; vérifier que la mise à jour conserve collections et préférences.
+- [x] Ajouter les guides d'installation, de mise à jour et de retour à la version précédente ; vérifier que la mise à jour conserve collections et préférences. Le script [verify-update-preservation](tools/verify-update-preservation.sh) a été exécuté avec `v0.1.0` et le package macOS `0.2.0-preview.1` sur des données fictives : fichiers du workspace et préférence de thème inchangés après lancement du nouveau GUI.
 - [ ] Fournir les checksums des archives finales, les dépendances, les limites connues et les instructions de lancement pour chaque asset.
 - [ ] Signer/notariser quand les certificats sont disponibles ; annoncer précisément une preview non signée tant que ce n'est pas fait. Un certificat manquant ne transforme pas un build local en release validée.
 - [ ] Avant publication, télécharger les assets candidats sur une machine propre et rejouer le scénario vidéo. Après publication, vérifier les URLs et les hashes des assets publics.

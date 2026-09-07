@@ -71,3 +71,26 @@ do not overwrite your only workspace copy to test a rollback.
 To uninstall, remove the app/extracted executables. Your project folders remain.
 Secrets stored in the OS credential store are separate from the installation;
 do not assume removing the binary erases them.
+
+### Verify an update before using it on a real project
+
+The repository includes a local preservation check for a previous and a new
+macOS archive. It creates only fictional data in a temporary directory, records
+every workspace-file hash and a light-theme GUI preference, runs read-only list,
+search and validation commands with both CLIs, launches the new GUI child, then
+confirms the files and preference JSON are byte-for-byte unchanged:
+
+```bash
+tools/verify-update-preservation.sh \
+  /path/to/postly-v0.1.0-macos-aarch64.tar.gz \
+  /path/to/postly-v0.2.0-preview.1-macos-aarch64.tar.gz
+```
+
+Run it with an unlocked graphical session. `POSTLY_SKIP_GUI=1` is available for
+headless checks but does not validate GUI startup. The script never operates on
+the current directory and terminates only the GUI process it started. Treat a
+failed preservation check as a stop condition; restore from a backup before
+trying another preview.
+
+The 8 September local result is recorded in the
+[update-preservation report](measurements/2026-09-08-update-preservation.md).

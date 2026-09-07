@@ -48,6 +48,15 @@ compatibility, benchmark and fuzz commands before making a release. Record OS,
 architecture, artifact hash and actual outcomes in a release validation report.
 The installation and rollback guide is [install.md](install.md).
 
+The exact 8 September archive-pair result and hashes are in the
+[preservation report](measurements/2026-09-08-update-preservation.md).
+
+The update-preservation script in that guide exercises a real old/new archive
+pair on fictional temporary data. It checks the files and a GUI theme preference
+before and after read-only CLI operations and a new-GUI launch; it does not claim
+that every future schema, secret-store migration or operating-system installer
+will preserve state.
+
 The macOS icon is rasterized from the existing logo geometry. To regenerate:
 
 ```bash
