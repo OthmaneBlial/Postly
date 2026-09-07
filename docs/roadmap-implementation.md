@@ -187,3 +187,18 @@ All 57 local Markdown targets across the edited README, feature reference and
 benchmark guide resolved. This is a document/link check, not evidence that four
 out of five external readers understand the product; that usability gate remains
 open.
+
+## Release measurement provenance and local gates
+
+On 8 September, the benchmark stopped choosing an unrelated debug CLI when a
+release harness was requested. It now requires the sibling CLI, records Cargo
+profile/optimization/target, hashes both binaries and preserves every raw sample.
+The implementation (`0823312`) passed the full 272-test local quality gate.
+Both executables were then rebuilt together at that clean commit and the
+release benchmark plus compatibility suite completed successfully.
+
+The [dated report](measurements/2026-09-08-validation.md) contains measured
+medians, unmodified JSON, method and limitations. Four fuzz targets also finished
+256 executions each without a crash, starting from empty corpora. The limited
+input sizes are explicit; this is not a security certification. GUI performance,
+other OSes, independent installation and external user gates remain open.

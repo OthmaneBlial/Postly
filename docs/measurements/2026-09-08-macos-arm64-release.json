@@ -1,0 +1,128 @@
+{
+  "context": {
+    "arch": "aarch64",
+    "cli_binary": "/Users/othmane/Projects/GITHUB_PROJECTS/Postly/target/aarch64-apple-darwin/release/postly",
+    "cli_sha256": "6c5d842d1a1d690933bde0c8500a61cf2238ad6a0e73c869e9a462f2385d62a6",
+    "cli_version": "postly 0.2.0-preview.1",
+    "hardware": "Mac14,2",
+    "harness_binary": "/Users/othmane/Projects/GITHUB_PROJECTS/Postly/target/aarch64-apple-darwin/release/postly-xtask",
+    "harness_sha256": "3e922ed9e8b293ec3613a073e3514355bd572e8b070e74ed1dff549884129e8f",
+    "opt_level": "3",
+    "os": "macos",
+    "os_version": "26.6",
+    "profile": "release",
+    "revision": "0823312",
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "source_dirty": false,
+    "target": "aarch64-apple-darwin"
+  },
+  "iterations": 5,
+  "results": [
+    {
+      "iterations": 5,
+      "max_ms": 14.775333,
+      "median_ms": 8.802707999999999,
+      "min_ms": 8.655,
+      "name": "cli_startup_help",
+      "peak_rss_kib": 9360,
+      "peak_rss_samples_kib": [
+        9376,
+        9360,
+        9344,
+        9344,
+        9376
+      ],
+      "samples_ms": [
+        14.775333,
+        9.723832999999999,
+        8.771666,
+        8.802707999999999,
+        8.655
+      ]
+    },
+    {
+      "iterations": 5,
+      "max_ms": 92.89241600000001,
+      "median_ms": 89.572,
+      "min_ms": 79.1605,
+      "name": "postman_import_variants",
+      "samples_ms": [
+        90.42275,
+        79.187541,
+        79.1605,
+        89.572,
+        92.89241600000001
+      ]
+    },
+    {
+      "iterations": 5,
+      "max_ms": 72.485541,
+      "median_ms": 35.923291000000006,
+      "min_ms": 35.242957999999994,
+      "name": "workspace_open_1000_requests",
+      "samples_ms": [
+        72.485541,
+        36.255042,
+        35.389333,
+        35.923291000000006,
+        35.242957999999994
+      ]
+    },
+    {
+      "iterations": 5,
+      "max_ms": 35.828208000000004,
+      "median_ms": 35.756334,
+      "min_ms": 35.625833,
+      "name": "workspace_search_1000_requests",
+      "samples_ms": [
+        35.756334,
+        35.828208000000004,
+        35.625833,
+        35.731041999999995,
+        35.827791999999995
+      ]
+    },
+    {
+      "iterations": 5,
+      "max_ms": 449.499584,
+      "median_ms": 419.054458,
+      "min_ms": 410.573958,
+      "name": "workspace_open_10000_requests",
+      "samples_ms": [
+        449.270625,
+        419.054458,
+        449.499584,
+        414.24708300000003,
+        410.573958
+      ]
+    },
+    {
+      "iterations": 5,
+      "max_ms": 413.600708,
+      "median_ms": 412.34162499999996,
+      "min_ms": 412.26075000000003,
+      "name": "workspace_search_10000_requests",
+      "samples_ms": [
+        412.849583,
+        412.26075000000003,
+        412.294708,
+        413.600708,
+        412.34162499999996
+      ]
+    },
+    {
+      "iterations": 5,
+      "max_ms": 29.760125,
+      "median_ms": 13.50075,
+      "min_ms": 13.395166,
+      "name": "runner_local_100_requests",
+      "samples_ms": [
+        29.760125,
+        15.585458,
+        13.50075,
+        13.395166,
+        13.463375
+      ]
+    }
+  ]
+}

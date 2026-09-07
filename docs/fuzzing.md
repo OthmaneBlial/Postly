@@ -28,12 +28,16 @@ instead of reporting a false pass.
 Run a target for a longer local session:
 
 ~~~bash
-cargo fuzz run curl_command --fuzz-dir fuzz
-cargo fuzz run postman_import --fuzz-dir fuzz -- -max_total_time=60
-cargo fuzz run native_workspace --fuzz-dir fuzz -- -max_total_time=60
+cargo +nightly fuzz run curl_command --fuzz-dir fuzz
+cargo +nightly fuzz run postman_import --fuzz-dir fuzz -- -max_total_time=60
+cargo +nightly fuzz run native_workspace --fuzz-dir fuzz -- -max_total_time=60
 ~~~
 
 Crash inputs are written under `fuzz/artifacts/`; preserve a minimized input
 as a regression fixture only after checking that it contains no credentials or
 customer data. Fuzzing is a robustness signal, not proof of semantic
 compatibility or a security sandbox.
+
+The [8 September local smoke report](measurements/2026-09-08-validation.md)
+records all four target outcomes and seeds, including the limitations of a
+256-execution run from empty corpora.

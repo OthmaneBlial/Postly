@@ -1,5 +1,8 @@
 # Benchmarks
 
+Measured baseline: [8 September 2026, macOS ARM64 release](measurements/2026-09-08-validation.md)
+with [raw samples and binary provenance](measurements/2026-09-08-macos-arm64-release.json).
+
 Postly does not publish invented speed or memory multipliers. The repository
 contains a local benchmark harness that produces measurements on the machine
 where it is run:

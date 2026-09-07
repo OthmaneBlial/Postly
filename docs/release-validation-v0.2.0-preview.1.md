@@ -61,7 +61,10 @@ Final local candidate SHA-256 values:
 - Developer ID signing and notarization: no usable signing identity was
   available locally. Ad-hoc signing must not be described as notarization.
 - Windows, Linux and Intel macOS native builds and real-machine validation.
-- Release benchmark/fuzz runs and externally observed usability sessions.
+- GUI performance, deeper fuzz campaigns and externally observed usability
+  sessions. The [8 September report](measurements/2026-09-08-validation.md)
+  now supplies a release CLI/core benchmark and bounded local fuzz smoke;
+  these do not replace rendered GUI or external checks.
 
 Video evidence is tracked separately in the roadmap implementation log. No
 public release, independent user test or cross-platform success is implied by
