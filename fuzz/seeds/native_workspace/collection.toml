@@ -1,0 +1,8 @@
+id = "00000000-0000-4000-8000-000000000001"
+name = "Fictional collection"
+
+[variables]
+baseUrl = "http://127.0.0.1:3979"
+
+[auth]
+type = "none"

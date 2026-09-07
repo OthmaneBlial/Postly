@@ -54,3 +54,7 @@ rendering, larger runner-throughput matrices and cross-platform runs remain
 future additions; the HTTP engine nevertheless enforces a configurable 100 MiB
 default cap for buffered response bodies so malformed or unbounded endpoints
 cannot grow the process without limit.
+
+Use the [native GUI protocol and 10,000-request fixture](gui-performance.md)
+for rendered measurements. Its desktop validation remains open; the CLI/core
+baseline must not stand in for it.

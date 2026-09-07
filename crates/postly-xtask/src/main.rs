@@ -5,6 +5,7 @@ use std::{
     time::Instant,
 };
 
+mod fuzzing;
 mod packaging;
 
 use postly_core::{
@@ -58,7 +59,7 @@ fn main() -> ExitCode {
         }
         "bench" => run_benchmarks(json_output),
         "compat" => run_compatibility(json_output),
-        "fuzz" => run_fuzz_smoke(),
+        "fuzz" => fuzzing::run_fuzz_smoke(),
         "package" => package_release(),
         "help" | "--help" => {
             println!("cargo xtask check|fmt|lint|test|compat|bench|fuzz|package [--json]");
@@ -220,40 +221,6 @@ fn command_output(root: &Path, program: &str, arguments: &[&str]) -> Option<Stri
     }
     let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     (!value.is_empty()).then_some(value)
-}
-
-fn run_fuzz_smoke() -> bool {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    if !run_in(
-        &root,
-        "cargo",
-        &["+nightly", "fuzz", "check", "--fuzz-dir", "fuzz"],
-    ) {
-        return false;
-    }
-    [
-        "curl_command",
-        "variables",
-        "postman_import",
-        "native_workspace",
-    ]
-    .into_iter()
-    .all(|target| {
-        run_in(
-            &root,
-            "cargo",
-            &[
-                "+nightly",
-                "fuzz",
-                "run",
-                "--fuzz-dir",
-                "fuzz",
-                target,
-                "--",
-                "-runs=256",
-            ],
-        )
-    })
 }
 
 #[derive(Debug, serde::Serialize)]

@@ -25,6 +25,27 @@ libFuzzer AddressSanitizer flags are not available on stable Rust. If nightly
 is not installed, the command fails with the toolchain installation hint
 instead of reporting a false pass.
 
+Before running, xtask merges the reviewed fictional inputs from
+[`fuzz/seeds/`](../fuzz/seeds/) into each ignored local corpus. Content-addressed
+seed names make this repeatable without overwriting previously discovered
+inputs. Missing seed sets and conflicting files fail explicitly. The current
+smoke budget is **1,024 executions per target**, using `-seed=1`, a 512 MiB
+libFuzzer RSS limit and a five-second per-input timeout. Those are campaign
+limits, not memory/time guarantees made by the product. A limit failure must
+be investigated, not changed to a pass.
+
+The native TOML seeds form a valid workspace; the cURL/Postman seeds reach
+request construction in regression tests. The variable target has known,
+nested, missing and cyclic values, and also resolves fuzz input as a variable
+value. Targets parse/import local data; they do not send the seeded HTTP
+requests or execute Postman scripts.
+
+The fixed random seed alone does not make results identical across runs:
+compiler instrumentation and the accumulated local corpus also matter. For a
+controlled longer campaign, copy the reviewed seeds to a **new** temporary
+corpus, supply that corpus explicitly and retain the toolchain, arguments and
+log. Do not erase the existing corpus to get a cleaner-looking result.
+
 Run a target for a longer local session:
 
 ~~~bash
@@ -40,4 +61,8 @@ compatibility or a security sandbox.
 
 The [8 September local smoke report](measurements/2026-09-08-validation.md)
 records all four target outcomes and seeds, including the limitations of a
-256-execution run from empty corpora.
+original 256-execution run from empty corpora. It is a historical baseline;
+subsequent seeded results should be recorded separately.
+
+The [seeded follow-up](measurements/2026-09-08-seeded-fuzz.md) records all four
+1,024-run outcomes, initial corpus sizes and their bounded interpretation.

@@ -46,12 +46,7 @@ fuzz_target!(|data: &[u8]| {
     {
         return;
     }
-    if fs::write(
-        collection_directory.join("request.postly.toml"),
-        data,
-    )
-    .is_err()
-    {
+    if fs::write(collection_directory.join("request.postly.toml"), data).is_err() {
         return;
     }
     if fs::write(environment_directory.join("fuzz.postly-env.toml"), data).is_err() {

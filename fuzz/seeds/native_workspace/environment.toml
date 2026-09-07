@@ -1,0 +1,8 @@
+format = "postly-environment"
+version = 1
+name = "Fictional environment"
+
+[variables.baseUrl]
+value = "http://127.0.0.1:3979"
+enabled = true
+secret = false

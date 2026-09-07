@@ -202,3 +202,18 @@ medians, unmodified JSON, method and limitations. Four fuzz targets also finishe
 256 executions each without a crash, starting from empty corpora. The limited
 input sizes are explicit; this is not a security certification. GUI performance,
 other OSes, independent installation and external user gates remain open.
+
+## Seeded robustness checks and native performance fixture
+
+The fuzz smoke now merges ten reviewed fictional seeds without overwriting
+discovered inputs, exercises nested/cyclic variable contexts and runs 1,024
+inputs per target with explicit process limits. All four runs completed without
+a crash; the full quality gate passed 278 tests, formatting and Clippy.
+Regression tests prove the seeds reach valid request/workspace parsing, not
+only early syntax errors. See the [seeded report](measurements/2026-09-08-seeded-fuzz.md).
+
+A deterministic native performance workspace generator supplies 10,000 unique
+requests. The CLI validator reported no issues and the generator's no-overwrite
+behavior was checked. The actual capture attempt encountered a locked macOS
+session, so no GUI timing or idle-memory claim is made. The
+[GUI measurement protocol](gui-performance.md) retains that gate explicitly.
