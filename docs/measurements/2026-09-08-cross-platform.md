@@ -15,6 +15,9 @@ Windows/Linux compatibility claim.
   stopped because the host has no Linux sysroot (`assert.h` was unavailable).
 - No Windows linker, Windows runtime or target desktop session is available on
   this host, so no Windows package or execution was produced.
+- A temporary Podman Linux VM was created to obtain a real Linux runtime, but
+  `vfkit` exited with code 1 before its SSH/API became available. The VM was
+  removed after the failed attempt; no Linux execution claim is made.
 
 ## Consequence
 
