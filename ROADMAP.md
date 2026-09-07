@@ -93,8 +93,8 @@ Estimations pour une personne connaissant le dépôt ; elles excluent les délai
 - [x] Documenter un parcours exact : ouvrir l'exemple, envoyer la requête, lire le JSON, modifier un paramètre, sauvegarder, retrouver le fichier TOML.
 - [x] Construire une `.app` macOS avec icône et métadonnées, puis un DMG et une archive adaptés. Le package Apple Silicon, la signature ad hoc, les dépendances système et le smoke test CLI sont vérifiés localement ; la machine sans environnement de développement reste une gate distincte.
 - [ ] Vérifier l'ouverture et les bibliothèques dynamiques sur une machine propre sans environnement de développement.
-- [x] Préparer une nouvelle version `v0.2.0-preview.1` depuis le commit propre `493cf8c` et la publier dans le canal prerelease : [release GitHub](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1).
-- [x] Placer cette version dans le canal prerelease, avec notes qui décrivent ce binaire et un `SHA256SUMS` téléchargeable pour les archives. Les assets et hashes publics sont vérifiés dans [le rapport de release](docs/measurements/2026-09-08-public-release.md).
+- [x] Préparer une nouvelle version `v0.2.0-preview.1` depuis le commit propre `493cf8c`, avec provenance, cible et statut de signature dans le manifeste.
+- [x] Placer cette version dans le canal prerelease, avec notes qui décrivent ce binaire et un `SHA256SUMS` téléchargeable pour les archives : [release GitHub](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1). Les assets et hashes publics sont vérifiés dans [le rapport de release](docs/measurements/2026-09-08-public-release.md).
 - [x] Remplacer les commandes illustratives du site par le scénario local testé ; réserver la compilation à une section « Build from source ».
 - [x] Rendre explicites les plateformes disponibles, les dépendances optionnelles comme Node pour les scripts et le statut de signature.
 
