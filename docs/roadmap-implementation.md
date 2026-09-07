@@ -169,3 +169,9 @@ playback/pause and chapter seeking. The 390 CSS-pixel mobile layout revealed
 and corrected a fixed video-height issue. Full-screen requests are rejected
 in the test browser; the explicit fallback message was verified instead of
 claiming this mode passed. Other browsers/devices remain untested.
+
+Publication verified: the public MP4 hash matches the local export, the public
+player plays and seeks by chapter, and GitHub renders the README poster with
+its link to the full player. The code and media milestone is `ddfd0c7`; the
+Pages content was published as `524d0199` in the site's existing `master`
+branch. No other project folder was changed.

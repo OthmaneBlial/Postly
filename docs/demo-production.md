@@ -69,3 +69,11 @@ The raw scene contact sheet and final response/runner frames were inspected.
 Full decoding and browser playback checks are separate from external usability
 testing. The recording does not imply notarization, clean-machine installation,
 Windows/Linux support or publication of a new binary release.
+
+Publication verified on 8 September 2026 (Europe/Paris): GitHub Pages returned
+the MP4 and poster with HTTP 200. The downloaded public MP4's SHA-256 matched
+the value above. Its browser player loaded all metadata (66 seconds, ready
+state 4), played successfully and jumped to the assertions chapter. The
+GitHub-rendered README loaded the 1920-pixel poster and linked it to the full
+demo page. Full-screen requests were rejected in the test browser and produced
+the intended fallback message; this mode is not claimed validated there.

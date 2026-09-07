@@ -109,8 +109,8 @@ Après M2, remplacer les passages CLI d'import par le parcours GUI s'il est vali
 - [x] Utiliser le skill **`ffmpeg-video-editor`** : sonder les rushes avec `ffprobe`, conserver les actions et leurs résultats, encoder avec son profil `web-optimized`. Prise continue, sans accélération ni coupe temporelle.
 - [x] Ne pas reconstruire la GUI avec du HTML ou une succession de screenshots. Les coupes sont permises ; signaler toute accélération qui pourrait être prise pour une mesure de vitesse.
 - [x] Exporter `postly-demo.mp4`, un poster réel `postly-demo-poster.jpg` et des sous-titres séparés si nécessaire. Un extrait court est facultatif ; le lecteur complet doit rester disponible.
-- [ ] Publier le MP4 comme asset de la release montrée ou sur un hébergement vidéo durable. Ajouter un lecteur avec contrôles sur le site.
-- [ ] Vérifier le README rendu sur GitHub. Si l'intégration vidéo n'y fonctionne pas, utiliser le poster cliquable vers le lecteur complet ; ne pas confondre une animation GIF avec une vidéo contrôlable.
+- [x] Publier le MP4 comme asset de la release montrée ou sur un hébergement vidéo durable. MP4 versionné et servi sur GitHub Pages, lecteurs avec contrôles sur le site ; aucune nouvelle release binaire déduite de cette publication.
+- [x] Vérifier le README rendu sur GitHub. Poster chargé et cliquable vers le lecteur complet ; ce n'est pas une animation GIF.
 - [ ] Vérifier lecture, pause, déplacement dans la vidéo, netteté du texte, absence d'informations privées et concordance avec le téléchargement.
 
 Commandes de préparation issues du profil FFmpeg ; chemins proposés, à utiliser après capture réelle :
