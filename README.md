@@ -6,7 +6,7 @@
 
 ### Import a collection. Inspect real responses. Run the same requests from your terminal.
 
-Build requests. Inspect real responses. Commit the workflow with your code.
+Technical preview · Local files · Native desktop + CLI
 
 <p>
   <a href="https://github.com/OthmaneBlial/Postly/stargazers"><img src="https://img.shields.io/github/stars/OthmaneBlial/Postly?style=for-the-badge&color=f5b942" alt="GitHub stars"></a>
@@ -33,7 +33,8 @@ Build requests. Inspect real responses. Commit the workflow with your code.
 · [Full-resolution screenshot](https://othmaneblial.github.io/Postly/assets/postly-dark.png)
 
 Actual, continuous macOS recording at normal speed, with captions and a full
-player (play, pause, seeking and fullscreen). [Capture provenance](docs/demo-production.md).
+player (play, pause, seeking and fullscreen where the browser permits it).
+[Capture provenance](docs/demo-production.md).
 The older `v0.1.0`
 download does **not** include this UI, onboarding or the new desktop workflows.
 
@@ -45,6 +46,16 @@ workspace that share the same request model.
 
 > **The idea:** your API client should help you ship the API — not become another
 > cloud workspace that your API depends on.
+
+## Download
+
+The older technical preview is available for macOS Apple Silicon:
+[`v0.1.0`](https://github.com/OthmaneBlial/Postly/releases/tag/v0.1.0). Verify
+the included `SHA256SUMS` file before running the binaries. Cross-platform
+installers, notarization and production release validation remain open.
+The current source targets `0.2.0-preview.1`; its macOS app/DMG has local
+packaging evidence, not a confirmed new public release. See the
+[installation guide](docs/install.md) and [candidate report](docs/release-validation-v0.2.0-preview.1.md).
 
 ## What Postly offers
 
@@ -60,102 +71,6 @@ workspace that share the same request model.
 Postly is early and ambitious. Compatibility is published as executable evidence,
 not as a “100% compatible” badge. Check the [compatibility matrix](docs/compatibility.md)
 before moving a critical workflow.
-
-## What works today
-
-This repository contains working vertical slices, not a static interface mockup.
-
-- **HTTP and REST:** GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS and custom
-  methods; query parameters, duplicate headers, cookies, redirects, compression,
-  timeouts, cancellation, raw/JSON/form/multipart/file bodies and response metadata.
-- **Authentication:** Basic, Digest, Bearer, API key, OAuth 2.0 Client Credentials,
-  Authorization Code + PKCE, Refresh Token and Device Authorization Grant,
-  plus buffered AWS Signature V4 signing; including variable resolution,
-  opt-in loopback browser login, bounded approval polling and local
-  expiry-aware token caching.
-- **Privacy-aware environments:** plain values stay in ignored local files;
-  `postly env set --secret` stores new values in the OS credential store and keeps
-  only an opaque workspace-scoped reference in the project; `--secret-stdin` and
-  explicit legacy-secret migration avoid putting values in shell arguments. The
-  native GUI can create, edit, disable and rename environments; existing secret
-  references stay masked and new secret values go through the OS credential store.
-- **Transport controls:** explicit insecure-TLS opt-in for supported HTTP and
-  WebSocket flows,
-  verified HTTPS, custom PEM CAs, combined PEM or password-protected PKCS#12
-  client identities, HTTP(S)/SOCKS
-  proxy routing, CLI/GUI WebSocket and gRPC HTTP CONNECT routing, WebSocket
-  custom CA/client-identity support, native GUI exact-host/wildcard
-  certificate associations, environment proxy support
-  and bypass rules, per-request redirect/cookie overrides, with actionable
-  diagnostics.
-- **Response inspection:** Pretty/Raw views with JSON, YAML and well-formed XML
-  formatting, detected JSON/YAML/XML/HTML/JavaScript/Text previews with lightweight
-  syntax coloring, status/headers/cookies/protocol/duration, local search,
-  TTFB/download timing where measurable, wrapping, clipboard copy, virtualized rendering, an in-app developer console,
-  response snapshots and save-as-example fixtures for local mocks. Buffered
-  HTTP responses are bounded to 100 MiB by default and can be tuned in the GUI
-  Transport settings; streaming endpoints remain progressive and bounded by
-  their live history views.
-- **Collections:** local TOML projects, nested folders, deterministic discovery,
-  stable request identity, duplicate/delete/rename flows, metadata-only history
-  and workspace-wide request search. The native GUI supports multiple saved
-  request tabs, dirty indicators, close-others, reordering and local tab
-  restoration.
-- **Migration:** Postman Collection v2.1 and environment import/export, explicit
-  `.env` import with opt-in keychain storage, OpenAPI 3.0/3.1 JSON/YAML import
-  with guarded local references, and cURL paste/copy.
-- **API documentation:** generate deterministic local Markdown from collections,
-  request descriptions, parameters, headers and response-example metadata.
-- **OpenAPI export:** turn a native collection into OpenAPI 3.0 JSON or YAML,
-  with explicit warnings and x-postly extensions for lossy cases.
-- **Project site:** a responsive, dependency-free static showcase with SEO
-  metadata, JSON-LD, reduced-motion support and source-backed navigation.
-- **Code snippets:** generate reviewable cURL, JavaScript fetch, Python
-  requests, Rust reqwest, Go, Java, C# and PHP from the same saved request
-  model.
-  - **Testing and automation:** response assertions, an opt-in Node.js script
-  bridge, tested `pm.*` behavior including request/body facades and bounded
-  `pm.sendRequest` callbacks, collection runs, folder selection, iteration
-  data from JSON or CSV files, bounded script-free concurrency, fail-fast
-  execution, pretty/JSON/JUnit reporters and a deterministic local HTTP mock
-  server backed by saved response examples.
-- **Modern API protocols:** structured GraphQL with schema introspection, SSE
-  subscriptions, WebSocket text/binary flows with saved message presets, and
-  dynamic gRPC calls with local `.proto` discovery or CLI server reflection (v1
-  with v1alpha fallback).
-- **Native desktop workspace:** request editing, dedicated raw text/JSON/XML/
-  HTML/JavaScript body modes, Scripts and Body tabs, command palette,
-  cancellation, local history, transport settings, dark/light/system themes and
-  the same core semantics as the CLI.
-
-The [living progress log](docs/progress.md) records what is implemented, what was
-verified locally and which release gates still require external validation.
-
-## Project site
-
-Postly has a dependency-free public showcase and documentation hub at
-[`othmaneblial.github.io/Postly/`](https://othmaneblial.github.io/Postly/), with
-responsive layout, accessible navigation, protocol highlights and honest links
-back to the versioned source documentation. The source lives in
-[`website/`](website/) and can be previewed locally with:
-
-```bash
-python3 -m http.server 4173 --directory website
-```
-
-The [documentation hub](https://othmaneblial.github.io/Postly/docs.html)
-organizes the guides for setup, migration, protocols, scripting, privacy and
-compatibility.
-
-## Download
-
-The older technical preview is available for macOS Apple Silicon:
-[`v0.1.0`](https://github.com/OthmaneBlial/Postly/releases/tag/v0.1.0). Verify
-the included `SHA256SUMS` file before running the binaries. Cross-platform
-installers, notarization and production release validation remain open.
-The current source targets `0.2.0-preview.1`; its macOS app/DMG has local
-packaging evidence, not a confirmed new public release. See the
-[installation guide](docs/install.md) and [candidate report](docs/release-validation-v0.2.0-preview.1.md).
 
 ## Quick start
 
@@ -201,6 +116,35 @@ The unchanged starter passes two requests and five assertions. See the
 [complete Orders walkthrough](examples/orders/README.md) for Git diffs,
 restarting the server, mocks and Postman import. Node.js is optional and only
 needed for the opt-in Postman script bridge.
+
+## Current limits
+
+- The UI in the demo is newer than the public v0.1.0 archive. The current
+  macOS candidate is ad-hoc signed, not notarized; external installation and
+  Windows/Linux release validation remain open.
+- Postman imports report compatibility boundaries. Imported scripts are opt-in,
+  require Node.js, and are not a hostile-code sandbox.
+- Local workspaces and the example work without a cloud account. Requests to
+  remote APIs still use the network; local-first does not mean every API is offline.
+
+[Full feature reference](docs/features.md) · [Compatibility](docs/compatibility.md)
+· [Privacy](docs/privacy.md) · [Release evidence](docs/release-validation-v0.2.0-preview.1.md)
+
+## Project site
+
+Postly has a dependency-free public showcase and documentation hub at
+[`othmaneblial.github.io/Postly/`](https://othmaneblial.github.io/Postly/), with
+responsive layout, accessible navigation, protocol highlights and honest links
+back to the versioned source documentation. The source lives in
+[`website/`](website/) and can be previewed locally with:
+
+```bash
+python3 -m http.server 4173 --directory website
+```
+
+The [documentation hub](https://othmaneblial.github.io/Postly/docs.html)
+organizes the guides for setup, migration, protocols, scripting, privacy and
+compatibility.
 
 ## From Postman to a Git-native API project
 

@@ -175,3 +175,15 @@ player plays and seeks by chapter, and GitHub renders the README poster with
 its link to the full player. The code and media milestone is `ddfd0c7`; the
 Pages content was published as `524d0199` in the site's existing `master`
 branch. No other project folder was changed.
+
+## README discovery path
+
+On 8 September, the README was reordered around the native demo, actual download
+status, concrete benefits, the local Orders example and short current limits.
+The detailed transport/protocol inventory now lives in the linked
+[feature reference](features.md). The preview label is visible at the top;
+the old public binary remains explicitly distinguished from the filmed build.
+All 57 local Markdown targets across the edited README, feature reference and
+benchmark guide resolved. This is a document/link check, not evidence that four
+out of five external readers understand the product; that usability gate remains
+open.
