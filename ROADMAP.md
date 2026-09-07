@@ -190,7 +190,7 @@ Matrice de distribution visée, à valider plateforme par plateforme :
 - [x] Après publication, vérifier les URLs et les hashes des assets publics. Vérifié le 8 septembre dans [le rapport de release](docs/measurements/2026-09-08-public-release.md).
 - [x] Ajouter `CONTRIBUTING.md`, un formulaire de bug avec OS/version/reproduction, un formulaire de migration sans données privées et un modèle de PR court.
 - [x] Préparer 5–8 tickets bornés avec fichiers concernés et critères d'acceptation : documentation, exemples, petits défauts UI et fixtures d'import.
-- [ ] Extraire progressivement les panneaux GUI et les commandes CLI lorsque les travaux les touchent ; éviter un grand refactoring qui retarde les livrables visibles.
+- [x] Extraire progressivement les panneaux GUI et les commandes CLI lorsque les travaux les touchent ; éviter un grand refactoring qui retarde les livrables visibles. Les modules GUI (`welcome`, `navigation`, `design`, `workflows`, `comparison`) et les commandes workspace CLI (`init`, `list`, `validate`, `search`) sont séparés ; le détail et la gate de non-régression figurent dans [les preuves d'implémentation](docs/roadmap-implementation.md).
 
 **Sortie :** chaque plateforme annoncée dispose d'un artefact testé hors machine de développement, et une première contribution peut être réalisée à partir du guide sans explication privée.
 

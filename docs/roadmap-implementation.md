@@ -44,6 +44,19 @@ criteria in `docs/contribution-candidates.md`. YAML syntax was validated with
 Ruby's YAML parser. These are prepared candidates; no issue assignments or
 outside contributions are claimed.
 
+## Progressive module extraction
+
+The native app keeps its touched UI areas in `welcome.rs`, `navigation.rs`,
+`design.rs`, `workflows.rs` and `comparison.rs`. The CLI now routes its
+workspace-oriented `init`, `list`, `validate` and `search` commands through
+`workspace_commands.rs`; their output and shared `Workspace` semantics remain
+unchanged. This is an incremental boundary, not a claim that the remaining
+large command files have been rewritten wholesale.
+
+After the extraction, `cargo xtask check` passed formatting, Clippy with
+warnings denied and all 278 workspace tests (38 CLI, 70 GUI, 159 core and
+11 xtask).
+
 ## Desktop import and collection runner
 
 `crates/postly-app/src/workflows.rs` adds background import and collection runs
