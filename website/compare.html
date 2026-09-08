@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#10191c">
+<meta name="description" content="Postly vs Postman: choose a local, Git-native API workspace or a hosted collaboration platform for the workflow you actually need.">
+<meta property="og:title" content="Postly vs Postman — choose your API workflow">
+<meta property="og:description" content="A candid comparison of local ownership, Git-native requests, automation and hosted collaboration.">
+<meta property="og:type" content="article"><meta property="og:url" content="https://othmaneblial.github.io/Postly/compare.html">
+<meta property="og:image" content="https://othmaneblial.github.io/Postly/assets/postly-dark.png">
+<link rel="canonical" href="https://othmaneblial.github.io/Postly/compare.html"><link rel="icon" href="logo.svg" type="image/svg+xml"><link rel="stylesheet" href="styles.css">
+<title>Postly vs Postman — choose your API workflow</title>
+</head>
+<body class="compare-body">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar wrap">
+<a class="brand" href="index.html" aria-label="Postly home"><img src="logo.svg" width="36" height="36" alt=""><span>postly</span></a>
+<nav aria-label="Main navigation"><a href="index.html#workflow">Workflow</a><a href="index.html#demo">The app</a><a href="compare.html" aria-current="page">Compare</a><a href="docs.html">Docs</a></nav>
+<a class="source-link" href="https://github.com/OthmaneBlial/Postly">GitHub ↗</a>
+</header>
+<main id="main">
+<section class="compare-hero wrap">
+<p class="eyebrow"><span class="status-dot"></span> POSTLY / DECISION GUIDE</p>
+<div class="compare-hero-grid">
+<div><h1>Two API<br><span>workflows.</span></h1><p class="compare-lede">One keeps the work in your repository. The other brings a mature hosted platform to your team.</p><p class="compare-note">The honest answer is not “Postly replaces every Postman feature.” It is: which boundary do you want your API client to have?</p></div>
+<aside class="verdict-card"><p class="eyebrow">THE SHORT VERSION</p><h2>Postly wins when<br><span>local ownership</span><br>is the point.</h2><ul><li>No account for the core workflow.</li><li>Readable request files and ordinary Git diffs.</li><li>One native app and CLI on one Rust model.</li></ul><a class="button primary" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/comparison-postman.md">Read the detailed comparison <span>↗</span></a></aside>
+</div>
+<div class="compare-baseline"><span>LOCAL FILES / NATIVE DESKTOP / CLI</span><span>POSTMAN CLOUD / TEAM PLATFORM</span></div>
+</section>
+<section class="compare-signal"><div class="wrap compare-signal-grid"><div><p class="eyebrow">THE REAL TRADE</p><h2>Control the boundary.</h2></div><p>Postly makes the repository the source of truth. Postman makes the workspace the collaboration surface. Both can be useful; they optimize for different kinds of trust.</p></div></section>
+<section class="compare-table-section wrap">
+<div class="section-heading"><p class="eyebrow">01 / SIDE BY SIDE</p><h2>Pick the shape<br>of your work.</h2><p>Read the “better fit” column as a decision aid, not a leaderboard.</p></div>
+<div class="compare-table" role="table" aria-label="Postly and Postman comparison">
+<div class="compare-row compare-head" role="row"><div role="columnheader">Dimension</div><div role="columnheader" class="postly-col">Postly</div><div role="columnheader" class="postman-col">Postman</div><div role="columnheader">Better fit</div></div>
+<div class="compare-row" role="row"><div role="rowheader">Source of truth</div><div role="cell">Local project directory, TOML files, ordinary <code>git diff</code>.</div><div role="cell">Collections and related API assets organized in workspaces; Native Git is also available.</div><div role="cell" class="fit">Postly for repo ownership.<br>Postman for hosted coordination.</div></div>
+<div class="compare-row" role="row"><div role="rowheader">First run</div><div role="cell">Open the app or CLI without signup or a hosted workspace.</div><div role="cell">The workspace model is account-based and syncs edits with collaborators.</div><div role="cell" class="fit">Postly for a private start.</div></div>
+<div class="compare-row" role="row"><div role="rowheader">Desktop + terminal</div><div role="cell">Native Rust desktop and <code>postly</code> CLI share the same request model.</div><div role="cell">Postman desktop plus Postman CLI/Newman, with their own install and workflow boundaries.</div><div role="cell" class="fit">Postly for one local project.</div></div>
+<div class="compare-row" role="row"><div role="rowheader">Automation</div><div role="cell">Native requests, assertions and collection runs do not need Node.js.</div><div role="cell">Newman is Node.js-based; Postman CLI is a separate tool and signed-in runs can send results to Postman cloud.</div><div role="cell" class="fit">Postly for a lean toolchain.</div></div>
+<div class="compare-row" role="row"><div role="rowheader">Migration</div><div role="cell">Postman v2.1 import with explicit diagnostics for review items.</div><div role="cell">Native Postman authoring needs no migration step.</div><div role="cell" class="fit">Postman for native format.<br>Postly for an auditable move.</div></div>
+<div class="compare-row" role="row"><div role="rowheader">Team platform</div><div role="cell">Git, pull requests and plain files are the collaboration layer.</div><div role="cell">Shared workspaces, viewers, roles, monitoring, catalog and enterprise controls.</div><div role="cell" class="fit">Postman for centralized governance.</div></div>
+<div class="compare-row" role="row"><div role="rowheader">Price / license</div><div role="cell">MIT open source; no hosted account required for the core path.</div><div role="cell">Free plan plus paid Solo, Team and Enterprise plans with changing limits.</div><div role="cell" class="fit">Postly for open local work.<br>Postman for paid platform services.</div></div>
+</div>
+<p class="compare-footnote">Postman features and plans change. See the <a href="https://www.postman.com/pricing/">official pricing page</a> and the <a href="https://learning.postman.com/docs/collaborating-in-postman/using-workspaces/overview/">workspace documentation</a> before making a procurement decision.</p>
+</section>
+<section class="compare-choice"><div class="wrap"><div class="section-heading"><p class="eyebrow">02 / THE DECISION</p><h2>Use the tool that<br><span>fits your boundary.</span></h2></div><div class="choice-grid"><article class="choice-card choice-postly"><p class="eyebrow">CHOOSE POSTLY IF</p><h3>Your API work belongs in Git.</h3><ul><li>You want to start without an account.</li><li>Requests should be reviewable beside application code.</li><li>Desktop edits and terminal runs must share one project.</li><li>You prefer explicit migration warnings over silent compatibility.</li></ul><a class="button primary" href="docs.html#start">Try the local example <span>↗</span></a></article><article class="choice-card choice-postman"><p class="eyebrow">CHOOSE POSTMAN IF</p><h3>Your team needs a hosted control plane.</h3><ul><li>Shared workspaces and role-based access are central.</li><li>Monitoring, cataloging or hosted performance testing matter.</li><li>Your organization already standardizes on Postman cloud.</li><li>Native Postman compatibility matters more than local files.</li></ul><a class="button secondary" href="https://www.postman.com/">Explore Postman <span>↗</span></a></article></div></div></section>
+<section class="compare-proof wrap"><div><p class="eyebrow">03 / TEST THE CLAIM</p><h2>Bring one collection.</h2><p>Export a Postman Collection v2.1 and environment, then run the same scenario in Postly. Read the warnings, compare the assertions and inspect the resulting Git diff.</p><a class="button primary" href="https://github.com/OthmaneBlial/Postly/blob/main/docs/comparison-postman.md">See the reproducible test <span>↗</span></a></div><div class="compare-code"><span>POSTLY / LOCAL REPLAY</span><pre><code>postly import collection ./collection.json --output ./my-api
+postly import environment ./environment.json --output ./my-api --secure
+postly validate ./my-api --output-json
+postly run ./my-api --reporter pretty</code></pre><p>27/31 checked-in request mappings pass the current compatibility gate. The remaining cases stay visible for review.</p></div></section>
+</main>
+<footer class="wrap footer"><a class="brand" href="index.html"><img src="logo.svg" width="30" height="30" alt=""><span>postly</span></a><p>API work belongs in your repo.</p><div><a href="index.html">Overview</a><a href="docs.html">Documentation</a><a href="https://github.com/OthmaneBlial/Postly/blob/main/LICENSE">MIT License</a></div></footer>
+</body></html>

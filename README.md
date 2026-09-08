@@ -72,6 +72,18 @@ Postly is early and ambitious. Compatibility is published as executable evidence
 not as a “100% compatible” badge. Check the [compatibility matrix](docs/compatibility.md)
 before moving a critical workflow.
 
+## Postly vs Postman
+
+Postly is the better fit when API work should live beside application code: local
+files, ordinary Git reviews, one native desktop/CLI model and no account wall for
+the core workflow. Postman remains the better fit for teams that need a mature
+hosted control plane with shared workspaces, organization-level governance,
+monitoring and catalog features.
+
+That is a workflow distinction, not a claim of universal feature superiority.
+Read the [full comparison](docs/comparison-postman.md) or open the
+[visual decision guide](https://othmaneblial.github.io/Postly/compare.html).
+
 ## Quick start
 
 ### 1. Build the current preview

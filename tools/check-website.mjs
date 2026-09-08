@@ -6,8 +6,9 @@ import assert from 'node:assert/strict';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const site = resolve(root, 'website');
+const pages = ['index.html', 'docs.html', 'demo.html', 'compare.html'];
 let links = 0;
-for (const page of ['index.html', 'docs.html', 'demo.html']) {
+for (const page of pages) {
   const html = readFileSync(resolve(site, page), 'utf8');
   assert(!html.includes('api.example.test'), 'The starter must use a real API');
   assert(!html.includes('data-preview-panel'), 'Do not reconstruct the native GUI');
@@ -39,4 +40,4 @@ for (const page of ['index.html', 'docs.html', 'demo.html']) {
 for (const [, asset] of readFileSync(resolve(site, 'styles.css'), 'utf8').matchAll(/url\("([^"]+)"\)/g)) {
   assert(existsSync(resolve(site, asset)), `missing stylesheet asset ${asset}`);
 }
-console.log(`Website integrity passed: three pages, ${links} local URLs, copy targets and font assets.`);
+console.log(`Website integrity passed: ${pages.length} pages, ${links} local URLs, copy targets and font assets.`);

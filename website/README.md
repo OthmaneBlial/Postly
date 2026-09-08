@@ -2,8 +2,9 @@
 
 This is a dependency-free static showcase and documentation hub for Postly. It
 is intentionally kept separate from the canonical Rust workspace. The public
-project page is `https://othmaneblial.github.io/Postly/` and the guide index is
-`https://othmaneblial.github.io/Postly/docs.html`.
+project page is `https://othmaneblial.github.io/Postly/`, the guide index is
+`https://othmaneblial.github.io/Postly/docs.html`, and the Postman decision guide
+is `https://othmaneblial.github.io/Postly/compare.html`.
 
 Serve this directory over HTTP to test fonts, navigation and clipboard controls:
 
@@ -17,7 +18,8 @@ crawlable and make the project's factual boundaries easy to discover.
 Before each GitHub Pages update, verify the final base path, link targets,
 mobile overflow, keyboard focus, reduced-motion behavior and browser console.
 The site does not claim download counts, benchmark advantages or full Postman
-parity.
+parity. The comparison page is a use-case guide: it links to official Postman
+documentation and calls out where Postman remains the better fit.
 
 The September 7 redesign uses bundled IBM Plex Sans (OFL license included),
 the canonical Postly logo, and an actual native screenshot from the UI source
