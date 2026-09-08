@@ -300,6 +300,15 @@ and the three-second GUI smoke. Bundle inspection confirmed both macOS icon
 metadata keys resolve to the bundled `Postly.icns`; this confirms the desktop
 icon fix in the candidate without claiming a fresh-machine install.
 
+After the Windows resource change, the package was rebuilt again from clean
+`a8c80a9`. The manifest reports `source_dirty: false`, target
+`aarch64-apple-darwin`, release profile and ad-hoc signing; outer archive hashes
+are `72f639fe189c84ce1372f798014bd788b9cc388e1f866a27619ee17ca0a0c298` (tar)
+and `8b35ba62b62aecccd0aceff4b96c34866a853cdad6d9885ab4c3a72ca494b81a`
+(DMG). `tools/replay-package.sh` passed the extracted checksums, CLI,
+loopback requests, five assertions and three-second GUI smoke. This is a fresh
+local candidate, not a replacement public release or independent-machine proof.
+
 The landing page now links directly to the structured feedback form as well as
 the bug form. That one-line site update was published to the existing Pages
 branch at `6d20db2`; a cache-busted HTTPS fetch returned the new link after the
