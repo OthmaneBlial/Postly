@@ -303,6 +303,12 @@ the bug form. That one-line site update was published to the existing Pages
 branch at `6d20db2`; a cache-busted HTTPS fetch returned the new link after the
 normal Pages propagation delay.
 
+The target-machine handoff is now consolidated in the [external validation
+report template](measurements/external-validation-template.md). It records
+checksums, clean-account isolation, native GUI/icon checks, credential-store
+outcomes and explicit headless skips without turning cross-compiles into
+platform claims.
+
 ## Cross-target compilation evidence
 
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the

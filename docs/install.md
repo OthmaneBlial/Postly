@@ -125,3 +125,8 @@ session (no Cargo or Node is required):
 Use `-SkipGui` only on a deliberately headless Windows session. The script
 checks every entry in `SHA256SUMS`, the packaged CLI version/help, the loopback
 Orders example, its five assertions and a three-second GUI process smoke.
+
+When recording a result from a machine independent of the build host, use the
+[external validation report template](measurements/external-validation-template.md).
+It separates target-native GUI evidence from a deliberately headless replay
+and captures the OS, architecture, checksum and credential-store outcome.
