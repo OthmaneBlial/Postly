@@ -278,8 +278,9 @@ still remains development-host evidence until that external gate is exercised.
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the
 locked shared CLI dependency graph to compile for `x86_64-unknown-linux-gnu`
 and `x86_64-pc-windows-gnu`. This is useful source-compatibility evidence, but
-it is not a package or runtime result. A Linux release link still fails on
-OpenSSL symbols, and the GUI/xtask Linux checks need a target OpenSSL sysroot.
-No Windows/Linux runtime or Intel Mac validation is claimed; the open gate and
-the exact command outcomes are recorded in
+it is not a package or runtime result. A subsequent Linux release cross-link
+produced both CLI and GUI ELF x64 binaries, while the Windows GUI link stopped
+on the temporary linker's missing `msvcrt` import library. No Windows/Linux
+runtime or Intel Mac validation is claimed; the open gate and exact command
+outcomes are recorded in
 [the cross-platform report](measurements/2026-09-08-cross-platform.md).
