@@ -116,13 +116,15 @@ explicit. This local evidence does not establish other OS support or a
 clean-machine installation. The macOS Apple Silicon package was subsequently
 published as the prerelease [v0.2.0-preview.1](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1).
 
-Validation: 265 tests, formatting and Clippy passed; compatibility fixtures
-passed 10/10 with 27/31 request mappings. The mounted DMG's CLI passed two
-requests and five assertions, and its app passed signature verification and
-launched through Launch Services. Exact-bundle visual inspection remains open:
-system screenshot capture failed during this session. Clean-machine testing,
-signing credentials and cross-platform validation are also external gates.
-See the [candidate report](release-validation-v0.2.0-preview.1.md).
+Initial validation: 265 tests, formatting and Clippy passed; compatibility
+fixtures passed 10/10 with 27/31 request mappings. The mounted DMG's CLI passed
+two requests and five assertions, and its app passed signature verification and
+launched through Launch Services. System screenshot capture failed during that
+first session, so exact-bundle visual inspection was temporarily open. The
+later rebuilt-candidate section below records the successful visual inspection
+and the remaining clean-machine, signing-credential and cross-platform gates.
+See the [candidate report](release-validation-v0.2.0-preview.1.md) for both
+dated stages.
 
 ## Native visual system and response workspace
 
