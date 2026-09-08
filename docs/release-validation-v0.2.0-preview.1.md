@@ -21,10 +21,13 @@ its public assets are verified in the [public-release report](measurements/2026-
 - Both binaries' linked libraries were checked during packaging. Only macOS
   system libraries/frameworks were present; the CLI no longer links to a
   Homebrew OpenSSL location. OpenSSL's license accompanies the binaries.
-- Launch Services opened the mounted app without a workspace argument. The
-  process remained running and macOS reported its titled native window.
-  Screenshot capture failed in this session despite reported capture access;
-  rendered inspection of this exact release bundle is therefore **pending**.
+- Initial Launch Services smoke opened the mounted app without a workspace
+  argument; the process remained running and macOS reported its titled native
+  window. Screenshot capture failed in that first session despite reported
+  capture access, so rendered inspection was temporarily **pending**. The
+  rebuilt native-design candidate below later captured the exact UI and closed
+  that local visual-inspection gap; it did not close the independent-machine
+  gate.
 - Compatibility fixture execution passed 10/10. Request mapping was 27/31;
   four manual-review cases remain, not full behavioral compatibility.
 
