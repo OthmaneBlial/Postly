@@ -319,6 +319,12 @@ CLI hash are recorded in the [validation report](measurements/2026-09-08-validat
 The subsequent full quality gate passes **280 tests** (38 CLI, 70 GUI, 159 core,
 13 xtask), with formatting and Clippy warnings denied.
 
+The Linux package now includes a rootless `install-linux-desktop.sh` helper.
+It validates the archive's `Icon=postly` entry, installs the bundled canonical
+`postly.svg` in the user's hicolor theme and writes a launcher with an absolute
+GUI path. Shell syntax passed `sh -n`; this improves icon parity for Linux
+desktop menus without claiming that the helper or GUI has run on a Linux host.
+
 ## Cross-target compilation evidence
 
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the

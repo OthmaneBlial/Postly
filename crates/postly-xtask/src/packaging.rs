@@ -214,6 +214,10 @@ pub fn package() -> Result<()> {
             package.join("postly.desktop"),
         )?;
         copy(root.join("website/logo.svg"), package.join("postly.svg"))?;
+        copy(
+            root.join("tools/install-linux-desktop.sh"),
+            package.join("install-linux-desktop.sh"),
+        )?;
     }
     for argument in ["--version", "--help"] {
         output(Command::new(package.join(&cli)).arg(argument))?;
@@ -402,6 +406,21 @@ mod tests {
         ));
         assert!(plist.contains("<key>CFBundleIconFile</key><string>Postly.icns</string>"));
         assert!(plist.contains("<string>Postly.icns</string>"));
+    }
+
+    #[test]
+    fn linux_desktop_entry_uses_the_canonical_icon_name() {
+        let desktop = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packaging/postly.desktop"
+        ));
+        assert!(desktop.lines().any(|line| line == "Icon=postly"));
+        assert!(desktop.lines().any(|line| line == "Exec=postly-gui"));
+        assert!(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../website/logo.svg"
+        ))
+        .contains("Postly logo"));
     }
 
     #[test]

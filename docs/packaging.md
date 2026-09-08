@@ -16,7 +16,8 @@ The command writes generated artifacts under ignored `dist/`:
 - macOS: a `.tar.gz` and DMG containing an icon-bearing `Postly.app` with both
   binaries, its bundle metadata and license resources;
 - Windows: a ZIP using `.exe` names throughout packaging and smoke checks;
-- Linux: a `.tar.gz`, including an installable desktop entry and SVG icon;
+- Linux: a `.tar.gz`, including an installable desktop entry, the canonical SVG
+  icon and `install-linux-desktop.sh` for a rootless per-user integration;
 - per-target `*-SHA256SUMS` and `*-manifest.json` files, with version, exact
   source commit, dirty status, target triple, toolchain and signing status.
 
@@ -50,6 +51,13 @@ The installation and rollback guide is [install.md](install.md).
 
 The exact 8 September archive-pair result and hashes are in the
 [preservation report](measurements/2026-09-08-update-preservation.md).
+
+The Linux helper installs the packaged `postly.svg` into the user's hicolor
+theme and writes a launcher with an absolute `Exec` path, so launching from a
+desktop menu uses the same icon and binary as the extracted archive. It does
+not require root and never touches a workspace. Validate its shell syntax with
+`sh -n tools/install-linux-desktop.sh`; running it is a user-scoped filesystem
+change and is intentionally separate from the archive smoke test.
 
 The no-toolchain archive replay is available as `tools/replay-package.sh` for
 tar archives and `tools/replay-package.ps1` for Windows ZIPs. Both verify the
