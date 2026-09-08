@@ -331,6 +331,15 @@ packager and target-triple guard landed, the current gate passes **282 tests**
 (38 CLI, 70 GUI, 159 core, 15 xtask), with the same formatting and Clippy
 requirements.
 
+On the current clean HEAD `9fecfe3`, the complementary local gates also pass:
+`cargo xtask compat --json` executes all 10 checked-in fixtures and reports 27
+of 31 request mappings (87.0967%), while `cargo xtask fuzz` completes 1,024
+libFuzzer runs for each of its four reviewed targets (`curl_command`,
+`variables`, `postman_import` and `native_workspace`). The website integrity
+check passes three pages, 54 local URLs, copy targets and font assets. These
+results strengthen the local evidence but do not close the four external
+validation and feedback gates in `ROADMAP.md`.
+
 The Linux package now includes a rootless `install-linux-desktop.sh` helper.
 It validates the archive's `Icon=io.github.othmaneblial.postly` entry, installs
 the bundled canonical `io.github.othmaneblial.postly.svg` in the user's hicolor
