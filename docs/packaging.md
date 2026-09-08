@@ -6,6 +6,20 @@ Run on the OS and architecture you intend to distribute:
 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_INCREMENTAL=0 cargo xtask package
 ```
 
+The packager also accepts an explicit Rust target when a cross-linker is
+available on the host:
+
+```bash
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo xtask package --target x86_64-pc-windows-gnu
+```
+
+The target triple controls executable suffixes, archive format, manifest
+platform/architecture and target-specific assets. A cross-target package still
+verifies extraction and recursive checksums, but deliberately skips executing
+the target binaries; run `tools/replay-package.ps1` or
+`tools/replay-package.sh` on the native target before calling it tested.
+
 Packaging builds the CLI and GUI with the locked graph and the toolchain's
 explicit host target. It does not upload a release. OpenSSL is statically built
 from the vendored dependency for the CLI; building it requires a C compiler,

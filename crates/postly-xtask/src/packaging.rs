@@ -13,6 +13,47 @@ pub fn executable(name: &str, os: &str) -> String {
     format!("{name}{}", if os == "windows" { ".exe" } else { "" })
 }
 
+fn target_platform(triple: &str) -> Result<(&'static str, &'static str)> {
+    if triple.is_empty()
+        || !triple.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        })
+    {
+        return Err(format!("invalid packaging target: {triple}"));
+    }
+    let os = if triple.contains("windows") {
+        "windows"
+    } else if triple.contains("linux") {
+        "linux"
+    } else if triple.contains("darwin") {
+        "macos"
+    } else {
+        return Err(format!("unsupported packaging target: {triple}"));
+    };
+    let architecture = if triple.starts_with("aarch64-") {
+        "aarch64"
+    } else if triple.starts_with("x86_64-") {
+        "x86_64"
+    } else {
+        return Err(format!("unsupported packaging architecture: {triple}"));
+    };
+    Ok((os, architecture))
+}
+
+fn powershell_program() -> Result<&'static str> {
+    for program in ["powershell", "pwsh"] {
+        let available = Command::new(program)
+            .args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if available {
+            return Ok(program);
+        }
+    }
+    Err("Windows packaging requires powershell or pwsh on the packaging host.".into())
+}
+
 fn output(command: &mut Command) -> Result<String> {
     let result = command.output().map_err(|e| format!("{command:?}: {e}"))?;
     if !result.status.success() {
@@ -108,7 +149,7 @@ fn smoke_example(cli: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn package() -> Result<()> {
+pub fn package(target_override: Option<&str>) -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
@@ -128,10 +169,12 @@ pub fn package() -> Result<()> {
             .ok_or("Cargo omitted target_directory")?,
     );
     let rustc = output(Command::new("rustc").arg("-vV"))?;
-    let triple = rustc
+    let host_triple = rustc
         .lines()
         .find_map(|line| line.strip_prefix("host: "))
         .ok_or("rustc did not report its host target")?;
+    let triple = target_override.unwrap_or(host_triple);
+    let (os, architecture) = target_platform(triple)?;
     let build = Command::new("cargo")
         .current_dir(&root)
         .args([
@@ -164,11 +207,10 @@ pub fn package() -> Result<()> {
         "--untracked-files=normal",
     ]))?
     .is_empty();
-    let os = env::consts::OS;
     let name = format!(
         "postly-v{}-{os}-{}",
         env!("CARGO_PKG_VERSION"),
-        env::consts::ARCH
+        architecture
     );
     let dist = root.join("dist");
     fs::create_dir_all(&dist).map_err(|e| e.to_string())?;
@@ -219,15 +261,20 @@ pub fn package() -> Result<()> {
             package.join("install-linux-desktop.sh"),
         )?;
     }
-    for argument in ["--version", "--help"] {
-        output(Command::new(package.join(&cli)).arg(argument))?;
+    let target_host = triple == host_triple;
+    if target_host {
+        for argument in ["--version", "--help"] {
+            output(Command::new(package.join(&cli)).arg(argument))?;
+        }
+    } else {
+        println!("cross-target package: executable smoke deferred to a native host ({triple})");
     }
     let provenance = json!({
         "name":"Postly", "version":env!("CARGO_PKG_VERSION"), "platform":os,
-        "architecture":env::consts::ARCH, "target":triple, "source_commit":revision,
+        "architecture":architecture, "target":triple, "source_commit":revision,
         "source_dirty":dirty, "rustc":rustc, "profile":"release", "locked":true,
         "binaries":[cli, gui], "signing":if os == "macos" { "ad-hoc; not notarized" } else { "unsigned" },
-        "validation":"packaged CLI and extracted archive smoke checks including two local HTTP requests and five assertions; desktop and clean-machine validation are separate gates"
+        "validation":if target_host { "packaged CLI and extracted archive smoke checks including two local HTTP requests and five assertions; desktop and clean-machine validation are separate gates" } else { "archive checksums and extraction verified; target executable smoke is deferred to a native host; desktop and clean-machine validation are separate gates" }
     });
     fs::write(
         package.join("postly-package.json"),
@@ -240,7 +287,8 @@ pub fn package() -> Result<()> {
     let archive_name = format!("{name}.{extension}");
     let archive = staging.path().join(&archive_name);
     if os == "windows" {
-        output(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", "Compress-Archive -LiteralPath $env:POSTLY_PACKAGE_DIR -DestinationPath $env:POSTLY_PACKAGE_ARCHIVE"])
+        let powershell = powershell_program()?;
+        output(Command::new(powershell).args(["-NoProfile", "-NonInteractive", "-Command", "Compress-Archive -LiteralPath $env:POSTLY_PACKAGE_DIR -DestinationPath $env:POSTLY_PACKAGE_ARCHIVE"])
             .env("POSTLY_PACKAGE_DIR", &package).env("POSTLY_PACKAGE_ARCHIVE", &archive))?;
     } else {
         output(
@@ -256,7 +304,8 @@ pub fn package() -> Result<()> {
     let unpacked = staging.path().join("unpacked");
     fs::create_dir(&unpacked).map_err(|e| e.to_string())?;
     if os == "windows" {
-        output(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", "Expand-Archive -LiteralPath $env:POSTLY_PACKAGE_ARCHIVE -DestinationPath $env:POSTLY_UNPACK_DIR"])
+        let powershell = powershell_program()?;
+        output(Command::new(powershell).args(["-NoProfile", "-NonInteractive", "-Command", "Expand-Archive -LiteralPath $env:POSTLY_PACKAGE_ARCHIVE -DestinationPath $env:POSTLY_UNPACK_DIR"])
             .env("POSTLY_PACKAGE_ARCHIVE", &archive).env("POSTLY_UNPACK_DIR", &unpacked))?;
     } else {
         output(
@@ -276,8 +325,10 @@ pub fn package() -> Result<()> {
             return Err(format!("Archive checksum mismatch: {file}"));
         }
     }
-    output(Command::new(extracted.join(&cli)).arg("--version"))?;
-    smoke_example(&extracted.join(&cli))?;
+    if target_host {
+        output(Command::new(extracted.join(&cli)).arg("--version"))?;
+        smoke_example(&extracted.join(&cli))?;
+    }
     let mut assets = vec![archive_name];
     if os == "macos" {
         let dmg_name = format!("{name}.dmg");
@@ -429,6 +480,24 @@ mod tests {
         assert_eq!(executable("postly-gui", "windows"), "postly-gui.exe");
         assert_eq!(executable("postly", "macos"), "postly");
         assert_eq!(executable("postly-gui", "linux"), "postly-gui");
+    }
+
+    #[test]
+    fn target_triples_drive_package_platform_and_architecture() {
+        assert_eq!(
+            target_platform("aarch64-apple-darwin").unwrap(),
+            ("macos", "aarch64")
+        );
+        assert_eq!(
+            target_platform("x86_64-pc-windows-gnu").unwrap(),
+            ("windows", "x86_64")
+        );
+        assert_eq!(
+            target_platform("x86_64-unknown-linux-gnu").unwrap(),
+            ("linux", "x86_64")
+        );
+        assert!(target_platform("wasm32-unknown-unknown").is_err());
+        assert!(target_platform("x86_64-unknown-linux-gnu/../escape").is_err());
     }
     #[test]
     fn checksums_include_nested_app_resources_and_detect_changes() {

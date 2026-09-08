@@ -27,7 +27,8 @@ const RUNNER_REQUESTS: usize = 100;
 fn main() -> ExitCode {
     let mut arguments = env::args().skip(1);
     let command = arguments.next().unwrap_or_else(|| "check".to_owned());
-    let json_output = arguments.any(|argument| argument == "--json");
+    let arguments = arguments.collect::<Vec<_>>();
+    let json_output = arguments.iter().any(|argument| argument == "--json");
     let result = match command.as_str() {
         "fmt" => run("cargo", &["fmt", "--all", "--", "--check"]),
         "lint" => run(
@@ -60,9 +61,11 @@ fn main() -> ExitCode {
         "bench" => run_benchmarks(json_output),
         "compat" => run_compatibility(json_output),
         "fuzz" => fuzzing::run_fuzz_smoke(),
-        "package" => package_release(),
+        "package" => package_release(&arguments),
         "help" | "--help" => {
-            println!("cargo xtask check|fmt|lint|test|compat|bench|fuzz|package [--json]");
+            println!(
+                "cargo xtask check|fmt|lint|test|compat|bench|fuzz|package [--json] [--target TRIPLE]"
+            );
             true
         }
         other => {
@@ -484,8 +487,27 @@ fn display_relative(root: &Path, path: &Path) -> String {
         .to_string()
 }
 
-fn package_release() -> bool {
-    match packaging::package() {
+fn package_release(arguments: &[String]) -> bool {
+    let mut target = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--json" => index += 1,
+            "--target" => {
+                let Some(value) = arguments.get(index + 1) else {
+                    eprintln!("package --target requires a target triple");
+                    return false;
+                };
+                target = Some(value.as_str());
+                index += 2;
+            }
+            other => {
+                eprintln!("unknown package argument: {other}");
+                return false;
+            }
+        }
+    }
+    match packaging::package(target) {
         Ok(()) => true,
         Err(error) => {
             eprintln!("packaging failed: {error}");

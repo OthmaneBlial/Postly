@@ -340,6 +340,13 @@ GUI executable with a `.rsrc` section and a valid PNG-backed resource. This
 closes the missing source-side Explorer-icon path while leaving Windows runtime
 and Explorer rendering in the external validation gate.
 
+The release packager now accepts `cargo xtask package --target TRIPLE` and
+derives the archive platform, executable suffixes and target assets from that
+triple instead of the host. Cross-target archives verify extraction and
+checksums while recording that executable smoke is deferred to a native host;
+this turns the existing manual Windows candidate staging into a repeatable
+handoff step without upgrading a cross-link into runtime support.
+
 ## Cross-target compilation evidence
 
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the

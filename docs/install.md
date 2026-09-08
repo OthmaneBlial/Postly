@@ -138,6 +138,10 @@ Use `-SkipGui` only on a deliberately headless Windows session. The script
 checks every entry in `SHA256SUMS`, the packaged CLI version/help, the loopback
 Orders example, its five assertions and a three-second GUI process smoke.
 
+When an archive was cross-built on another OS, the packager intentionally omits
+the executable smoke. Run this replayer on Windows before publishing the asset;
+an ELF/PE link or a checksum alone is not runtime validation.
+
 When recording a result from a machine independent of the build host, use the
 [external validation report template](measurements/external-validation-template.md).
 It separates target-native GUI evidence from a deliberately headless replay
