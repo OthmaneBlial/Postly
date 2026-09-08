@@ -53,6 +53,10 @@ wrappers and a clean target directory:
   DLLs; no macOS libraries are linked.
 - The PE files were not executed or packaged on Windows, and no Windows
   runtime, Linux runtime or Intel Mac machine is available here.
+- A fresh retry with Podman 5.2.5 AppleHV (4 GiB, rootful) also left the guest
+  socket and SSH endpoint refusing connections. It was stopped and removed
+  after the bounded wait; this confirms the local virtualization gate is still
+  unavailable rather than providing a target-runtime result.
 
 ## Consequence
 
