@@ -30,7 +30,7 @@ are test controls, not demonstrated product guarantees. A 1,024-run smoke is
 still a short campaign; these results establish neither security certification,
 full parser coverage nor compatibility with arbitrary user collections.
 
-The full quality gate passed **278 tests** (38 CLI, 70 GUI, 159 core, 11 xtask),
+The full quality gate passed **279 tests** (38 CLI, 70 GUI, 159 core, 12 xtask),
 formatting and Clippy with warnings denied. Six new xtask tests cover seed
 presence, real Postman/cURL request construction, a valid TOML workspace,
 repeatability, explicit missing-input failure and preservation of existing

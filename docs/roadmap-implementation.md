@@ -54,8 +54,8 @@ unchanged. This is an incremental boundary, not a claim that the remaining
 large command files have been rewritten wholesale.
 
 After the extraction, `cargo xtask check` passed formatting, Clippy with
-warnings denied and all 278 workspace tests (38 CLI, 70 GUI, 159 core and
-11 xtask).
+warnings denied and all 279 workspace tests (38 CLI, 70 GUI, 159 core and
+12 xtask).
 
 ## Desktop import and collection runner
 
@@ -228,7 +228,7 @@ other OSes, independent installation and external user gates remain open.
 The fuzz smoke now merges ten reviewed fictional seeds without overwriting
 discovered inputs, exercises nested/cyclic variable contexts and runs 1,024
 inputs per target with explicit process limits. All four runs completed without
-a crash; the full quality gate passed 278 tests, formatting and Clippy.
+a crash; the full quality gate passed 279 tests, formatting and Clippy.
 Regression tests prove the seeds reach valid request/workspace parsing, not
 only early syntax errors. See the [seeded report](measurements/2026-09-08-seeded-fuzz.md).
 

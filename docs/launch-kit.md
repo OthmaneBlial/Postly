@@ -74,7 +74,7 @@ compatibility fixtures, seeded parser fuzz targets, and local benchmark reports.
 Demo: `https://othmaneblial.github.io/Postly/demo.html`
 Code: `https://github.com/OthmaneBlial/Postly`
 
-The current local quality gate is 278 tests with Clippy warnings denied. That
+The current local quality gate is 279 tests with Clippy warnings denied. That
 number is from this macOS development machine, not a cross-platform guarantee.
 The preview is ad-hoc signed and not notarized; the fuzz smoke is bounded and
 not a security certification. I am the creator. Rust-focused feedback on the
