@@ -285,8 +285,9 @@ local candidate and does not replace the published release asset.
 
 The Windows ZIP now has a matching no-toolchain replayer at
 `tools/replay-package.ps1`. PowerShell Core 7.6.5 parsed the script locally;
-execution remains intentionally unclaimed until a Windows machine can run the
-PE binaries and GUI.
+the MinGW PE binaries were also staged into a temporary 82-entry ZIP with
+checksums and `unzip -t` passing. Execution remains intentionally unclaimed
+until a Windows machine can run the PE binaries and GUI.
 
 ## Cross-target compilation evidence
 

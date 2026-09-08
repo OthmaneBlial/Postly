@@ -52,6 +52,11 @@ wrappers and a clean target directory:
   `postly.exe` as PE32+ console x86-64 (39 MiB) and `postly-gui.exe` as PE32+
   GUI x86-64 (45 MiB). The import table contains the expected Windows system
   DLLs; no macOS libraries are linked.
+- Those PE binaries were staged into a temporary Windows ZIP layout with a
+  Windows manifest (`platform=windows`, `target=x86_64-pc-windows-gnu`), a
+  refreshed recursive `SHA256SUMS`, and 82 entries. `unzip -t` passed. The ZIP
+  is a local packaging candidate only; the PowerShell replayer must run on
+  Windows before any asset is published.
 - The PE files were not executed or packaged on Windows, and no Windows
   runtime, Linux runtime or Intel Mac machine is available here.
 - A fresh retry with Podman 5.2.5 AppleHV (4 GiB, rootful) also left the guest
