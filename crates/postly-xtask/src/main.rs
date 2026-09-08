@@ -179,6 +179,7 @@ fn benchmark_context(root: &Path) -> Result<BenchmarkContext, String> {
         &["--version"],
     )
     .ok_or("could not read the measured CLI version")?;
+    validate_cli_version(&cli_version)?;
     let status = Command::new("git")
         .current_dir(root)
         .args(["status", "--porcelain", "--untracked-files=normal"])
@@ -208,6 +209,16 @@ fn benchmark_context(root: &Path) -> Result<BenchmarkContext, String> {
         cli_sha256: sha256_hex(&cli)?,
         cli_version,
     })
+}
+
+fn validate_cli_version(cli_version: &str) -> Result<(), String> {
+    let expected = format!("postly {}", env!("CARGO_PKG_VERSION"));
+    if cli_version == expected {
+        return Ok(());
+    }
+    Err(format!(
+        "measured CLI reports {cli_version}, expected {expected}; build postly and postly-xtask together with the same profile and target"
+    ))
 }
 
 fn command_output(root: &Path, program: &str, arguments: &[&str]) -> Option<String> {
@@ -870,6 +881,13 @@ mod tests {
             .contains("refusing"));
         fs::write(release.join(&name), b"matching release build").unwrap();
         assert_eq!(resolve_cli_binary(&harness).unwrap(), release.join(name));
+    }
+
+    #[test]
+    fn benchmark_rejects_a_stale_cli_version() {
+        let error = validate_cli_version("postly 0.1.0").unwrap_err();
+        assert!(error.contains("expected postly 0.2.0-preview.1"));
+        validate_cli_version("postly 0.2.0-preview.1").unwrap();
     }
 
     #[test]
