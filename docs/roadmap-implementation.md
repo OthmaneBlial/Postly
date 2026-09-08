@@ -106,8 +106,9 @@ DMG. The CLI statically bundles OpenSSL instead of requiring Homebrew. A
 cross-link on macOS also produced Linux x64 release CLI and GUI ELF binaries,
 then MinGW produced Windows x64 PE32+ CLI and GUI binaries, plus Mach-O x86_64
 CLI and GUI binaries. The Intel CLI passed a two-request/five-assertion demo
-under Rosetta 2; these are still cross-host checks, not target packaging or
-physical-machine validation.
+under Rosetta 2. A temporary Intel archive copy also passed recursive checksum,
+CLI and three-second GUI replay under Rosetta. These are still cross-host
+checks, not physical-machine validation or a published Intel asset.
 
 Installation, update and rollback instructions accompany the package. Platform
 availability, optional Node scripting and ad-hoc/not-notarized status are

@@ -64,6 +64,11 @@ wrappers and a clean target directory:
   loopback Orders server and `run`: two requests returned HTTP 200 and all five
   assertions passed. Rosetta is an ARM-host translation check, not evidence
   from physical Intel hardware; the GUI bundle was not opened in that mode.
+- For a packaging smoke, the Intel binaries were staged into a copy of the
+  macOS archive, the manifest target/architecture and recursive `SHA256SUMS`
+  were refreshed, and `tools/replay-package.sh` passed checksums, the loopback
+  run and a three-second GUI process smoke under Rosetta. This archive was
+  temporary and is not a published release asset.
 
 ## Consequence
 
