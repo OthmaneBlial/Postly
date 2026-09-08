@@ -316,8 +316,8 @@ workspace version. A stale `postly 0.1.0` binary was rejected; after rebuilding
 both programs from clean `2ec7530`, the debug benchmark completed with
 `source_dirty:false` and `postly 0.2.0-preview.1`. The follow-up medians and
 CLI hash are recorded in the [validation report](measurements/2026-09-08-validation.md).
-The subsequent full quality gate passes **280 tests** (38 CLI, 70 GUI, 159 core,
-13 xtask), with formatting and Clippy warnings denied.
+The subsequent full quality gate passes **281 tests** (38 CLI, 70 GUI, 159 core,
+14 xtask), with formatting and Clippy warnings denied.
 
 The Linux package now includes a rootless `install-linux-desktop.sh` helper.
 It validates the archive's `Icon=postly` entry, installs the bundled canonical
