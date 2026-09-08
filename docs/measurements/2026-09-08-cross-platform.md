@@ -91,3 +91,13 @@ Installing a Rust target is not equivalent to compiling, launching or testing
 the application on that operating system. Closing this gate requires a Linux
 x64 builder/runtime and a Windows x64 builder/runtime, followed by the
 per-platform packaging, smoke and GUI checks described in `docs/install.md`.
+
+## Linux desktop icon integration (source-host check)
+
+The Linux packaging path now carries `postly.svg` together with
+`install-linux-desktop.sh`. On the macOS release host, `sh -n` passed and a
+temporary package replay verified that the helper installs the SVG into the
+user hicolor theme and writes a `.desktop` file with `Icon=postly`, an absolute
+`Exec` path and a matching `Path`, including when the package directory contains
+spaces. This is a static/helper check only; it does not claim a Linux desktop
+session, icon cache refresh or GUI runtime validation.
