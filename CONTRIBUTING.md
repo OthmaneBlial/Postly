@@ -32,8 +32,11 @@ your report rather than disabling certificate verification.
 | Documentation and website | `docs/`, `website/` |
 
 Start with the [contribution candidates](docs/contribution-candidates.md), then
-check existing issues to avoid duplicating work. Explain the intended change
-before beginning a large feature. Product priorities are in [ROADMAP.md](ROADMAP.md).
+check existing issues to avoid duplicating work. If you are evaluating the
+preview rather than changing code, use the [product feedback form](https://github.com/OthmaneBlial/Postly/issues/new?template=feedback.yml)
+and keep the report limited to fictional or public data. Explain the intended
+change before beginning a large feature. Product priorities are in
+[ROADMAP.md](ROADMAP.md).
 
 ## Make and validate a change
 

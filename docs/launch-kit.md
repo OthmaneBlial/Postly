@@ -118,7 +118,10 @@ asking for stars.
 
 ## Follow-up and measurement
 
-Use one canonical issue or discussion thread per report. Ask testers to record:
+Use one canonical issue or discussion thread per report. The repository's
+[product feedback form](https://github.com/OthmaneBlial/Postly/issues/new?template=feedback.yml)
+captures the same fields without asking for an account-specific payload. Ask
+testers to record:
 
 | Step | What to record |
 | --- | --- |

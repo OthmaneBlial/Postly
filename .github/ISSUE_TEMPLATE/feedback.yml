@@ -1,0 +1,83 @@
+name: Product feedback
+description: Tell us what was clear, useful or blocked during a real Postly trial
+title: "[Feedback] "
+labels:
+  - feedback
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying Postly. Concrete notes are more useful than a star count.
+        Please use fictional values and remove tokens, private URLs, customer data
+        and unredacted request or response bodies before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: Postly version or source commit
+      placeholder: "0.2.0-preview.1 or git rev-parse --short HEAD"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+      placeholder: "macOS 26 ARM64, Windows 11 x64, Ubuntu 24.04 x64…"
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which part did you try?
+      multiple: true
+      options:
+        - Download or installation
+        - First local response
+        - Import a Postman or OpenAPI collection
+        - Edit and save a request
+        - Run a collection from the desktop or CLI
+        - Compare a response with an example
+        - Other workflow
+    validations:
+      required: true
+  - type: input
+    id: first_response_time
+    attributes:
+      label: Approximate time to the first local response
+      description: Optional. Include the starting point, such as after download or after opening the app.
+      placeholder: "About 90 seconds after opening the app"
+  - type: textarea
+    id: tried
+    attributes:
+      label: What did you try?
+      description: Give enough context to understand the workflow, using only fictional or public data.
+      placeholder: "I opened the Orders example, changed the filter to pending, and ran the collection."
+    validations:
+      required: true
+  - type: textarea
+    id: friction
+    attributes:
+      label: What was clear, useful or confusing?
+      description: Tell us the first point where the product helped or became hard to understand.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What would you expect next?
+      description: Describe the smallest change that would make this workflow easier to finish.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps or sanitized evidence
+      description: Optional. Attach only redacted logs or screenshots; never include secrets or private payloads.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials, tokens, private URLs, customer data and sensitive request/response bodies.
+          required: true
+        - label: This report may be used to improve Postly and referenced in a release or correction note without identifying me.
+          required: true
