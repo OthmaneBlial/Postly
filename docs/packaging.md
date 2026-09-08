@@ -20,10 +20,11 @@ verifies extraction and recursive checksums, but deliberately skips executing
 the target binaries; run `tools/replay-package.ps1` or
 `tools/replay-package.sh` on the native target before calling it tested.
 
-Packaging builds the CLI and GUI with the locked graph and the toolchain's
-explicit host target. It does not upload a release. OpenSSL is statically built
-from the vendored dependency for the CLI; building it requires a C compiler,
-make and Perl. Users of the resulting macOS binaries do not need Homebrew.
+Packaging builds the CLI and GUI with the locked graph and an explicit target
+triple (the host target by default). It does not upload a release. OpenSSL is
+statically built from the vendored dependency for the CLI; building it requires
+a C compiler, make and Perl. Users of the resulting macOS binaries do not need
+Homebrew.
 
 The command writes generated artifacts under ignored `dist/`:
 

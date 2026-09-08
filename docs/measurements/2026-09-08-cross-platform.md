@@ -86,6 +86,13 @@ wrappers and a clean target directory:
   executable with a `.rsrc` section; the generated resource is recognized as a
   512×512 PNG-backed icon. This confirms resource embedding on the macOS
   cross-build host, not Explorer rendering or a Windows runtime.
+- The target-aware packager then produced
+  `postly-v0.2.0-preview.1-windows-x86_64.zip` from clean `07f02d7`. Its
+  manifest records `source_dirty: false` and `x86_64-pc-windows-gnu`; all 73
+  ZIP entries passed `unzip -t` and the archive SHA-256 is
+  `6f24425ca0dc9fd8cf0dd8b5b6b79bd7a0a8782025a03053be867dbdfd6a6d3c`.
+  Runtime execution and native Explorer inspection are still required before
+  publication.
 
 ## Consequence
 

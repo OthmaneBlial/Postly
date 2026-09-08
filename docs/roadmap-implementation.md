@@ -325,8 +325,11 @@ workspace version. A stale `postly 0.1.0` binary was rejected; after rebuilding
 both programs from clean `2ec7530`, the debug benchmark completed with
 `source_dirty:false` and `postly 0.2.0-preview.1`. The follow-up medians and
 CLI hash are recorded in the [validation report](measurements/2026-09-08-validation.md).
-The subsequent full quality gate passes **281 tests** (38 CLI, 70 GUI, 159 core,
-14 xtask), with formatting and Clippy warnings denied.
+The preceding full quality gate passed **281 tests** (38 CLI, 70 GUI, 159 core,
+14 xtask), with formatting and Clippy warnings denied. After the target-aware
+packager and target-triple guard landed, the current gate passes **282 tests**
+(38 CLI, 70 GUI, 159 core, 15 xtask), with the same formatting and Clippy
+requirements.
 
 The Linux package now includes a rootless `install-linux-desktop.sh` helper.
 It validates the archive's `Icon=postly` entry, installs the bundled canonical
@@ -346,6 +349,14 @@ triple instead of the host. Cross-target archives verify extraction and
 checksums while recording that executable smoke is deferred to a native host;
 this turns the existing manual Windows candidate staging into a repeatable
 handoff step without upgrading a cross-link into runtime support.
+
+From clean `07f02d7`, that command produced a Windows x64 ZIP with
+`source_dirty: false`, 73 archive entries, recursive checksums and
+`unzip -t` passing. The archive SHA-256 is
+`6f24425ca0dc9fd8cf0dd8b5b6b79bd7a0a8782025a03053be867dbdfd6a6d3c`.
+Inspection of the extracted GUI confirms a PE32+ executable with a `.rsrc`
+section containing the generated icon. The target replayer and native Windows
+GUI launch remain deliberately open.
 
 ## Cross-target compilation evidence
 
