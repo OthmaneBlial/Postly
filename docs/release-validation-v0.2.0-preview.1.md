@@ -81,12 +81,13 @@ and measurement tooling. The archive-pair preservation test is recorded in
 - Developer ID signing and notarization: no usable signing identity was
   available locally. Ad-hoc signing must not be described as notarization.
 - Windows, Linux and Intel macOS native builds and real-machine validation.
-- Locked CLI source checks for Linux x64 and Windows x64 now pass through
-  temporary Zig cross-linker wrappers on macOS. The Linux release link still
-  fails on OpenSSL symbols, the GUI/xtask target sysroot is unavailable, and no
-  target runtime has been exercised. The exact outcomes are recorded in the
-  [cross-platform report](measurements/2026-09-08-cross-platform.md); no target
-  is advertised from compile-only evidence.
+- Locked CLI source checks for Linux x64 and Windows x64 pass through temporary
+  Zig cross-linker wrappers on macOS. A Linux x64 release link also produced
+  both CLI and GUI ELF binaries, but neither was run or packaged on Linux. The
+  Windows GUI link remains blocked by the temporary linker's missing `msvcrt`
+  import library, and no target runtime has been exercised. The exact outcomes
+  are recorded in the [cross-platform report](measurements/2026-09-08-cross-platform.md);
+  no target is advertised from compile/link-only evidence.
 - Per-keystroke/scroll-FPS profiling, deeper fuzz campaigns and externally observed usability
   sessions. The [8 September report](measurements/2026-09-08-validation.md)
   now supplies a release CLI/core benchmark and bounded local fuzz smoke;

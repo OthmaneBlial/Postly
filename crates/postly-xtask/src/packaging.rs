@@ -393,6 +393,17 @@ fn macos_bundle(root: &Path, package: &Path, cli: &str, gui: &str) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macos_bundle_metadata_points_to_the_canonical_icon_asset() {
+        let plist = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packaging/Info.plist"
+        ));
+        assert!(plist.contains("<key>CFBundleIconFile</key><string>Postly.icns</string>"));
+        assert!(plist.contains("<string>Postly.icns</string>"));
+    }
+
     #[test]
     fn executable_names_follow_target_platform() {
         assert_eq!(executable("postly", "windows"), "postly.exe");

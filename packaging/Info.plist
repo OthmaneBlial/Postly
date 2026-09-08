@@ -6,7 +6,12 @@
   <key>CFBundleDisplayName</key><string>Postly</string>
   <key>CFBundleIdentifier</key><string>io.github.othmaneblial.postly</string>
   <key>CFBundleExecutable</key><string>postly-gui</string>
-  <key>CFBundleIconFile</key><string>Postly</string>
+  <!-- Keep Finder and the Dock on the same canonical asset as the native UI. -->
+  <key>CFBundleIconFile</key><string>Postly.icns</string>
+  <key>CFBundleIconFiles</key>
+  <array>
+    <string>Postly.icns</string>
+  </array>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.2.0</string>
   <key>CFBundleVersion</key><string>2.0.1</string>

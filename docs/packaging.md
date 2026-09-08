@@ -64,7 +64,11 @@ before and after read-only CLI operations and a new-GUI launch; it does not clai
 that every future schema, secret-store migration or operating-system installer
 will preserve state.
 
-The macOS icon is rasterized from the existing logo geometry. To regenerate:
+The macOS app bundle declares `Postly.icns` explicitly in both Finder metadata
+keys (`CFBundleIconFile` and `CFBundleIconFiles`). This gives Launch Services a
+stable path to the same asset used by the native window and website instead of
+relying on a default icon. The ICNS is rasterized from that shared geometry. To
+regenerate all sizes:
 
 ```bash
 # Choose a fresh output directory; the renderer refuses to overwrite PNGs.

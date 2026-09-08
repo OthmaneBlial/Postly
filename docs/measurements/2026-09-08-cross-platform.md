@@ -34,20 +34,26 @@ they are compile-only evidence from macOS. They do not prove that a Linux or
 Windows executable links, launches, renders the GUI, or behaves correctly at
 runtime.
 
-The following stronger checks remain open:
+The following release-link checks were then run with the same temporary Zig
+wrappers and a clean target directory:
 
-- A Linux release link was attempted and failed at the final link step with
-  unresolved OpenSSL symbols (`BIO_ctrl`, `SSL_CTX_ctrl`, and related symbols).
-- `postly-app` and `postly-xtask` Linux checks still require a target OpenSSL
-  sysroot/pkg-config setup; the host's macOS OpenSSL is not a valid substitute.
-- No Windows linker/runtime or Intel Mac machine is available here.
+- `cargo build --locked --release --target x86_64-unknown-linux-gnu -p postly
+  -p postly-app` passed. `file` identifies both outputs as stripped ELF x86-64
+  executables (CLI 23 MiB, GUI 35 MiB).
+- This is a macOS cross-link result only. The ELF files were not executed, put
+  in a Linux package, or inspected on a Linux desktop; no Linux compatibility
+  claim follows from it.
+- The Windows release build reached the final GUI link but failed because the
+  temporary Zig linker has no `msvcrt` import library. The exact diagnostic was
+  `unable to find dynamic system library 'msvcrt'`; no `.exe` was produced.
+- No Windows runtime or Intel Mac machine is available here.
 
 ## Consequence
 
 The only released artifact remains the tested macOS Apple Silicon preview.
-The new CLI checks narrow the remaining work to target-native linking,
-packaging, and runtime validation; they do not expand the advertised platform
-matrix yet.
+The CLI checks and Linux release link narrow the remaining work to target-native
+packaging/runtime validation and a Windows linker/runtime. They do not expand
+the advertised platform matrix yet.
 Installing a Rust target is not equivalent to compiling, launching or testing
 the application on that operating system. Closing this gate requires a Linux
 x64 builder/runtime and a Windows x64 builder/runtime, followed by the

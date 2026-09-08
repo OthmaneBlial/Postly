@@ -102,7 +102,9 @@ Version `0.2.0-preview.1` now has native-host packaging with target-correct
 executable names, explicit locked release builds, source/toolchain provenance,
 recursive archive checksums and an extracted-CLI smoke run against the local
 Orders API. macOS adds the existing brand icon, an app bundle and a verified
-DMG. The CLI statically bundles OpenSSL instead of requiring Homebrew.
+DMG. The CLI statically bundles OpenSSL instead of requiring Homebrew. A
+cross-link on macOS also produced Linux x64 release CLI and GUI ELF binaries;
+this is compile/link evidence only, not Linux runtime or packaging validation.
 
 Installation, update and rollback instructions accompany the package. Platform
 availability, optional Node scripting and ad-hoc/not-notarized status are
