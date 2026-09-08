@@ -15,7 +15,8 @@ The command writes generated artifacts under ignored `dist/`:
 
 - macOS: a `.tar.gz` and DMG containing an icon-bearing `Postly.app` with both
   binaries, its bundle metadata and license resources;
-- Windows: a ZIP using `.exe` names throughout packaging and smoke checks;
+- Windows: a ZIP using `.exe` names throughout packaging and smoke checks, with
+  the canonical Postly icon embedded in the GUI executable;
 - Linux: a `.tar.gz`, including an installable desktop entry, the canonical SVG
   icon and `install-linux-desktop.sh` for a rootless per-user integration;
 - per-target `*-SHA256SUMS` and `*-manifest.json` files, with version, exact

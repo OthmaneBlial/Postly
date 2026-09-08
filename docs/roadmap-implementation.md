@@ -325,6 +325,12 @@ It validates the archive's `Icon=postly` entry, installs the bundled canonical
 GUI path. Shell syntax passed `sh -n`; this improves icon parity for Linux
 desktop menus without claiming that the helper or GUI has run on a Linux host.
 
+The Windows GUI build now embeds an ICO generated from the same PNG passed to
+eframe's runtime window icon. A MinGW release cross-build produced a PE32+
+GUI executable with a `.rsrc` section and a valid PNG-backed resource. This
+closes the missing source-side Explorer-icon path while leaving Windows runtime
+and Explorer rendering in the external validation gate.
+
 ## Cross-target compilation evidence
 
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the

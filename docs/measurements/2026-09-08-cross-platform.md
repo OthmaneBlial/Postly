@@ -80,6 +80,12 @@ wrappers and a clean target directory:
   were refreshed, and `tools/replay-package.sh` passed checksums, the loopback
   run and a three-second GUI process smoke under Rosetta. This archive was
   temporary and is not a published release asset.
+- The Windows GUI build now generates a PNG-backed ICO from
+  `crates/postly-app/assets/postly-icon.png` during the build and embeds it via
+  a Windows resource. The MinGW release output is identified as a PE32+ GUI
+  executable with a `.rsrc` section; the generated resource is recognized as a
+  512×512 PNG-backed icon. This confirms resource embedding on the macOS
+  cross-build host, not Explorer rendering or a Windows runtime.
 
 ## Consequence
 

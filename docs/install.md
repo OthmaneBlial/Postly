@@ -38,9 +38,11 @@ Only download these platforms when a matching asset is actually listed in the
 release. A build script supporting an OS does not mean a tested download exists.
 
 Windows packaging creates a ZIP containing `postly.exe` and `postly-gui.exe`.
-Extract it into a writable folder and run `postly-gui.exe`. Verify a downloaded
-archive using PowerShell `Get-FileHash -Algorithm SHA256 PATH` and compare with
-the release checksum. Unsigned previews may trigger SmartScreen or organization
+The GUI executable embeds the same Postly icon used by the native window, so
+Explorer shortcuts do not fall back to a generic application icon. Extract it
+into a writable folder and run `postly-gui.exe`. Verify a downloaded archive
+using PowerShell `Get-FileHash -Algorithm SHA256 PATH` and compare with the
+release checksum. Unsigned previews may trigger SmartScreen or organization
 policy. A working OS credential store is needed for secret environments.
 
 Linux packaging creates a `.tar.gz` with the two executables, an SVG icon, a

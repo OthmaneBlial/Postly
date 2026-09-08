@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Postly's native Rust desktop request workspace"
+build = "build.rs"
 
 [[bin]]
 name = "postly-gui"
@@ -30,6 +31,9 @@ tokio.workspace = true
 tokio-tungstenite.workspace = true
 tonic.workspace = true
 url.workspace = true
+
+[build-dependencies]
+embed-resource = "3.0.11"
 
 [dev-dependencies]
 protox.workspace = true
