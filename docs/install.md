@@ -114,3 +114,14 @@ Run it on the target machine with a graphical session. Set
 does not validate desktop startup. The script is evidence for the extracted
 archive path, not a substitute for Finder/Gatekeeper checks or a separate
 physical machine.
+
+For a Windows ZIP, run the PowerShell equivalent from a normal PowerShell
+session (no Cargo or Node is required):
+
+```powershell
+.\tools\replay-package.ps1 .\postly-v0.2.0-preview.1-windows-x86_64.zip
+```
+
+Use `-SkipGui` only on a deliberately headless Windows session. The script
+checks every entry in `SHA256SUMS`, the packaged CLI version/help, the loopback
+Orders example, its five assertions and a three-second GUI process smoke.

@@ -51,12 +51,12 @@ The installation and rollback guide is [install.md](install.md).
 The exact 8 September archive-pair result and hashes are in the
 [preservation report](measurements/2026-09-08-update-preservation.md).
 
-The no-toolchain archive replay is available as
-`tools/replay-package.sh`. It verifies the embedded checksums, creates and
-runs the loopback Orders example, and performs a bounded GUI process smoke
-test. Use it on each target machine before treating an archive as tested; the
-script's headless escape hatch is explicit and does not establish desktop
-startup.
+The no-toolchain archive replay is available as `tools/replay-package.sh` for
+tar archives and `tools/replay-package.ps1` for Windows ZIPs. Both verify the
+embedded checksums, create the loopback Orders example, and perform a bounded
+GUI process smoke test. Use the matching script on each target machine before
+treating an archive as tested; each headless escape hatch is explicit and does
+not establish desktop startup.
 
 The update-preservation script in that guide exercises a real old/new archive
 pair on fictional temporary data. It checks the files and a GUI theme preference
