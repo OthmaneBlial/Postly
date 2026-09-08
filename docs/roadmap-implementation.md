@@ -277,6 +277,12 @@ requests with five assertions, and optionally keeps the GUI alive for three
 seconds. It is ready to run on a genuinely independent machine; a local run
 still remains development-host evidence until that external gate is exercised.
 
+After the icon metadata and cross-target documentation changes, `cargo xtask
+package` was rerun from clean `HEAD` `892a00d`. The new Apple Silicon archive
+recorded `source_dirty: false`; its extracted checksum, CLI, loopback, validation,
+run and three-second GUI replay all passed. The generated artifact remains a
+local candidate and does not replace the published release asset.
+
 ## Cross-target compilation evidence
 
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the
