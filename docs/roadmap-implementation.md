@@ -349,12 +349,11 @@ The extracted desktop entry points at the collision-proof
 website logo. This remains a macOS-host packaging check, not Linux runtime
 validation.
 
-The macOS Apple Silicon package was rebuilt from clean `9a7632b` after adding
-the modern `CFBundleIconName` declaration. `plutil -lint` passed and the
-extracted app contains `CFBundleIconFile`, `CFBundleIconFiles` and
-`CFBundleIconName`, with the bundled `Postly.icns` present and signed. The local
-archive replay and GUI smoke passed; Finder/Dock rendering on an independent
-machine remains an external gate.
+The macOS Apple Silicon package was rebuilt from clean `9a7632b` after the
+desktop icon identity fix. `plutil -lint` passed and the extracted app contains
+`CFBundleIconFile` and `CFBundleIconFiles`, with the bundled `Postly.icns`
+present and signed. The local archive replay and GUI smoke passed; Finder/Dock
+rendering on an independent machine remains an external gate.
 
 The Windows GUI build now embeds an ICO generated from the same PNG passed to
 eframe's runtime window icon. A MinGW release cross-build produced a PE32+

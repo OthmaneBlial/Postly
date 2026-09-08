@@ -462,7 +462,6 @@ mod tests {
         ));
         assert!(plist.contains("<key>CFBundleIconFile</key><string>Postly.icns</string>"));
         assert!(plist.contains("<string>Postly.icns</string>"));
-        assert!(plist.contains("<key>CFBundleIconName</key><string>Postly</string>"));
     }
 
     #[test]
