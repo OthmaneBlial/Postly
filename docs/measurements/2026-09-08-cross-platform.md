@@ -116,3 +116,13 @@ writes a `.desktop` file with `Icon=io.github.othmaneblial.postly`, an absolute
 spaces. The reverse-DNS name prevents collisions with a stale system-wide
 `postly` icon. This is a static/helper check only; it does not claim a Linux
 desktop session, icon cache refresh or GUI runtime validation.
+
+After the desktop icon identity fix, a clean target-aware package was rebuilt
+from commit `a177319`. The manifest records `source_dirty: false` and target
+`x86_64-unknown-linux-gnu`; the 24 MiB archive passed recursive checksum and
+extraction checks. Its SHA-256 is
+`75bcf57f481ac4efffbcb5783dbdb93055544f1dd6688fd1650b9a8b9d88db73`.
+The extracted launcher uses `Icon=io.github.othmaneblial.postly` and carries
+the byte-identical `io.github.othmaneblial.postly.svg` from `website/logo.svg`.
+The ELF and desktop session remain unexecuted on Linux, so this is packaging
+and icon-parity evidence from the macOS host only.

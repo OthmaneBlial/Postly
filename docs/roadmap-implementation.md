@@ -339,6 +339,16 @@ avoids collisions with stale system-wide icons. Shell syntax passed `sh -n`;
 this improves icon parity for Linux desktop menus without claiming that the
 helper or GUI has run on a Linux host.
 
+After the icon identity fix, the target-aware Linux package was rebuilt from
+clean `a177319`. Its manifest reports `source_dirty: false` and
+`x86_64-unknown-linux-gnu`; recursive archive checks and extraction passed, and
+the archive SHA-256 is
+`75bcf57f481ac4efffbcb5783dbdb93055544f1dd6688fd1650b9a8b9d88db73`.
+The extracted desktop entry points at the collision-proof
+`io.github.othmaneblial.postly` icon name, whose SVG is byte-identical to the
+website logo. This remains a macOS-host packaging check, not Linux runtime
+validation.
+
 The Windows GUI build now embeds an ICO generated from the same PNG passed to
 eframe's runtime window icon. A MinGW release cross-build produced a PE32+
 GUI executable with a `.rsrc` section and a valid PNG-backed resource. This
