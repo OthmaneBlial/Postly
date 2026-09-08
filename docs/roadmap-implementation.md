@@ -104,8 +104,10 @@ recursive archive checksums and an extracted-CLI smoke run against the local
 Orders API. macOS adds the existing brand icon, an app bundle and a verified
 DMG. The CLI statically bundles OpenSSL instead of requiring Homebrew. A
 cross-link on macOS also produced Linux x64 release CLI and GUI ELF binaries,
-then MinGW produced Windows x64 PE32+ CLI and GUI binaries. These are
-compile/link results only, not target runtime or packaging validation.
+then MinGW produced Windows x64 PE32+ CLI and GUI binaries, plus Mach-O x86_64
+CLI and GUI binaries. The Intel CLI passed a two-request/five-assertion demo
+under Rosetta 2; these are still cross-host checks, not target packaging or
+physical-machine validation.
 
 Installation, update and rollback instructions accompany the package. Platform
 availability, optional Node scripting and ad-hoc/not-notarized status are
@@ -280,7 +282,9 @@ On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the
 locked shared CLI dependency graph to compile for `x86_64-unknown-linux-gnu`
 and `x86_64-pc-windows-gnu`. This is useful source-compatibility evidence, but
 it is not a package or runtime result. A subsequent Linux release cross-link
-produced both CLI and GUI ELF x64 binaries, and a MinGW cross-link produced
-Windows PE32+ CLI and GUI binaries. No Windows/Linux runtime or Intel Mac
-validation is claimed; the open gate and exact command outcomes are recorded in
+produced both CLI and GUI ELF x64 binaries, a MinGW cross-link produced Windows
+PE32+ CLI and GUI binaries, and an x86_64-apple-darwin build produced Mach-O
+x86_64 binaries. The Intel CLI ran under Rosetta 2, but no physical Intel Mac
+or target-native Linux/Windows runtime validation is claimed; the open gate and
+exact command outcomes are recorded in
 [the cross-platform report](measurements/2026-09-08-cross-platform.md).

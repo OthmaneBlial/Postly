@@ -57,13 +57,20 @@ wrappers and a clean target directory:
   socket and SSH endpoint refusing connections. It was stopped and removed
   after the bounded wait; this confirms the local virtualization gate is still
   unavailable rather than providing a target-runtime result.
+- Rust target `x86_64-apple-darwin` was installed and a locked release build
+  produced both Mach-O x86_64 binaries. `otool -L` on the CLI lists only
+  macOS system frameworks and `/usr/lib/libSystem.B.dylib`.
+- The Intel CLI then ran under Rosetta 2 with `--version`, `--help`, a fresh
+  loopback Orders server and `run`: two requests returned HTTP 200 and all five
+  assertions passed. Rosetta is an ARM-host translation check, not evidence
+  from physical Intel hardware; the GUI bundle was not opened in that mode.
 
 ## Consequence
 
 The only released artifact remains the tested macOS Apple Silicon preview.
-The CLI checks plus Linux and Windows release links narrow the remaining work to
-target-native packaging/runtime validation. They do not expand the advertised
-platform matrix yet.
+The CLI checks plus Linux, Windows and Intel cross-links narrow the remaining
+work to target-native packaging/runtime validation. They do not expand the
+advertised platform matrix yet.
 Installing a Rust target is not equivalent to compiling, launching or testing
 the application on that operating system. Closing this gate requires a Linux
 x64 builder/runtime and a Windows x64 builder/runtime, followed by the
