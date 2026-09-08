@@ -13,8 +13,9 @@ Windows/Linux compatibility claim.
   available.
 - A Clang fallback with `--target=x86_64-unknown-linux-gnu` was attempted. It
   stopped because the host has no Linux sysroot (`assert.h` was unavailable).
-- No Windows linker, Windows runtime or target desktop session is available on
-  this host, so no Windows package or execution was produced.
+- At this initial stage no Windows linker, Windows runtime or target desktop
+  session was available, so no Windows package or execution was produced; a
+  MinGW linker was installed and exercised in the later run below.
 - A temporary Podman Linux VM was created to obtain a real Linux runtime, but
   `vfkit` exited with code 1 before its SSH/API became available. The VM was
   removed after the failed attempt; no Linux execution claim is made.
