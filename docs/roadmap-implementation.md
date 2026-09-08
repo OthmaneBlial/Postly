@@ -286,8 +286,10 @@ local candidate and does not replace the published release asset.
 The Windows ZIP now has a matching no-toolchain replayer at
 `tools/replay-package.ps1`. PowerShell Core 7.6.5 parsed the script locally;
 the MinGW PE binaries were also staged into a temporary 82-entry ZIP with
-checksums and `unzip -t` passing. Execution remains intentionally unclaimed
-until a Windows machine can run the PE binaries and GUI.
+checksums and `unzip -t` passing. A malformed-archive guard also failed with
+the expected missing-`postly.exe` diagnostic under PowerShell Core. Execution
+of real PE binaries remains intentionally unclaimed until a Windows machine
+can run the CLI and GUI.
 
 ## Cross-target compilation evidence
 
