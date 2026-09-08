@@ -283,6 +283,11 @@ recorded `source_dirty: false`; its extracted checksum, CLI, loopback, validatio
 run and three-second GUI replay all passed. The generated artifact remains a
 local candidate and does not replace the published release asset.
 
+The Windows ZIP now has a matching no-toolchain replayer at
+`tools/replay-package.ps1`. PowerShell Core 7.6.5 parsed the script locally;
+execution remains intentionally unclaimed until a Windows machine can run the
+PE binaries and GUI.
+
 ## Cross-target compilation evidence
 
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the
