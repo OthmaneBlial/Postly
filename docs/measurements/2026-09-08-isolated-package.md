@@ -37,3 +37,19 @@ the package evidence but is **not** an independent clean-machine result.
 The kernel, display server, macOS frameworks and physical machine are the
 development host. This does not prove Finder/Gatekeeper behavior for a fresh
 user account, keychain integration, another Mac, or another operating system.
+
+## Latest clean candidate replay
+
+After the structured feedback form was added, the same package path was
+rebuilt from clean commit `3786317bea3504f0f443d9d67341131d3904ae08`. The
+manifest recorded `source_dirty: false`, target `aarch64-apple-darwin` and
+architecture `aarch64`. The regenerated archive SHA-256 was
+`1f0830032c9672b4da88401efc0a8375ea6387aca8e7609961c4f047fbb3fdd7`.
+
+`tools/replay-package.sh` passed against that archive: recursive checksums,
+CLI version/help, the loopback Orders API, workspace validation, two requests,
+five assertions and the three-second GUI process smoke all passed. Extracted
+bundle inspection also confirmed `CFBundleIconFile` and `CFBundleIconFiles`
+both point to `Postly.icns`, which is present in `Postly.app/Contents/Resources`.
+This is still a development-host replay; it does not close the independent
+machine, Finder or target-OS gates above.

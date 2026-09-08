@@ -291,6 +291,13 @@ the expected missing-`postly.exe` diagnostic under PowerShell Core. Execution
 of real PE binaries remains intentionally unclaimed until a Windows machine
 can run the CLI and GUI.
 
+The latest clean candidate was rebuilt from `3786317` after the product
+feedback form landed. Its manifest reports `source_dirty: false`, and the
+portable macOS replay passed checksums, CLI, loopback requests, five assertions
+and the three-second GUI smoke. Bundle inspection confirmed both macOS icon
+metadata keys resolve to the bundled `Postly.icns`; this confirms the desktop
+icon fix in the candidate without claiming a fresh-machine install.
+
 ## Cross-target compilation evidence
 
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the
