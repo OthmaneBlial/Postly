@@ -298,6 +298,11 @@ and the three-second GUI smoke. Bundle inspection confirmed both macOS icon
 metadata keys resolve to the bundled `Postly.icns`; this confirms the desktop
 icon fix in the candidate without claiming a fresh-machine install.
 
+The landing page now links directly to the structured feedback form as well as
+the bug form. That one-line site update was published to the existing Pages
+branch at `6d20db2`; a cache-busted HTTPS fetch returned the new link after the
+normal Pages propagation delay.
+
 ## Cross-target compilation evidence
 
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the
