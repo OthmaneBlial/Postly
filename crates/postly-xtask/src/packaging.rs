@@ -9,6 +9,8 @@ use std::{
 
 type Result<T> = std::result::Result<T, String>;
 
+const LINUX_ICON_NAME: &str = "io.github.othmaneblial.postly";
+
 pub fn executable(name: &str, os: &str) -> String {
     format!("{name}{}", if os == "windows" { ".exe" } else { "" })
 }
@@ -255,7 +257,10 @@ pub fn package(target_override: Option<&str>) -> Result<()> {
             root.join("packaging/postly.desktop"),
             package.join("postly.desktop"),
         )?;
-        copy(root.join("website/logo.svg"), package.join("postly.svg"))?;
+        copy(
+            root.join("website/logo.svg"),
+            package.join(format!("{LINUX_ICON_NAME}.svg")),
+        )?;
         copy(
             root.join("tools/install-linux-desktop.sh"),
             package.join("install-linux-desktop.sh"),
@@ -457,6 +462,7 @@ mod tests {
         ));
         assert!(plist.contains("<key>CFBundleIconFile</key><string>Postly.icns</string>"));
         assert!(plist.contains("<string>Postly.icns</string>"));
+        assert!(plist.contains("<key>CFBundleIconName</key><string>Postly</string>"));
     }
 
     #[test]
@@ -465,7 +471,9 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../packaging/postly.desktop"
         ));
-        assert!(desktop.lines().any(|line| line == "Icon=postly"));
+        assert!(desktop
+            .lines()
+            .any(|line| line == format!("Icon={LINUX_ICON_NAME}")));
         assert!(desktop.lines().any(|line| line == "Exec=postly-gui"));
         assert!(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),

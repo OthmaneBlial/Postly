@@ -332,10 +332,12 @@ packager and target-triple guard landed, the current gate passes **282 tests**
 requirements.
 
 The Linux package now includes a rootless `install-linux-desktop.sh` helper.
-It validates the archive's `Icon=postly` entry, installs the bundled canonical
-`postly.svg` in the user's hicolor theme and writes a launcher with an absolute
-GUI path. Shell syntax passed `sh -n`; this improves icon parity for Linux
-desktop menus without claiming that the helper or GUI has run on a Linux host.
+It validates the archive's `Icon=io.github.othmaneblial.postly` entry, installs
+the bundled canonical `io.github.othmaneblial.postly.svg` in the user's hicolor
+theme and writes a launcher with an absolute GUI path. The reverse-DNS icon name
+avoids collisions with stale system-wide icons. Shell syntax passed `sh -n`;
+this improves icon parity for Linux desktop menus without claiming that the
+helper or GUI has run on a Linux host.
 
 The Windows GUI build now embeds an ICO generated from the same PNG passed to
 eframe's runtime window icon. A MinGW release cross-build produced a PE32+

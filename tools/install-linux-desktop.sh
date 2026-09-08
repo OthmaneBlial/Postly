@@ -14,8 +14,9 @@ case "$package_dir" in
   *) package_dir="$(pwd)/$package_dir" ;;
 esac
 
+icon_name=io.github.othmaneblial.postly
 desktop_source="$package_dir/postly.desktop"
-icon_source="$package_dir/postly.svg"
+icon_source="$package_dir/$icon_name.svg"
 gui_binary="$package_dir/postly-gui"
 [ -f "$desktop_source" ] || {
   echo "package desktop entry not found: $desktop_source" >&2
@@ -29,7 +30,7 @@ gui_binary="$package_dir/postly-gui"
   echo "package GUI executable not found or not executable: $gui_binary" >&2
   exit 66
 }
-grep -Fx 'Icon=postly' "$desktop_source" >/dev/null || {
+grep -Fx "Icon=$icon_name" "$desktop_source" >/dev/null || {
   echo "desktop entry does not reference the canonical postly icon name" >&2
   exit 65
 }
@@ -66,7 +67,7 @@ awk -v exec_path="$escaped_exec" -v work_path="$escaped_path" '
   exit 65
 }
 
-install -m 644 "$icon_source" "$icon_dir/postly.svg"
+install -m 644 "$icon_source" "$icon_dir/$icon_name.svg"
 install -m 644 "$desktop_tmp" "$application_dir/postly.desktop"
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$application_dir" >/dev/null 2>&1 || true
@@ -74,5 +75,5 @@ fi
 
 echo "Postly desktop integration installed for this user."
 echo "launcher: $application_dir/postly.desktop"
-echo "icon: $icon_dir/postly.svg"
+echo "icon: $icon_dir/$icon_name.svg"
 echo "executable: $gui_binary"

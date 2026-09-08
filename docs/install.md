@@ -45,8 +45,8 @@ using PowerShell `Get-FileHash -Algorithm SHA256 PATH` and compare with the
 release checksum. Unsigned previews may trigger SmartScreen or organization
 policy. A working OS credential store is needed for secret environments.
 
-Linux packaging creates a `.tar.gz` with the two executables, an SVG icon, a
-desktop entry and a user-install helper. Extract, verify with
+Linux packaging creates a `.tar.gz` with the two executables, the canonical
+reverse-DNS SVG icon, a desktop entry and a user-install helper. Extract, verify with
 `sha256sum -c SHA256SUMS`, and launch `./postly-gui`. Native graphics libraries
 and an available graphical session are required; use the CLI for headless work.
 To install a launcher for the extracted app without root, run:
@@ -55,11 +55,12 @@ To install a launcher for the extracted app without root, run:
 ./install-linux-desktop.sh /path/to/postly-v0.2.0-preview.1-linux-x86_64
 ```
 
-The helper copies the same `postly.svg` used by the package into the user's
-`hicolor` icon theme and writes a `.desktop` entry whose `Exec` points to that
-exact extracted GUI path. It does not copy or delete project data. Remove the
-user launcher and icon manually to uninstall this integration; the package
-directory and your workspaces remain untouched.
+The helper copies the same `io.github.othmaneblial.postly.svg` used by the
+package into the user's `hicolor` icon theme and writes a `.desktop` entry
+whose `Exec` points to that exact extracted GUI path. The reverse-DNS icon name
+avoids collisions with stale system-wide `postly` icons. It does not copy or
+delete project data. Remove the user launcher and icon manually to uninstall
+this integration; the package directory and your workspaces remain untouched.
 Distribution-specific dependency and keyring behavior requires testing on that
 distribution before it is claimed supported.
 
