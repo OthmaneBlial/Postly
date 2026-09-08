@@ -43,17 +43,23 @@ wrappers and a clean target directory:
 - This is a macOS cross-link result only. The ELF files were not executed, put
   in a Linux package, or inspected on a Linux desktop; no Linux compatibility
   claim follows from it.
-- The Windows release build reached the final GUI link but failed because the
-  temporary Zig linker has no `msvcrt` import library. The exact diagnostic was
-  `unable to find dynamic system library 'msvcrt'`; no `.exe` was produced.
-- No Windows runtime or Intel Mac machine is available here.
+- The first Windows attempt with Zig reached the final GUI link but failed
+  because that temporary linker had no `msvcrt` import library. This was a
+  linker-tool limitation, not a source failure.
+- A second run with Homebrew `mingw-w64` 14.0.0_3 (GCC 16.2.0, native `ar`,
+  `ranlib` and `dlltool`) passed for both packages. `file` identifies
+  `postly.exe` as PE32+ console x86-64 (39 MiB) and `postly-gui.exe` as PE32+
+  GUI x86-64 (45 MiB). The import table contains the expected Windows system
+  DLLs; no macOS libraries are linked.
+- The PE files were not executed or packaged on Windows, and no Windows
+  runtime, Linux runtime or Intel Mac machine is available here.
 
 ## Consequence
 
 The only released artifact remains the tested macOS Apple Silicon preview.
-The CLI checks and Linux release link narrow the remaining work to target-native
-packaging/runtime validation and a Windows linker/runtime. They do not expand
-the advertised platform matrix yet.
+The CLI checks plus Linux and Windows release links narrow the remaining work to
+target-native packaging/runtime validation. They do not expand the advertised
+platform matrix yet.
 Installing a Rust target is not equivalent to compiling, launching or testing
 the application on that operating system. Closing this gate requires a Linux
 x64 builder/runtime and a Windows x64 builder/runtime, followed by the

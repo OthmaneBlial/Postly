@@ -103,8 +103,9 @@ executable names, explicit locked release builds, source/toolchain provenance,
 recursive archive checksums and an extracted-CLI smoke run against the local
 Orders API. macOS adds the existing brand icon, an app bundle and a verified
 DMG. The CLI statically bundles OpenSSL instead of requiring Homebrew. A
-cross-link on macOS also produced Linux x64 release CLI and GUI ELF binaries;
-this is compile/link evidence only, not Linux runtime or packaging validation.
+cross-link on macOS also produced Linux x64 release CLI and GUI ELF binaries,
+then MinGW produced Windows x64 PE32+ CLI and GUI binaries. These are
+compile/link results only, not target runtime or packaging validation.
 
 Installation, update and rollback instructions accompany the package. Platform
 availability, optional Node scripting and ad-hoc/not-notarized status are
@@ -279,8 +280,7 @@ On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the
 locked shared CLI dependency graph to compile for `x86_64-unknown-linux-gnu`
 and `x86_64-pc-windows-gnu`. This is useful source-compatibility evidence, but
 it is not a package or runtime result. A subsequent Linux release cross-link
-produced both CLI and GUI ELF x64 binaries, while the Windows GUI link stopped
-on the temporary linker's missing `msvcrt` import library. No Windows/Linux
-runtime or Intel Mac validation is claimed; the open gate and exact command
-outcomes are recorded in
+produced both CLI and GUI ELF x64 binaries, and a MinGW cross-link produced
+Windows PE32+ CLI and GUI binaries. No Windows/Linux runtime or Intel Mac
+validation is claimed; the open gate and exact command outcomes are recorded in
 [the cross-platform report](measurements/2026-09-08-cross-platform.md).

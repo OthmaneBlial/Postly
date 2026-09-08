@@ -83,10 +83,10 @@ and measurement tooling. The archive-pair preservation test is recorded in
 - Windows, Linux and Intel macOS native builds and real-machine validation.
 - Locked CLI source checks for Linux x64 and Windows x64 pass through temporary
   Zig cross-linker wrappers on macOS. A Linux x64 release link also produced
-  both CLI and GUI ELF binaries, but neither was run or packaged on Linux. The
-  Windows GUI link remains blocked by the temporary linker's missing `msvcrt`
-  import library, and no target runtime has been exercised. The exact outcomes
-  are recorded in the [cross-platform report](measurements/2026-09-08-cross-platform.md);
+  both CLI and GUI ELF binaries, but neither was run or packaged on Linux. A
+  MinGW cross-link also produced Windows PE32+ CLI and GUI binaries; neither was
+  run or packaged on Windows. No target runtime has been exercised. The exact
+  outcomes are recorded in the [cross-platform report](measurements/2026-09-08-cross-platform.md);
   no target is advertised from compile/link-only evidence.
 - Per-keystroke/scroll-FPS profiling, deeper fuzz campaigns and externally observed usability
   sessions. The [8 September report](measurements/2026-09-08-validation.md)
