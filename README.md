@@ -405,7 +405,8 @@ Postly is released under the [MIT License](LICENSE).
 ### Keep the request. Keep the context. Keep control.
 
 [Explore the repository](https://github.com/OthmaneBlial/Postly) ·
-[Share a migration edge case](https://github.com/OthmaneBlial/Postly/issues) ·
+[Share product feedback](https://github.com/OthmaneBlial/Postly/issues/new?template=feedback.yml) ·
+[Share a migration edge case](https://github.com/OthmaneBlial/Postly/issues/new?template=migration.yml) ·
 [Star Postly](https://github.com/OthmaneBlial/Postly/stargazers)
 
 </div>
