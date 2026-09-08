@@ -56,6 +56,23 @@ run sequentially with no discarded warm-up. Treat this as a small local baseline
 not a cold-start or competitor comparison. Core search time does not establish
 the latency of typing, selecting or scrolling in the native GUI.
 
+## Benchmark provenance guard follow-up
+
+The harness was exercised once with an existing sibling CLI that still reported
+`postly 0.1.0`. The new version guard rejected that stale binary instead of
+publishing a misleading measurement. After rebuilding `postly` and
+`postly-xtask` together from clean commit `2ec7530`, the benchmark completed
+with `source_dirty: false`, target `aarch64-apple-darwin` and CLI
+`postly 0.2.0-preview.1` (CLI SHA-256
+`2b18a0607045db7b37f605e6b355e615d28d364b98101e0d14283bdb36c852b8`).
+
+The clean rerun medians were: CLI help **12.60 ms** (13,840 KiB peak RSS),
+Postman import **79.11 ms**, open/search 1,000 requests **171.07 / 175.07 ms**,
+open/search 10,000 requests **1,847.11 / 1,893.39 ms**, and the local 100-request
+runner **30.81 ms**. This is a follow-up debug-profile sample, not a replacement
+for the release-profile JSON above; both runs remain tied to their recorded
+source and binary provenance.
+
 ## Bounded fuzz smoke
 
 `cargo xtask fuzz` completed successfully: `cargo +nightly fuzz check`, then

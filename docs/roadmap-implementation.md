@@ -311,6 +311,12 @@ checksums, clean-account isolation, native GUI/icon checks, credential-store
 outcomes and explicit headless skips without turning cross-compiles into
 platform claims.
 
+The benchmark harness now validates that the measured sibling CLI reports the
+workspace version. A stale `postly 0.1.0` binary was rejected; after rebuilding
+both programs from clean `2ec7530`, the debug benchmark completed with
+`source_dirty:false` and `postly 0.2.0-preview.1`. The follow-up medians and
+CLI hash are recorded in the [validation report](measurements/2026-09-08-validation.md).
+
 ## Cross-target compilation evidence
 
 On the macOS ARM64 host, temporary Zig 0.16.0 linker wrappers allowed the

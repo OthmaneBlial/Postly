@@ -45,6 +45,8 @@ measured executable paths, SHA-256 hashes and CLI version. The profile describes
 the compiled harness, not whichever binary directory happens to exist. Rebuild
 both programs at a clean commit before publishing a report: a workspace revision
 alone does not prove a previously built binary came from that revision.
+The harness also rejects a sibling CLI whose reported version differs from the
+workspace version, preventing stale local binaries from entering a report.
 The output intentionally does not compare
 Postly to Postman, Bruno or any other client. Add a controlled competitor version
 and methodology before publishing a comparison.
