@@ -63,6 +63,11 @@ wrappers and a clean target directory:
   socket and SSH endpoint refusing connections. It was stopped and removed
   after the bounded wait; this confirms the local virtualization gate is still
   unavailable rather than providing a target-runtime result.
+- A later fresh rootless AppleHV VM (4 GiB, 20 GiB disk) reached the `vfkit`
+  running state but never completed first boot: the guest emitted ARP traffic,
+  while SSH and the forwarded Podman API kept refusing or resetting
+  connections. The VM process was stopped after a bounded wait. This repeats
+  the same host virtualization limitation; no Linux runtime result is inferred.
 - Rust target `x86_64-apple-darwin` was installed and a locked release build
   produced both Mach-O x86_64 binaries. `otool -L` on the CLI lists only
   macOS system frameworks and `/usr/lib/libSystem.B.dylib`.
