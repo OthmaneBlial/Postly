@@ -127,13 +127,13 @@ the byte-identical `io.github.othmaneblial.postly.svg` from `website/logo.svg`.
 The ELF and desktop session remain unexecuted on Linux, so this is packaging
 and icon-parity evidence from the macOS host only.
 
-The macOS Apple Silicon package was rebuilt from clean `9a7632b` after the
+The macOS Apple Silicon package was rebuilt from clean `edde0c1` after the
 desktop icon identity fix. The manifest reports `source_dirty: false`;
 `plutil -lint` passed and the extracted app contains both macOS icon metadata
 keys, `CFBundleIconFile` and `CFBundleIconFiles`, pointing to the bundled
 `Postly.icns`. The archive SHA-256 is
-`06e8192e1b50de28d2fa75aa287c03e9ac0bf5a13c713670a7c2ac2d5514a91b` and the
+`5142a6c123345699c9f4bbcc6e5e77d8047f71f5c67ee3e11f4dd8e4bac3cf76` and the
 DMG SHA-256 is
-`127948cf73c143a9792062a952ff566ea5f14e52eaf4f29f7ae8053c12713ef2`.
+`654edbadea726ccc9fffeeeee9ddf1f5ca7369fd668fad64ea8c75ef85974f3c`.
 The local package replay and GUI smoke passed; a separate Finder/Dock check on
 an independent machine remains open.

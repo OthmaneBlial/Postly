@@ -349,7 +349,7 @@ The extracted desktop entry points at the collision-proof
 website logo. This remains a macOS-host packaging check, not Linux runtime
 validation.
 
-The macOS Apple Silicon package was rebuilt from clean `9a7632b` after the
+The macOS Apple Silicon package was rebuilt from clean `edde0c1` after the
 desktop icon identity fix. `plutil -lint` passed and the extracted app contains
 `CFBundleIconFile` and `CFBundleIconFiles`, with the bundled `Postly.icns`
 present and signed. The local archive replay and GUI smoke passed; Finder/Dock
