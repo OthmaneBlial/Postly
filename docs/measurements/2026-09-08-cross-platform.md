@@ -127,6 +127,14 @@ the byte-identical `io.github.othmaneblial.postly.svg` from `website/logo.svg`.
 The ELF and desktop session remain unexecuted on Linux, so this is packaging
 and icon-parity evidence from the macOS host only.
 
+A final bounded attempt used a fresh 10 GiB, 3 GiB AppleHV Podman machine
+(`postly-linux-fresh`) rather than the existing VM. `vfkit` reached its running
+state, but the guest reset SSH before exposing the Podman API; `podman machine
+start` ended with `vfkit exited unexpectedly with exit code 1`. The temporary
+machine was stopped and removed. This repeats the host virtualization failure
+without producing Linux runtime evidence, so the native Linux gate remains
+open.
+
 The macOS Apple Silicon package was rebuilt from clean `edde0c1` after the
 desktop icon identity fix. The manifest reports `source_dirty: false`;
 `plutil -lint` passed and the extracted app contains both macOS icon metadata
