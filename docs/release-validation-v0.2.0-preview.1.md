@@ -6,6 +6,15 @@ The candidate is published as the GitHub prerelease
 [`v0.2.0-preview.1`](https://github.com/OthmaneBlial/Postly/releases/tag/v0.2.0-preview.1);
 its public assets are verified in the [public-release report](measurements/2026-09-08-public-release.md).
 
+## Current repository status
+
+The historical package counts below describe the published candidate at the
+time it was built. After the subsequent packaging and icon-parity fixes, the
+current clean `main` HEAD passes **282 tests** (38 CLI, 70 GUI, 159
+core, 15 xtask), formatting and Clippy with warnings denied. The published
+release asset remains unchanged; the current macOS and Linux archives are local
+candidates only and are recorded in the [cross-platform report](measurements/2026-09-08-cross-platform.md).
+
 ## Packaging and runtime evidence
 
 - `cargo xtask check` passed formatting, Clippy with warnings denied and all
